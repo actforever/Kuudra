@@ -251,7 +251,7 @@ ACTIVE → RELOADING_DRAIN → STARTING
 - `reload`：只作用于被指定的目标 Flow，不暂停其他工作 Flow。先在不产生副作用的前提下解析、校验并编译候选 revision；随后旧 revision 进入 `RELOADING_DRAIN`，停止 Source 与 import 入口接收新根信号，但允许其已有会话及后继链路自然排空。只有旧 revision 的活跃会话归零、组件和资源安全关闭后，才创建并启动新 revision。默认不设超时、不发送取消请求，语义等同于 Docker Compose 的“停止旧服务后再启动新服务”；reload 期间的新外部/import 信号按入口策略拒绝或丢弃。候选 revision 在实际启动阶段失败时，Flow 直接进入 `FAILED` 并保留诊断，**不尝试回滚或重新启动旧 revision**；管理员修复后再次 reload。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
-Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
+Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `control/` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
 
 控制平面 Flow 的生命周期由独立的、仅供管理端调用的 `ControlPlaneCommand` 管理；它不会被任意控制平面 Flow 派发的工作 Flow 命令影响。两类命令都不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
 
@@ -369,7 +369,7 @@ controlFlows:
     privileges: [runtime.work-flow.stop]
 ```
 
-控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
+控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `control/` Action 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
 
 ```yaml
 flow:
