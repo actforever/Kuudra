@@ -212,13 +212,14 @@ DISCOVERED → VALIDATED → INACTIVE → STARTING → ACTIVE → PAUSING → PA
                          └──────────────┴─────────────────┴──────────┴──→ FAILED
                                                          PAUSED → ACTIVE
 ACTIVE/PAUSING/PAUSED → STOPPING → STOPPED
+ACTIVE → RELOADING_DRAIN → STARTING
 ```
 
 - `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。Runtime 启动时必须先按依赖顺序完成所有控制平面 Flow 的启动与健康检查，任一控制平面 Flow 启动失败则不得启动工作 Flow；控制平面就绪后才启动工作 Flow。
 - `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待组件链 drain 后进入 `STOPPED`。超时不是强制停止：Flow 保持 `STOPPING`，发布超时诊断，且不得卸载仍可能执行的插件/组件；管理员可继续等待、重试请求或使用明确标注为不安全的强制隔离操作。
 - `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号**不暂存**，一律按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
 - `resume`：`PAUSED → ACTIVE`；按原有顺序/公平调度策略将暂停续延表中的任务重新投递，因此从暂停所在节点的下一跳继续。暂停会话仍持有 work count，可被查询或收到取消请求；暂停状态下由组件的取消回调决定是否确认取消并删除续延，未确认时续延会保留到 `resume`。
-- `reload`：先校验并创建新 revision；成功后按策略切换至新 revision，旧 revision 选择 drain/cancel/timeout 后卸载。失败保持旧 revision `ACTIVE`。
+- `reload`：先在不产生副作用的前提下解析、校验并编译候选 revision；随后旧 revision 进入 `RELOADING_DRAIN`，停止 Source 与 import 入口接收新根信号，但允许其已有会话及后继链路自然排空。只有旧 revision 的活跃会话归零、组件和资源安全关闭后，才创建并启动新 revision。默认不设超时、不发送取消请求，语义等同于 Docker Compose 的“停止旧服务后再启动新服务”；reload 期间的新外部/import 信号按入口策略拒绝或丢弃。候选 revision 在实际启动阶段失败时，Flow 进入 `FAILED` 并保留诊断，管理员需修复后再次 reload。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
 Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
@@ -283,9 +284,9 @@ capabilities: [input.global.keyboard, input.global.mouse]
 - 每个已解析插件集合由专用、可关闭的 `URLClassLoader` 加载；父加载器仅暴露 `kuudra-api`、JDK 和日志 API。
 - 依赖按有向无环图解析；父插件先启动、反向停止。循环依赖和版本范围不满足均拒绝激活。
 - 共享 API 包必须 parent-first；插件私有依赖 child-first，并禁止插件导出核心 API 的重复副本，避免 `ClassCastException`。
-- “热重载”是**新类加载器 + 新 Flow revision + 停旧版本**，不是在原 ClassLoader 中替换类。旧会话可选择 drain、cancel 或等待超时；确认无实例/线程/资源后才 close ClassLoader。
+- 插件/Flow reload 是**候选配置预校验 → 旧 revision drain → 关闭旧资源 → 启动新 revision**，不是在原 ClassLoader 中替换类。默认 drain 不取消、不超时；确认旧 revision 无活跃会话、实例、线程或资源后才 close ClassLoader。
 - 插件可选实现 `PluginStateMigration`：声明来源/目标插件版本，并在新插件启动、旧版本资源释放前，通过受限 `PluginMigrationContext` 迁移插件家目录与 `/plugins/{pluginId}/state` 数据。迁移必须可预检（dry-run）、具备原子提交或可恢复备份，并在失败时保持旧插件版本与数据可继续运行。
-- ClassLoader 不是安全沙箱。仅应加载本地可信插件；插件签名/哈希校验、目录白名单和能力审计是未来增强项。
+- ClassLoader 不是安全沙箱。插件防护的首期措施包括：受 Runtime 管理的安装目录、插件 ID/版本/内容哈希清单、可配置 allowlist、签名校验预留、能力声明及对核心敏感 API 的授权审计、生命周期超时与资源泄漏检测。它们能防止误装、篡改和越权使用 Kuudra API，但不能阻止恶意 Java 代码直接访问操作系统；不可信扩展应通过受 OS 隔离的外部桥接进程运行。
 
 ## 7. 配置与装配
 
@@ -441,7 +442,7 @@ edges:
 
 `SystemEventBus` 的事件至少包含 `eventId`、`occurredAt`、`severity`、`category`、`flowId`（可选）、`sessionId`（可选）、`subject`、`data` 和 `traceId`。它不是业务 Signal 的镜像：默认不投递每一个原始按键，避免观测本身拖垮自动化；调试模式下可对指定 Flow/会话开启采样后的信号追踪。
 
-运行时将 `SystemEventBus` 适配为 WebSocket 推送，SSE 可作为轻量备选；REST 查询 API 提供当前快照和断线后的补偿查询。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 SignalQueue。可选的 `sinceEventId`/保留窗口用于客户端重连续传，第一版也可先只保证实时推送并让客户端回退到快照查询。
+运行时将 `SystemEventBus` 适配为 WebSocket 推送，SSE 可作为轻量备选；它是纯实时观测通道，不写入 SQLite。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 SignalQueue。Runtime 可保留一个短期内存环形缓冲区以支持瞬时重连；超过该窗口时客户端回退到 REST 状态快照，而不是查询历史系统事件。
 
 Web 模块是薄适配层，只调用 application service；它不得依赖 JavaFX，也不得直接访问插件实例。
 
@@ -453,7 +454,7 @@ Web 模块是薄适配层，只调用 application service；它不得依赖 Java
 | `GET /api/v1/components` | 活跃图、类型、健康状态 |
 | `GET /api/v1/sessions`、`GET /{id}`、`POST /{id}/cancel` | 会话查询与协作取消 |
 | `GET /api/v1/plugins`、`POST /reload`、`POST /{id}/enable|disable` | 插件管理 |
-| `GET /api/v1/system-events` | 按条件查询系统事件/诊断快照 |
+| `GET /api/v1/system-events` | 查询当前诊断与短期内存事件窗口 |
 | `GET /api/v1/system-events/stream` | SSE 备用实时流 |
 | `GET /api/v1/ws` | WebSocket：系统事件订阅、过滤和重连 |
 
@@ -466,6 +467,7 @@ TUI 仅是 HTTP/WebSocket 客户端，支持 `runtime status`、`flow validate/a
 - 结构化日志字段至少包括 flow、revision、sessionId、messageId、nodeId、pluginId、耗时与异常摘要。
 - 指标：入队/丢弃数、队列长度、端到端延迟、动作耗时、活跃会话、取消/失败/保护触发数、插件健康状态。
 - `SystemEventBus` 应当是真正可订阅的内部事件总线，并由 Web 转为 WebSocket/SSE；不能只是空接口或注释占位。
+- 系统事件不进入 SQLite；日志由独立的 `LogSink` 写入本地结构化文件（建议 JSON Lines），并按日期和文件大小滚动，保留数量/总容量/最长保留期均可配置。前端只通过 `SystemEventBus` 获得实时摘要与状态变化；本地排错直接读取滚动日志文件，必要时再由受限 REST 接口下载或检索。
 - 单节点异常默认仅失败当前会话并发布诊断，不杀死 Runtime；可配置 `onError: continue | cancel-session | disable-component`。
 - 使用虚拟时钟/可控调度器测试窗口 Router；使用假的 Source/Action 测试图分支、引用计数、取消、环路限制和部署原子切换；插件 ClassLoader 使用集成测试验证卸载后无线程泄漏。
 
