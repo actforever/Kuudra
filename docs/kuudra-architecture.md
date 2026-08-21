@@ -80,13 +80,13 @@ Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
 
 ### 3.4 Flow 间导入与导出
 
-默认情况下，Flow 内部信号绝不被其他 Flow 看见。Flow 可通过 `exports` 将指定信号发布到受控的全局交换层；另一个 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `SignalQueue` 上的一条受校验跨 Flow 投递路径。
+默认情况下，工作 Flow 内部信号绝不被其他工作 Flow 看见。工作 Flow 可通过 `exports` 将指定信号发布到受控的全局交换层；另一个工作 Flow 或控制平面 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `SignalQueue` 上的一条受校验跨 Flow 投递路径。
 
 一次 import 会在目标 Flow 中创建一个新的 **子会话（child session）**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、Router 状态和 work count。导入内容只包含被 export 的 Signal payload 和 trace，不传递父会话上下文；需要共享会话/上下文的多个执行器必须置于同一 Flow。
 
 Runtime 维护父子会话索引。父会话进入任一终态（`COMPLETED`、`CANCELLED`、`FAILED`）时，所有仍活跃的子会话都会收到**协作式取消请求**；请求本身不截断子会话队列，子 Flow 的组件链决定是停止、收尾后停止，还是继续完成链路。子会话结束不会影响父会话，也不延长父会话的引用计数。父会话与子会话可独立查询。目标 Flow 被停止或子会话单独取消时，同样不得反向取消父会话。这样的单向请求关系避免等待子会话造成死锁，也符合跨 Flow 仅传递信号、而不共享执行链的隔离原则。
 
-跨 Flow 边也参与图校验。静态 Flow import/export 环必须显式允许，并使用跨 Flow 的 `maxHops`、`maxMessages` 和 `visitedExport` 限额；这防止 A 导出给 B、B 又导入并导回 A 时形成无限会话链。
+跨 Flow 边也参与图校验。静态工作 Flow import/export 环必须显式允许，并使用跨 Flow 的 `maxHops`、`maxMessages` 和 `visitedExport` 限额；这防止 A 导出给 B、B 又导入并导回 A 时形成无限会话链。控制平面 Flow 可导入工作 Flow 的 export 用于观测和决策，但工作 Flow 不得导入控制平面内部控制信号。
 
 ## 4. 运行时、队列与并发
 
@@ -165,12 +165,14 @@ ACTIVE/PAUSING/PAUSED → STOPPING → STOPPED
 
 - `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。
 - `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待组件链 drain 后进入 `STOPPED`。超时不是强制停止：Flow 保持 `STOPPING`，发布超时诊断，且不得卸载仍可能执行的插件/组件；管理员可继续等待、重试请求或使用明确标注为不安全的强制隔离操作。
-- `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
+- `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号**不暂存**，一律按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
 - `resume`：`PAUSED → ACTIVE`；按原有顺序/公平调度策略将暂停续延表中的任务重新投递，因此从暂停所在节点的下一跳继续。暂停会话仍持有 work count，可被查询或收到取消请求；暂停状态下由组件的取消回调决定是否确认取消并删除续延，未确认时续延会保留到 `resume`。
 - `reload`：先校验并创建新 revision；成功后按策略切换至新 revision，旧 revision 选择 drain/cancel/timeout 后卸载。失败保持旧 revision `ACTIVE`。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
-控制面使用带类型的 `FlowControlCommand`（如 `flow.enable`、`flow.stop`、`flow.reload`、`session.cancel`），由 API、TUI 或 Dashboard 派发。它与业务 `SignalQueue`、只读的 `SystemEventBus` 都不同：控制命令不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
+Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
+
+控制平面 Flow 的生命周期由独立的、仅供管理端调用的 `ControlPlaneCommand` 管理；它不会被任意控制平面 Flow 派发的工作 Flow 命令影响。两类命令都不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
 
 ### 5.4 占位符与表达式
 
@@ -235,6 +237,8 @@ capabilities: [input.global.keyboard, input.global.mouse]
 
 配置模型称为 `kuudra-flow`，默认序列化格式为 YAML。它是普通的声明式 YAML 文档，不采用 Kubernetes 的 `apiVersion`/`kind` 风格，也不应允许在配置内执行 Groovy/Java。复杂逻辑由 Router/Action 插件实现。配置模型与格式解耦：首期实现 YAML 读取器，后续可以增加 JSON、TOML 读取器；它们必须编译为相同的内部 `FlowDefinition`。
 
+`flow.plane` 默认为 `work`。只有被 `kuudra.yaml.controlFlows` 显式登记且声明 `plane: control` 的 Flow 才能成为控制平面 Flow；其余文件即使声明了该字段也不得获得控制权限。
+
 运行目录结构如下。每个普通 Flow 一份文件，因而可独立校验、加载、启停和热重载；`kuudra.yaml` 是 Runtime 总清单，不承载用户 Flow 图。
 
 ```text
@@ -243,7 +247,7 @@ kuudra-home/
   flows/
     double-a-to-c.yaml
     rapid-fire.yaml
-  system-flows/               # 全局 Flow 定义
+  control-flows/              # 控制平面 Flow 定义
     emergency-stop.yaml
   plugins/                    # 插件 Fat JAR
   jnativehook-input/          # 由该插件创建并拥有的插件家目录
@@ -269,12 +273,12 @@ flows:
   watch: false                 # 配置变更不会自动重载；仅 API/TUI 显式 reload
 globalContext:
   features: { rapidFire: false }
-globalFlows:
-  - file: system-flows/emergency-stop.yaml
-    privileges: [runtime.flow.stop]
+controlFlows:
+  - file: control-flows/emergency-stop.yaml
+    privileges: [runtime.work-flow.stop]
 ```
 
-全局 Flow 与普通 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅普通 Flow 的 export。全局 Flow 可通过受权限保护的 `runtime-control` Action 派发 `FlowControlCommand`，例如紧急停止所有普通 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
+控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
 
 ```yaml
 flow:
@@ -335,16 +339,17 @@ flow: { id: ammo-guard, version: 1 }
 imports:
   - from: rapid-fire
     type: weapon.fire.requested
+    revision: active             # 默认；也可写入已存在的精确 revision
     cancellation: linked
 ```
 
-`ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 Router 中继续判断、重映射或执行动作。
+`ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 Router 中继续判断、重映射或执行动作。`revision: active` 是默认策略，始终接收来源 Flow 当前激活 revision 的 export；如需稳定绑定，可写 `revision: 42`（或完整 revision ID）。被锁定的 revision 未激活/不存在时，导入边校验失败并拒绝激活该 Flow，避免静默丢信号。
 
 全局紧急停止 Flow 的最小示例：
 
 ```yaml
-# system-flows/emergency-stop.yaml
-flow: { id: emergency-stop, scope: global, version: 1 }
+# control-flows/emergency-stop.yaml
+flow: { id: emergency-stop, plane: control, version: 1 }
 components:
   - id: escape
     type: source/jnativehook.keyboard
@@ -354,13 +359,13 @@ components:
     config:
       bindings:
         - when: "message.type == 'jnativehook.key.pressed'"
-          action: runtime-control.flow-stop
-          with: { target: all-regular-flows }
+          action: runtime-control.work-flow-stop
+          with: { target: all-work-flows }
 edges:
   - { from: escape, to: stop-all }
 ```
 
-其中 `runtime-control.flow-stop` 只能在 `kuudra.yaml` 为该全局 Flow 授予 `runtime.flow.stop` 权限后装配成功；默认不允许普通 Flow 调用。
+其中 `runtime-control.work-flow-stop` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
 
 装配流水线：读取 `kuudra.yaml` → Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、import/export、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
 
@@ -382,7 +387,8 @@ Web 模块是薄适配层，只调用 application service；它不得依赖 Java
 | HTTP API | 含义 |
 | --- | --- |
 | `GET /api/v1/runtime`、`POST /start`、`POST /stop` | 内核运行状态与生命周期 |
-| `GET /api/v1/flows`、`PUT /{id}`、`POST /{id}/enable|stop|reload` | 校验、保存、管理 Flow 状态机与配置版本 |
+| `GET /api/v1/work-flows`、`PUT /{id}`、`POST /{id}/enable|pause|resume|stop|reload` | 管理工作 Flow 状态机与配置版本 |
+| `GET /api/v1/control-flows`、`PUT /{id}`、`POST /{id}/enable|pause|resume|stop|reload` | 管理控制平面 Flow；不受工作 Flow 控制命令影响 |
 | `GET /api/v1/components` | 活跃图、类型、健康状态 |
 | `GET /api/v1/sessions`、`GET /{id}`、`POST /{id}/cancel` | 会话查询与协作取消 |
 | `GET /api/v1/plugins`、`POST /reload`、`POST /{id}/enable|disable` | 插件管理 |
