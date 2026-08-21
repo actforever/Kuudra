@@ -165,7 +165,7 @@ interface StateStore {
 }
 ```
 
-它至少支持版本化读取、CAS、原子事务、watch 和 TTL lease。首期采用单机嵌入式实现（建议 SQLite 或 RocksDB）；未来可通过适配器接入 etcd 等外部一致性 KV 存储，而不改变 Runtime API。建议键空间如下：
+它至少支持版本化读取、CAS、原子事务、watch 和 TTL lease。首期采用 **SQLite** 实现单机嵌入式 StateStore：其事务、查询、备份和人工诊断能力适合本地自动化内核；未来可通过适配器接入 etcd 等外部一致性 KV 存储，而不改变 Runtime API。建议键空间如下：
 
 ```text
 /runtime/desired-state                 # 启动/停止的期望状态
@@ -177,7 +177,9 @@ interface StateStore {
 /leases/sessions/{sessionId}            # 可选的会话/心跳 lease
 ```
 
-Flow/session 上下文默认仍为内存态；只有显式请求持久化的值写入 `StateStore`。配置中的 `globalContext` 只提供首次初始化默认值；之后的变更写入 `/context/global`，绝不修改 `kuudra.yaml`。
+Flow/session 上下文默认仍为内存态；只有显式请求持久化的值写入 `StateStore`。配置中的 `globalContext` 只提供首次初始化默认值；之后的变更写入 `/context/global`，绝不修改 `kuudra.yaml`。`globalContext` 默认对所有组件只读；只有控制平面 Flow 和在 `kuudra.yaml` 中被显式授予某个键前缀写权限的插件/工作 Flow，才能通过 CAS 修改该前缀。这些写入须携带调用方身份并记录审计 SystemEvent。
+
+进程异常退出后，Runtime 不恢复活跃会话、更不重放未完成 Signal。下次启动时根据 StateStore 中遗留的会话记录，将它们标记为 `CANCELLED_RECOVERED` 并发布恢复诊断；键盘、鼠标、网络等副作用只能由新的根信号重新发起。这一规则避免重启后意外继续旧动作。
 
 ### 5.4 Runtime 状态机
 
@@ -196,7 +198,9 @@ NEW → INITIALIZING → STARTING_CONTROL → STARTING_WORK → RUNNING → STOP
 - 控制平面成功后进入 `STARTING_WORK`，再启动已声明为启用的工作 Flow；单个工作 Flow 失败只使该 Flow 进入 `FAILED`，Runtime 仍可成为 `RUNNING`。
 - `runtime.stop` 从 `RUNNING` 或 `DEGRADED` 进入 `STOPPING`，先停止工作平面，再停止控制平面；所有安全 drain 完成后为 `STOPPED`。
 
-控制平面 Flow 与工作 Flow **不是主从关系**。两者都由 Runtime 调度，均不能直接持有或修改其他 Flow 的内部状态；控制平面仅凭授权的 `WorkFlowControlCommand` 请求 Runtime 执行操作。Runtime 和 `StateStore` 才是状态与调度的权威来源。未来若需要多进程/多机器执行，应将 Runtime 的工作执行部分演化为受控制平面协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
+控制平面 Flow 与工作 Flow **不是主从关系**。两者都由 Runtime 调度，均不能直接持有或修改其他 Flow 的内部状态；控制平面仅凭授权的 `WorkFlowControlCommand` 请求 Runtime 执行操作。Runtime 和 `StateStore` 才是状态与调度的权威来源。
+
+不将控制平面 Flow 设计为“主节点”的原因是：它本身是用户配置、可热重载且可能失败的图；若 Runtime 的启动、调度、状态一致性或权限判定依赖它，会形成“主节点尚未启动便无法启动”“主节点误操作自身”“主节点失败导致状态权威丢失”的循环。Kubernetes 式控制平面—节点关系适合未来的多进程/多机器执行层：届时可把 Runtime 的工作执行部分演化为受核心控制服务协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
 
 ### 5.5 Flow 生命周期、暂停与协作式停止
 
@@ -314,6 +318,9 @@ kuudra-home/
 runtime:
   signalQueue: { capacity: 4096, overflow: drop-latest }
   workerPool: { threads: 4 }
+stateStore:
+  type: sqlite
+  file: data/kuudra-state.db
 plugins:
   directory: plugins
   enabled: [io.kuudra.input.jnativehook, io.kuudra.action.awt-robot]
@@ -322,7 +329,11 @@ flows:
   autoLoad: true
   watch: false                 # 配置变更不会自动重载；仅 API/TUI 显式 reload
 globalContext:
-  features: { rapidFire: false }
+  values:
+    features: { rapidFire: false }
+  writeGrants:
+    - subject: control-flow:emergency-stop
+      prefixes: [/context/global/features]
 controlFlows:
   - file: control-flows/emergency-stop.yaml
     privileges: [runtime.work-flow.stop]
