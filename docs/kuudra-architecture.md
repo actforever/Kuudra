@@ -68,7 +68,7 @@ public record SignalEnvelope(
 
 ### 3.3 图而不是线
 
-一个 Flow（流定义）是版本化有向图：节点为组件，边为订阅规则。一个 Source 发出的信号是会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。每个 Flow 具有自己的信号命名空间、组件实例、Router 状态和上下文。
+一个 Flow（流定义）是版本化有向图：节点为组件，边为订阅规则。一个 Source 发出的信号是会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。每个 Flow 具有自己的信号命名空间、组件实例、Router 状态和上下文。Flow ID 在控制平面与工作平面之间全局唯一、创建后不可修改；配置加载器接受 UUID 或雪花 ID 形式的字符串，建议由 TUI/API 创建时自动生成 UUIDv7，避免用户手写冲突。
 
 ```
 Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
@@ -163,7 +163,7 @@ DISCOVERED → VALIDATED → INACTIVE → STARTING → ACTIVE → PAUSING → PA
 ACTIVE/PAUSING/PAUSED → STOPPING → STOPPED
 ```
 
-- `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。
+- `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。Runtime 启动时必须先按依赖顺序完成所有控制平面 Flow 的启动与健康检查，任一控制平面 Flow 启动失败则不得启动工作 Flow；控制平面就绪后才启动工作 Flow。
 - `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待组件链 drain 后进入 `STOPPED`。超时不是强制停止：Flow 保持 `STOPPING`，发布超时诊断，且不得卸载仍可能执行的插件/组件；管理员可继续等待、重试请求或使用明确标注为不安全的强制隔离操作。
 - `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号**不暂存**，一律按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
 - `resume`：`PAUSED → ACTIVE`；按原有顺序/公平调度策略将暂停续延表中的任务重新投递，因此从暂停所在节点的下一跳继续。暂停会话仍持有 work count，可被查询或收到取消请求；暂停状态下由组件的取消回调决定是否确认取消并删除续延，未确认时续延会保留到 `resume`。
@@ -173,6 +173,8 @@ ACTIVE/PAUSING/PAUSED → STOPPING → STOPPED
 Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
 
 控制平面 Flow 的生命周期由独立的、仅供管理端调用的 `ControlPlaneCommand` 管理；它不会被任意控制平面 Flow 派发的工作 Flow 命令影响。两类命令都不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
+
+`runtime.stop` 是唯一允许同时停止控制平面与工作 Flow 的系统级操作，且总是先停止工作 Flow、再停止控制平面 Flow；它同样遵循协作式停止与安全 drain 规则。普通 Flow 控制命令无法跨越平面边界。
 
 ### 5.4 占位符与表达式
 
