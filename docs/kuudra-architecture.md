@@ -195,14 +195,40 @@ NEW → INITIALIZING → STARTING_CONTROL → STARTING_WORK → RUNNING → STOP
 
 - `STARTING_CONTROL`：先启动、健康检查所有控制平面 Flow。
 - 控制平面任一必需 Flow 启动失败时，Runtime 先协作停止本次已启动的其他控制平面 Flow，再进入 `DEGRADED`：管理 API、诊断和 `retry-control` 保持可用，但所有工作 Flow 均不得启动，避免半启动控制平面作出不完整控制。
-- 控制平面成功后进入 `STARTING_WORK`，再启动已声明为启用的工作 Flow；单个工作 Flow 失败只使该 Flow 进入 `FAILED`，Runtime 仍可成为 `RUNNING`。
+- 控制平面成功后进入 `STARTING_WORK`，再启动已声明为启用的工作 Flow。工作平面的启动行为由 `runtime.startup.mode` 决定：`strict-all` 要求所有启用工作 Flow 均健康，否则已启动的工作 Flow 也协作停止、Runtime 进入 `DEGRADED`；`allow-degraded` 允许健康工作 Flow 继续运行，不健康 Flow 进入 `FAILED/DEGRADED`，Runtime 进入 `DEGRADED` 并保留管理能力。
 - `runtime.stop` 从 `RUNNING` 或 `DEGRADED` 进入 `STOPPING`，先停止工作平面，再停止控制平面；所有安全 drain 完成后为 `STOPPED`。
 
 控制平面 Flow 与工作 Flow **不是主从关系**。两者都由 Runtime 调度，均不能直接持有或修改其他 Flow 的内部状态；控制平面仅凭授权的 `WorkFlowControlCommand` 请求 Runtime 执行操作。Runtime 和 `StateStore` 才是状态与调度的权威来源。
 
 不将控制平面 Flow 设计为“主节点”的原因是：它本身是用户配置、可热重载且可能失败的图；若 Runtime 的启动、调度、状态一致性或权限判定依赖它，会形成“主节点尚未启动便无法启动”“主节点误操作自身”“主节点失败导致状态权威丢失”的循环。Kubernetes 式控制平面—节点关系适合未来的多进程/多机器执行层：届时可把 Runtime 的工作执行部分演化为受核心控制服务协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
 
-### 5.5 Flow 生命周期、暂停与协作式停止
+### 5.5 Flow 健康检查与启动探针
+
+每个 Flow 由 Runtime 提供 `FlowHealthProbe`，汇总其必需组件的启动探针与运行状态：
+
+```java
+interface FlowHealthProbe {
+  FlowHealth check();
+}
+
+record FlowHealth(HealthStatus status, List<ComponentHealth> components) {}
+// HealthStatus: STARTING, READY, DEGRADED, UNHEALTHY
+```
+
+插件组件可在 `start()` 后报告 `READY`，也可实现异步探针以确认外部依赖真正可用；例如 JNativeHook Source 只有在全局监听注册成功后才为 `READY`。Flow 聚合规则是“所有必需组件 READY 才为 READY”；可选组件失败使 Flow 为 `DEGRADED`，必需组件失败为 `UNHEALTHY`。每次探针结果均发布 `SystemEvent`，供 API、TUI 和 Dashboard 显示原因。
+
+`kuudra.yaml` 允许配置工作平面的启动策略与探针超时：
+
+```yaml
+runtime:
+  startup:
+    mode: strict-all            # 可选 allow-degraded
+    probeTimeout: 30s
+```
+
+无论该选项为何，控制平面始终使用 `strict-all`；只有所有必需控制 Flow 为 `READY` 后，Runtime 才会开始启动工作 Flow。
+
+### 5.6 Flow 生命周期、暂停与协作式停止
 
 每个 Flow 由 Runtime 维护独立状态机：
 
@@ -228,7 +254,7 @@ Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。
 
 `runtime.stop` 是唯一允许同时停止控制平面与工作 Flow 的系统级操作，且总是先停止工作 Flow、再停止控制平面 Flow；它同样遵循协作式停止与安全 drain 规则。普通 Flow 控制命令无法跨越平面边界。
 
-### 5.6 占位符与表达式
+### 5.7 占位符与表达式
 
 配置中的参数允许插值，但表达式语言必须刻意小且无副作用：
 
