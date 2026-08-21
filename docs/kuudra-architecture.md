@@ -203,7 +203,9 @@ NEW → INITIALIZING → STARTING_CONTROL → STARTING_WORK → RUNNING → STOP
 
 不将控制平面 Flow 设计为“主节点”的原因是：它本身是用户配置、可热重载且可能失败的图；若 Runtime 的启动、调度、状态一致性或权限判定依赖它，会形成“主节点尚未启动便无法启动”“主节点误操作自身”“主节点失败导致状态权威丢失”的循环。Kubernetes 式控制平面—节点关系适合未来的多进程/多机器执行层：届时可把 Runtime 的工作执行部分演化为受核心控制服务协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
 
-控制平面 Flow 的职责是观测、决策和发送受限控制命令，而不是执行一般自动化动作。装配器必须按 Flow plane 校验组件类型：控制平面中的 Source、Filter、Router 可使用通用类型；但 Executor 节点必须使用 `control/` 命名空间下的类型，且其可绑定 Action 也必须属于 `control/` 命名空间。插件注册组件/动作时声明 `allowedPlanes`，配置中即使手写普通执行器或 AWT Robot 动作也会被拒绝。例如 `control/executor/commands` 可调用 `control/work-flow-stop`、`control/work-flow-pause`、`control/system-event-publish`；`executor/action-bindings`、`awt-robot.*` 等普通执行器只能存在于工作 Flow。
+控制平面 Flow 的职责是观测、决策和发送受限控制命令，而不是执行一般自动化动作。装配器必须按 Flow plane 校验组件类型：控制平面中的 Source、Filter、Router 可使用通用类型；但 Executor 节点必须使用 `control/` 命名空间下的类型。插件注册组件/动作时声明 `allowedPlanes`，配置中即使手写普通执行器或 AWT Robot 动作也会被拒绝。这样限制的是产生副作用的权限边界，不会迫使 JNativeHook Source、通用 Filter 或 Router 为控制平面重复实现一份组件。
+
+核心默认提供 `control/flow-lifecycle-controller` 执行器。它是控制平面管理工作 Flow 的唯一内置入口，封装 `enable`、`pause`、`resume`、`stop`、`reload` 与 `session.cancel` 等 `WorkFlowControlCommand`；用户可用任意 Source/Filter/Router 产生信号，再通过匹配规则将信号路由到该执行器。它只接受 `target` 为工作 Flow/工作会话的选择器，并在装配与执行两阶段校验控制平面身份、`runtime.work-flow.*` 权限和目标范围。其他控制副作用应以独立的 `control/` Executor 提供，例如 `control/system-event-publisher`；`executor/action-bindings`、`awt-robot.*` 等普通执行器只能存在于工作 Flow。
 
 ### 5.5 Flow 健康检查与启动探针
 
@@ -251,7 +253,7 @@ ACTIVE → RELOADING_DRAIN → STARTING
 - `reload`：只作用于被指定的目标 Flow，不暂停其他工作 Flow。先在不产生副作用的前提下解析、校验并编译候选 revision；随后旧 revision 进入 `RELOADING_DRAIN`，停止 Source 与 import 入口接收新根信号，但允许其已有会话及后继链路自然排空。只有旧 revision 的活跃会话归零、组件和资源安全关闭后，才创建并启动新 revision。默认不设超时、不发送取消请求，语义等同于 Docker Compose 的“停止旧服务后再启动新服务”；reload 期间的新外部/import 信号按入口策略拒绝或丢弃。候选 revision 在实际启动阶段失败时，Flow 直接进入 `FAILED` 并保留诊断，**不尝试回滚或重新启动旧 revision**；管理员修复后再次 reload。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
-Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `control/` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
+Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能通过受权限保护的 `control/` Executor（默认是 `control/flow-lifecycle-controller`）派发 `WorkFlowControlCommand`，如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`；工作 Flow 永远不能加载这些执行器。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
 
 控制平面 Flow 的生命周期由独立的、仅供管理端调用的 `ControlPlaneCommand` 管理；它不会被任意控制平面 Flow 派发的工作 Flow 命令影响。两类命令都不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
 
@@ -369,7 +371,7 @@ controlFlows:
     privileges: [runtime.work-flow.stop]
 ```
 
-控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `control/` Action 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
+控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `control/` Executor 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可通过专用控制执行器发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
 
 ```yaml
 flow:
@@ -446,17 +448,17 @@ components:
     type: source/jnativehook.keyboard
     config: { listen: [key.pressed], key: ESCAPE }
   - id: stop-all
-    type: control/executor/commands
+    type: control/flow-lifecycle-controller
     config:
-      bindings:
+      routes:
         - when: "message.type == 'jnativehook.key.pressed'"
-          action: control/work-flow-stop
-          with: { target: all-work-flows }
+          command: stop
+          target: { scope: all-work-flows }
 edges:
   - { from: escape, to: stop-all }
 ```
 
-其中 `control/work-flow-stop` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
+其中 `control/flow-lifecycle-controller` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予相应的 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
 
 装配流水线：读取 `kuudra.yaml` → Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、import/export、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
 
