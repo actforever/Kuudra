@@ -127,6 +127,7 @@ interface KuudraTaskQueue extends AutoCloseable {
 - `partitionBy` 是 SignalProcessor 的状态分区键，不是新的消息队列。例如 RawSignalProcessor 的 `partitionBy: "raw.payload.key"` 会让所有 A 键信号共享同一份窗口计数并串行处理，而 B 键信号使用另一份计数、可与 A 并行；未配置时全部信号使用默认分区。它适合双击、按键保持、按设备计数等跨输入聚合策略。
 - 同一会话的 Signal 带有递增序号，KuudraRuntime 通过 `SessionLane` 保证默认按序处理；不同会话没有全局顺序保证，可以并行进入调度与执行。显式并行的 Actor 绑定是唯一例外：它允许同会话内多个 Action 并发，因而这些 Action 完成后产生的后继 Signal 按完成先后入队，不承诺彼此的完成顺序。
 - 所有 Actor 统一异步执行。KuudraRuntime 拥有有界的 `ActorExecutionPool`（首期为 JDK `ThreadPoolExecutor`）以及独立、只承担延时/超时的 `ScheduledExecutorService`；调度线程绝不等待 Action 完成。Actor 匹配绑定规则后向 ActorExecutionPool 提交 Action，持有会话 work count，待 `CompletionStage<ActionResult>` 完成后才投递结果 Signal 并释放引用。
+- 循环不是首期内核编排节点。需要“按下 A 后持续点按 B”的 Action 由对应插件实现循环与调度；它可以创建插件私有的 `ScheduledExecutorService` 或其他资源，但必须经 `PluginContext.resources()` 注册。循环 Action 的 `CompletionStage` 在循环因正常结束、取消或错误退出前不得完成；每次迭代都检查 `CancellationToken`，并在退出时取消 `ScheduledFuture`、释放按键等外部资源。Runtime 不直接调度每一轮循环，但会把整个 Action 视为未完成的会话工作，从而使 stop、drain、reload 不会在循环仍运行时关闭插件。
 
 ```java
 interface Actor {
@@ -359,6 +360,19 @@ interface KuudraPlugin {
 }
 ```
 
+`PluginContext` 提供插件家目录、日志、受限的 Runtime 服务，以及 `PluginResourceRegistry`。插件创建的线程池、定时任务、输入钩子、socket、原生句柄等长期资源必须注册为具名资源；不得只创建守护线程后依赖 JVM 退出回收。
+
+```java
+interface PluginResourceRegistry {
+  <T extends AutoCloseable> T register(String name, T resource);
+  <T extends ExecutorService> T registerExecutor(String name, T executor);
+  void retainActionWork();
+  void releaseActionWork();
+}
+```
+
+循环 Action 使用插件私有调度器时，在创建循环前 `retainActionWork()`，在循环 CompletionStage 的最终完成回调中 `releaseActionWork()`；定时任务及其 Future 必须由 Action 自身在取消/失败/正常结束时关闭。`PluginResourceRegistry` 的作用不是替插件管理业务循环，而是使 Runtime 能列出资源、拒绝带活跃工作的卸载、并在异常路径按注册逆序兜底关闭资源。
+
 注册项包含类型名、JSON Schema、配置到实例的工厂、执行模型、能力声明和版本。核心内置的类型也走同一注册表。建议首批插件：
 
 - `kuudra-input-jnativehook`：键盘、鼠标原始 SignalSource；不做双击等业务手势。
@@ -381,9 +395,9 @@ capabilities: [input.global.keyboard, input.global.mouse]
 ```
 
 - 每个已解析插件集合由专用、可关闭的 `URLClassLoader` 加载；父加载器仅暴露 `kuudra-api`、JDK 和日志 API。
-- 依赖按有向无环图解析；父插件先启动、反向停止。循环依赖和版本范围不满足均拒绝激活。
+- 依赖按有向无环图解析；父插件先启动、反向停止。循环依赖和版本范围不满足均拒绝激活。插件状态为 `RESOLVED → STARTING → ACTIVE → DRAINING → STOPPING → STOPPED`，启动失败进入 `FAILED`；只有依赖全部 `ACTIVE` 时才允许实例化其组件或 Action。
 - 共享 API 包必须 parent-first；插件私有依赖 child-first，并禁止插件导出核心 API 的重复副本，避免 `ClassCastException`。
-- 插件/Flow reload 是**候选配置预校验 → 旧 revision drain → 关闭旧资源 → 启动新 revision**，不是在原 ClassLoader 中替换类。默认 drain 不取消、不超时；确认旧 revision 无活跃会话、实例、线程或资源后才 close ClassLoader。
+- 插件/Flow reload 是**候选配置预校验 → 旧 revision drain → 关闭旧资源 → 启动新 revision**，不是在原 ClassLoader 中替换类。插件树的停止顺序为：先停止依赖该插件的 Flow 新会话入口并 drain 其活跃会话，再停止依赖它的子插件，随后调用当前插件 `stop`，由资源注册表按逆注册顺序关闭残留资源，最后关闭 ClassLoader；父插件最后停止。默认 drain 不取消、不超时；存在活跃 Action work、非终止线程或未关闭资源时不得 close ClassLoader，并进入 `DRAINING`/诊断状态。
 - 插件可选实现 `PluginStateMigration`：声明来源/目标插件版本，并在新插件启动、旧版本资源释放前，通过受限 `PluginMigrationContext` 迁移插件家目录与 `/plugins/{pluginId}/state` 数据。迁移必须可预检（dry-run）、具备原子提交或可恢复备份，并在失败时保持旧插件版本与数据可继续运行。
 - ClassLoader 不是安全沙箱。插件防护的首期措施包括：受 Runtime 管理的安装目录、插件 ID/版本/内容哈希清单、可配置 allowlist、签名校验预留、能力声明及对核心敏感 API 的授权审计、生命周期超时与资源泄漏检测。它们能防止误装、篡改和越权使用 Kuudra API，但不能阻止恶意 Java 代码直接访问操作系统；不可信扩展应通过受 OS 隔离的外部桥接进程运行。
 
