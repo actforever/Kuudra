@@ -108,6 +108,8 @@ interface SignalTaskQueue extends AutoCloseable {
 - KuudraFlow 不是物理队列隔离单元，而是**逻辑隔离单元**：每项任务都携带确定的 Flow revision、会话 ID 和目标节点；只能路由到该 Flow 图内允许的边。不同 Flow 共享背压和工作池，但不共享上下文、SignalProcessor 状态或组件实例，除非显式使用全局上下文/共享插件资源。
 - 为避免一个 Flow 挤占全局队列，调度器按 Flow 维护配额和公平性（建议加权轮转）；每个 Flow 还可声明 `maxQueuedTasks`、每会话上限及其溢出策略。全局队列满时先执行全局策略，再应用 Flow/边级策略并产生诊断事件。
 - SignalSource 回调必须极短：创建根会话、封装 Signal、按入口边投递，绝不直接跑用户动作。调度器执行 SignalAdapter/SignalProcessor 的轻量处理；Flow 级 SignalProcessor 状态由 KuudraRuntime 按 `(flowRevision, processorId)` 管理，同一状态分区必须串行化（或由 Processor 声明等价的原子实现）。需要按键/设备等分区时，Processor 声明 `partitionBy` 表达式，Runtime 按其结果分别串行。
+- `partitionBy` 是 SignalProcessor 的状态分区键，不是新的消息队列。例如 `partitionBy: "signal.payload.key"` 会让所有 A 键信号共享同一份窗口计数并串行处理，而 B 键信号使用另一份计数、可与 A 并行；未配置时全部信号使用默认分区。它适合双击、按键保持、按设备计数等跨会话聚合策略。
+- 同一会话的 Signal 带有递增序号，KuudraRuntime 通过 `SessionLane` 保证默认按序处理；不同会话没有全局顺序保证，可以并行进入调度与执行。显式并行的 Actor 绑定是唯一例外：它允许同会话内多个 Action 并发，因而这些 Action 完成后产生的后继 Signal 按完成先后入队，不承诺彼此的完成顺序。
 - 所有 Actor 统一异步执行。KuudraRuntime 拥有有界的 `ActorExecutionPool`（首期为 JDK `ThreadPoolExecutor`）以及独立、只承担延时/超时的 `ScheduledExecutorService`；调度线程绝不等待 Action 完成。Actor 匹配绑定规则后向 ActorExecutionPool 提交 Action，持有会话 work count，待 `CompletionStage<ActionResult>` 完成后才投递结果 Signal 并释放引用。
 
 ```java
@@ -120,7 +122,7 @@ interface Action {
 }
 ```
 
-- Actor 的并发策略由组件声明：`serial`、`per-session-serial`、`parallel(limit)`、`latest-wins`。Runtime 通过执行 lane/信号量强制这些策略；涉及键盘/鼠标的 AWT Robot 动作默认 `serial`。线程池和其待执行队列同样有界，饱和时按 Actor 的拒绝策略处理并发布诊断，而不是让执行器无限堆积或阻塞 SignalTaskQueue。
+- Actor 的并发策略由组件声明：`serial`、`per-session-serial`、`parallel(limit)`、`latest-wins`。同一会话内多条命中绑定默认 `per-session-serial`，按声明顺序执行；不同会话的绑定默认具备并行资格，只有被 Actor/Action 明确声明为 `serial` 或受 `parallel(limit)` 限制时才会等待。只有显式声明 `parallel` 才允许同会话绑定并发。Runtime 通过执行 lane/信号量强制这些策略；涉及键盘/鼠标的 AWT Robot 动作默认 `serial`。线程池和其待执行队列同样有界，饱和时按 Actor 的拒绝策略处理并发布诊断，而不是让执行器无限堆积或阻塞 SignalTaskQueue。
 - 队列满时按入口/边定义 `reject`、`drop-latest`、`drop-oldest` 或 `block-source`；输入钩子默认 `drop-latest` 并计数告警，禁止无限内存队列。
 
 运行时不应只有一个线程，更不能在处理完一个 bundle 后退出循环。异步动作完成后必须通过调度器继续派发结果信号，而不是在动作线程上递归调用下一节点。
@@ -521,7 +523,7 @@ TUI 仅是 HTTP/WebSocket 客户端，支持 `runtime status`、`flow validate/a
 - 指标：入队/丢弃数、队列长度、端到端延迟、动作耗时、活跃会话、取消/失败/保护触发数、插件健康状态。
 - `SystemEventBus` 应当是真正可订阅的内部事件总线，并由 Web 转为 WebSocket/SSE；不能只是空接口或注释占位。
 - 系统事件不进入 SQLite；日志由独立的 `LogSink` 写入本地结构化文件（建议 JSON Lines），并按日期和文件大小滚动，保留数量/总容量/最长保留期均可配置。前端只通过 `SystemEventBus` 获得实时摘要与状态变化；本地排错直接读取滚动日志文件，必要时再由受限 REST 接口下载或检索。
-- 单节点异常默认仅失败当前会话并发布诊断，不杀死 Runtime；可配置 `onError: continue | cancel-session | disable-component`。
+- Action 失败默认不自动重试：Runtime 发布诊断并按 Actor 的 `onError: continue | cancel-session | disable-component` 策略处理当前会话，不杀死 KuudraRuntime。只有用户在 KuudraFlow 中明确建模重试 Signal/延时 SignalProcessor，并且目标 Action 声明可安全重入时，才允许再次调用。
 - 使用虚拟时钟/可控调度器测试窗口 SignalProcessor；使用假的 SignalSource/Action 测试图分支、引用计数、取消、环路限制和部署原子切换；插件 ClassLoader 使用集成测试验证卸载后无线程泄漏。
 
 ## 10. 模块划分
