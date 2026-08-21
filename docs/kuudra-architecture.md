@@ -151,7 +151,54 @@ interface Session {
 
 上下文必须是持久化/不可变视图：分支得到同一父上下文加自己的 delta，不能共享一个可变 `Map`。显式 `ContextStore` 操作才能写 session/global，避免并发分支隐式覆盖。建议用 CAS 版本号，冲突策略为 `fail`、`last-write-wins` 或插件提供的合并器。
 
-### 5.3 Flow 生命周期、暂停与协作式停止
+### 5.3 状态存储
+
+Kuudra 引入类似 etcd 的 `StateStore` 抽象，而不把运行时变更回写 YAML。`kuudra.yaml` 与 Flow 文件始终是声明式期望配置；`StateStore` 保存可变的运行状态。
+
+```java
+interface StateStore {
+  VersionedValue get(Key key);
+  boolean compareAndSet(Key key, Revision expected, Value next);
+  TransactionResult transact(Transaction transaction);
+  Watch watch(KeyPrefix prefix, Revision from);
+  Lease grant(Duration ttl);
+}
+```
+
+它至少支持版本化读取、CAS、原子事务、watch 和 TTL lease。首期采用单机嵌入式实现（建议 SQLite 或 RocksDB）；未来可通过适配器接入 etcd 等外部一致性 KV 存储，而不改变 Runtime API。建议键空间如下：
+
+```text
+/runtime/desired-state                 # 启动/停止的期望状态
+/runtime/observed-state                # Runtime 状态机快照
+/context/global/...                    # 可持久化全局上下文
+/flows/{flowId}/desired-state           # 期望启停/暂停状态
+/flows/{flowId}/observed-state          # 实际 Flow 状态与 revision
+/plugins/{pluginId}/state/...           # 插件托管状态
+/leases/sessions/{sessionId}            # 可选的会话/心跳 lease
+```
+
+Flow/session 上下文默认仍为内存态；只有显式请求持久化的值写入 `StateStore`。配置中的 `globalContext` 只提供首次初始化默认值；之后的变更写入 `/context/global`，绝不修改 `kuudra.yaml`。
+
+### 5.4 Runtime 状态机
+
+Runtime 也维护独立状态机：
+
+```text
+NEW → INITIALIZING → STARTING_CONTROL → STARTING_WORK → RUNNING → STOPPING → STOPPED
+                         │                                      │
+                         └──────────────→ DEGRADED ←────────────┘
+                                          │
+                                          └── retry-control ──→ STARTING_CONTROL
+```
+
+- `STARTING_CONTROL`：先启动、健康检查所有控制平面 Flow。
+- 控制平面任一必需 Flow 启动失败时，Runtime 先协作停止本次已启动的其他控制平面 Flow，再进入 `DEGRADED`：管理 API、诊断和 `retry-control` 保持可用，但所有工作 Flow 均不得启动，避免半启动控制平面作出不完整控制。
+- 控制平面成功后进入 `STARTING_WORK`，再启动已声明为启用的工作 Flow；单个工作 Flow 失败只使该 Flow 进入 `FAILED`，Runtime 仍可成为 `RUNNING`。
+- `runtime.stop` 从 `RUNNING` 或 `DEGRADED` 进入 `STOPPING`，先停止工作平面，再停止控制平面；所有安全 drain 完成后为 `STOPPED`。
+
+控制平面 Flow 与工作 Flow **不是主从关系**。两者都由 Runtime 调度，均不能直接持有或修改其他 Flow 的内部状态；控制平面仅凭授权的 `WorkFlowControlCommand` 请求 Runtime 执行操作。Runtime 和 `StateStore` 才是状态与调度的权威来源。未来若需要多进程/多机器执行，应将 Runtime 的工作执行部分演化为受控制平面协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
+
+### 5.5 Flow 生命周期、暂停与协作式停止
 
 每个 Flow 由 Runtime 维护独立状态机：
 
@@ -176,7 +223,7 @@ Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。
 
 `runtime.stop` 是唯一允许同时停止控制平面与工作 Flow 的系统级操作，且总是先停止工作 Flow、再停止控制平面 Flow；它同样遵循协作式停止与安全 drain 规则。普通 Flow 控制命令无法跨越平面边界。
 
-### 5.4 占位符与表达式
+### 5.6 占位符与表达式
 
 配置中的参数允许插值，但表达式语言必须刻意小且无副作用：
 
@@ -233,6 +280,7 @@ capabilities: [input.global.keyboard, input.global.mouse]
 - 依赖按有向无环图解析；父插件先启动、反向停止。循环依赖和版本范围不满足均拒绝激活。
 - 共享 API 包必须 parent-first；插件私有依赖 child-first，并禁止插件导出核心 API 的重复副本，避免 `ClassCastException`。
 - “热重载”是**新类加载器 + 新 Flow revision + 停旧版本**，不是在原 ClassLoader 中替换类。旧会话可选择 drain、cancel 或等待超时；确认无实例/线程/资源后才 close ClassLoader。
+- 插件可选实现 `PluginStateMigration`：声明来源/目标插件版本，并在新插件启动、旧版本资源释放前，通过受限 `PluginMigrationContext` 迁移插件家目录与 `/plugins/{pluginId}/state` 数据。迁移必须可预检（dry-run）、具备原子提交或可恢复备份，并在失败时保持旧插件版本与数据可继续运行。
 - ClassLoader 不是安全沙箱。仅应加载本地可信插件；插件签名/哈希校验、目录白名单和能力审计是未来增强项。
 
 ## 7. 配置与装配
@@ -416,6 +464,7 @@ TUI 仅是 HTTP/WebSocket 客户端，支持 `runtime status`、`flow validate/a
 kuudra-api              稳定模型、SPI、DTO；插件唯一可见的核心依赖
 kuudra-runtime          共享队列、调度、会话、图执行、SystemEventBus（依赖 api）
 kuudra-config           YAML/JSON/TOML、schema、表达式、Flow 编译（依赖 api）
+kuudra-state            StateStore、嵌入式存储与外部存储适配器（依赖 api）
 kuudra-plugin-manager   描述符、依赖解析、ClassLoader、生命周期（依赖 api）
 kuudra-application      用例服务：Flow、会话、插件、运行时（依赖上述模块）
 kuudra-web              Spring Boot REST/WebSocket/SSE 适配器（依赖 application）
@@ -427,8 +476,8 @@ plugins/*               独立构建和发布的插件 Fat JAR
 
 ## 11. 实施顺序
 
-1. 建立 `kuudra-api` 的 Signal、Session、Component SPI、SystemEvent 模型和错误模型；先完成不依赖真实输入的单元测试。
-2. 实现 Runtime（共享有界队列、Flow 公平调度、分支引用计数、取消、串并行执行、SystemEventBus），以假 Source/Action 验证不变量。
+1. 建立 `kuudra-api` 的 Signal、Session、Component SPI、SystemEvent、StateStore 模型和错误模型；先完成不依赖真实输入的单元测试。
+2. 实现 `kuudra-state` 的嵌入式 StateStore，以及 Runtime（状态机、共享有界队列、Flow 公平调度、分支引用计数、取消、串并行执行、SystemEventBus），以假 Source/Action 验证不变量。
 3. 实现 Config 编译器、schema、表达式和图校验；完成双击示例的端到端测试。
 4. 实现 Plugin Manager 和一个 JNativeHook Source 插件、一个 AWT Robot Action 插件；先支持冷加载，再实现 drain 型重载。
 5. 实现 Application + REST/WebSocket API + TUI；Dashboard 最后接入。
