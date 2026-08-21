@@ -7,10 +7,10 @@
         <version>v0.3.0-alpha-1</version>
     </parent>
 
-    <artifactId>orcana-core</artifactId>
+    <artifactId>orcana-runtime</artifactId>
     <packaging>jar</packaging>
 
-    <name>orcana-core</name>
+    <name>orcana-runtime</name>
     <url>http://maven.apache.org</url>
 
     <properties>

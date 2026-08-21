@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>cc.pineclone</groupId>
+    <groupId>io.github.actforever</groupId>
     <artifactId>orcana</artifactId>
     <version>v0.3.0-alpha-1</version>
     <packaging>pom</packaging>
@@ -15,7 +15,9 @@
 <!--        <module>eventflow-plugin-jnativehook-trigger</module>-->
 <!--        <module>eventflow-user-interaction-spec</module>-->
         <module>orcana-core</module>
-        <module>orcana-common</module>
+        <module>orcana-runtime</module>
+        <module>orcana-plugin</module>
+        <module>orcana-config</module>
     </modules>
 
     <properties>
