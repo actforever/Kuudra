@@ -35,6 +35,7 @@ Kuudra 是一个本地自动化事件流内核。它不再把“宏”当作一�
 public record SignalEnvelope(
     UUID messageId,
     UUID sessionId,
+    FlowRef flow,                // 当前所属 Flow 与 revision
     String type,                 // 例如 input.key.pressed、gesture.a.double
     Instant occurredAt,
     ComponentRef producer,
@@ -50,6 +51,7 @@ public record SignalEnvelope(
 - `payload` 表达事实；不允许组件修改已经入队的消息。
 - `contextDelta` 表达本跳产生的、需要传给后继链路的值；运行时在分发时创建新的上下文视图。
 - `messageId` 唯一，`trace.causationId` 指向直接父消息，`trace.rootMessageId` 便于关联观测。
+- Flow 内信号的完整地址为 `flowId:type`；组件配置中只写本 Flow 的 `type`。导出信号保留其来源 `FlowRef`，导入方不能伪造或覆盖来源。
 - Payload、上下文和配置值必须是 JSON 值（null、boolean、number、string、array、object）。插件内部对象不可泄漏到消息边界。
 
 ### 3.2 五类组件
@@ -58,7 +60,7 @@ public record SignalEnvelope(
 | --- | --- | --- | --- |
 | 信号源 Source | 外部世界 | 0..n 信号 | 监听键鼠、定时器、HTTP、游戏状态等 |
 | 过滤器 Filter | 信号 | 0..n 信号 | 筛选、重命名、投影/补充 payload、限流；无跨消息状态 |
-| 路由器 Router | 信号流 | 0..n 信号 | 有状态识别、聚合、窗口/超时、分支；每个会话隔离状态 |
+| 路由器 Router | 信号流 | 0..n 信号 | 有状态识别、聚合、窗口/超时、分支；状态默认按 Flow 隔离 |
 | 执行器 Executor | 信号 | 动作结果和 0..n 信号 | 按绑定规则调用插件动作，可生成后继信号 |
 | 动作 Action | 参数与执行上下文 | 结果 | 最小的副作用单元，例如 `robot.keyTap` |
 
@@ -66,7 +68,7 @@ public record SignalEnvelope(
 
 ### 3.3 图而不是线
 
-一个 Flow（流定义）是版本化有向图：节点为组件，边为订阅规则。一个 Source 发出的信号是会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。
+一个 Flow（流定义）是版本化有向图：节点为组件，边为订阅规则。一个 Source 发出的信号是会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。每个 Flow 具有自己的信号命名空间、组件实例、Router 状态和上下文。
 
 ```
 Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
@@ -75,6 +77,14 @@ Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
 ```
 
 “路由”应理解为选择后继处理器的规则层，不是单独、全局的消息队列消费者。Router 可同时是图节点：它消费信号、维护状态，并产生更高层信号。
+
+### 3.4 Flow 间导入与导出
+
+默认情况下，Flow 内部信号绝不被其他 Flow 看见。Flow 可通过 `exports` 将指定信号发布到受控的全局交换层；另一个 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `SignalQueue` 上的一条受校验跨 Flow 投递路径。
+
+一次 import 会在目标 Flow 中创建一个新的 **imported session**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、Router 状态和 work count。这样目标 Flow 的会话结束不会因等待来源 Flow 而死锁，且它仍可独立被查询和取消。默认的取消语义是 `linked`：来源会话取消时，尚活跃的 imported session 也收到协作式取消请求；目标 Flow 被单独停止或会话被单独取消时，不反向取消来源。可在 import 上声明 `cancellation: detached` 以关闭这条单向传播。
+
+跨 Flow 边也参与图校验。静态 Flow import/export 环必须显式允许，并使用跨 Flow 的 `maxHops`、`maxMessages` 和 `visitedExport` 限额；这防止 A 导出给 B、B 又导入并导回 A 时形成无限会话链。
 
 ## 4. 运行时、队列与并发
 
@@ -85,6 +95,7 @@ Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
 - 为避免一个 Flow 挤占全局队列，调度器按 Flow 维护配额和公平性（建议加权轮转）；每个 Flow 还可声明 `maxQueuedTasks`、每会话上限及其溢出策略。全局队列满时先执行全局策略，再应用 Flow/边级策略并产生诊断事件。
 - Source 回调必须极短：创建根会话、封装消息、按入口边投递，绝不直接跑用户动作。
 - 调度器从队列取项，按节点的执行模型投递到工作池。默认使用有界 `ExecutorService`；同一会话内的有状态 Router 默认串行，跨会话可以并行。
+- Flow 级 Router 状态由 Runtime 按 `(flowRevision, routerId)` 管理；同一状态分区的消息必须串行化（或由 Router 声明等价的原子实现），不能因工作池并行而发生丢计数、重复匹配。需要按键/设备等分区时，Router 声明 `partitionBy` 表达式，Runtime 按其结果分别串行。
 - Executor 的并发策略由组件声明：`serial`、`per-session-serial`、`parallel(limit)`、`latest-wins`。涉及键盘/鼠标的 AWT Robot 动作默认 `serial`。
 - 队列满时按入口/边定义 `reject`、`drop-latest`、`drop-oldest` 或 `block-source`；输入钩子默认 `drop-latest` 并计数告警，禁止无限内存队列。
 
@@ -124,7 +135,7 @@ interface Session {
 
 状态为 `ACTIVE → {COMPLETED | CANCELLING → CANCELLED | FAILED}`。取消是协作式的：调度器不再派生新工作；尚未开始的任务被跳过；插件在 `ExecutionContext.cancellation()` 处检查。不能安全中止的本地调用允许跑完，但不得再发后继信号。
 
-会话由根信号创建，而不是由执行器创建。一个 Router 的超时也仍属于原会话；定时器仅持有会话引用。跨会话聚合（例如“任意用户的最近十次点击”）必须明确使用全局状态 Router，不能悄悄混入会话状态。
+会话由根信号创建，而不是由执行器创建；import 信号是目标 Flow 的受关联根信号。一个 Router 的超时仍属于触发它的会话；定时器仅持有会话引用。Router 的默认状态域是 Flow 级别，因此“双击”等多个原始输入的聚合自然可行；Router 可显式声明 `stateScope: session`，以获得单会话状态。全局状态只能经明确的 `global` ContextStore 访问，不能悄悄混入 Router 状态。
 
 ### 5.2 上下文作用域
 
@@ -138,7 +149,24 @@ interface Session {
 
 上下文必须是持久化/不可变视图：分支得到同一父上下文加自己的 delta，不能共享一个可变 `Map`。显式 `ContextStore` 操作才能写 session/global，避免并发分支隐式覆盖。建议用 CAS 版本号，冲突策略为 `fail`、`last-write-wins` 或插件提供的合并器。
 
-### 5.3 占位符与表达式
+### 5.3 Flow 生命周期与协作式停止
+
+每个 Flow 由 Runtime 维护独立状态机：
+
+```text
+DISCOVERED → VALIDATED → INACTIVE → STARTING → ACTIVE → STOPPING → STOPPED
+                         │              │             │
+                         └──────────────┴─────────────┴──→ FAILED
+```
+
+- `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。
+- `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待 drain 或达到超时，最后 `STOPPED`。
+- `reload`：先校验并创建新 revision；成功后按策略切换至新 revision，旧 revision 选择 drain/cancel/timeout 后卸载。失败保持旧 revision `ACTIVE`。
+- `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
+
+控制面使用带类型的 `FlowControlCommand`（如 `flow.enable`、`flow.stop`、`flow.reload`、`session.cancel`），由 API、TUI 或 Dashboard 派发。它与业务 `SignalQueue`、只读的 `SystemEventBus` 都不同：控制命令不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；组件必须协作检查 token 并释放资源，但允许当前不可安全中断的操作收尾后才结束。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
+
+### 5.4 占位符与表达式
 
 配置中的参数允许插值，但表达式语言必须刻意小且无副作用：
 
@@ -201,6 +229,45 @@ capabilities: [input.global.keyboard, input.global.mouse]
 
 配置模型称为 `kuudra-flow`，默认序列化格式为 YAML。它是普通的声明式 YAML 文档，不采用 Kubernetes 的 `apiVersion`/`kind` 风格，也不应允许在配置内执行 Groovy/Java。复杂逻辑由 Router/Action 插件实现。配置模型与格式解耦：首期实现 YAML 读取器，后续可以增加 JSON、TOML 读取器；它们必须编译为相同的内部 `FlowDefinition`。
 
+运行目录结构如下。每个 Flow 一份文件，因而可独立校验、加载、启停和热重载；`kuudra.yaml` 是 Runtime 总清单，不承载用户 Flow 图。
+
+```text
+kuudra-home/
+  kuudra.yaml                 # 全局运行时、插件、全局上下文、共享动作定义
+  flows/
+    double-a-to-c.yaml
+    rapid-fire.yaml
+  plugins/                    # 插件 Fat JAR
+  jnativehook-input/          # 由该插件创建并拥有的插件家目录
+    config.yaml
+    data/                     # 插件持久化数据
+    resources/                # 插件私有资源
+```
+
+插件家目录由 `PluginContext.pluginHome(pluginId)` 提供，位于 `flows/` 同级目录且受 Runtime 创建/权限控制。插件只能写自己的目录；其 `config.yaml` 是插件运行配置，不得替代或隐式修改 Flow YAML。
+
+`kuudra.yaml` 示例：
+
+```yaml
+runtime:
+  signalQueue: { capacity: 4096, overflow: drop-latest }
+  workerPool: { threads: 4 }
+plugins:
+  directory: plugins
+  enabled: [io.kuudra.input.jnativehook, io.kuudra.action.awt-robot]
+flows:
+  directory: flows
+  autoLoad: true
+globalContext:
+  features: { rapidFire: false }
+sharedActions:
+  safe-key-tap:
+    type: awt-robot.key-tap
+    defaults: { releaseOnCancel: true }
+```
+
+`sharedActions` 是可复用的动作定义和默认参数，不是自动运行的“全局宏”。Flow 中可用 `actionRef: safe-key-tap` 引用它，并在本地覆盖参数；装配器在激活时展开并校验所引用动作的插件类型。
+
 ```yaml
 flow:
   id: double-a-to-c
@@ -213,25 +280,26 @@ plugins:
     version: "^1.0"
 components:
   - id: keyboard
-    kind: source/jnativehook.keyboard
+    type: source/jnativehook.keyboard
     config: { listen: [key.pressed] }
   - id: only-a
-    kind: filter/json
+    type: filter/json
     config:
       when: "message.type == 'jnativehook.key.pressed' && message.payload.key == 'A'"
       emit:
         type: input.a.pressed
         payload: { key: "${message.payload.key}" }
   - id: double-a
-    kind: router/window-count
+    type: router/window-count
     config:
       inputType: input.a.pressed
       count: 2
       within: 500ms
       emitType: gesture.a.doublePressed
       reset: on-match
+      stateScope: flow
   - id: robot
-    kind: executor/action-bindings
+    type: executor/action-bindings
     config:
       bindings:
         - when: "message.type == 'gesture.a.doublePressed'"
@@ -246,7 +314,25 @@ policies:
   session: { maxHops: 64, maxMessages: 10000 }
 ```
 
-装配流水线：Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
+跨 Flow 通信例子：
+
+```yaml
+# flows/rapid-fire.yaml
+flow: { id: rapid-fire, version: 1 }
+exports:
+  - type: weapon.fire.requested
+
+# flows/ammo-guard.yaml
+flow: { id: ammo-guard, version: 1 }
+imports:
+  - from: rapid-fire
+    type: weapon.fire.requested
+    cancellation: linked
+```
+
+`ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 Router 中继续判断、重映射或执行动作。
+
+装配流水线：读取 `kuudra.yaml` → Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、import/export、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
 
 ## 8. 系统事件管线、管理 API 与客户端
 
@@ -266,7 +352,7 @@ Web 模块是薄适配层，只调用 application service；它不得依赖 Java
 | HTTP API | 含义 |
 | --- | --- |
 | `GET /api/v1/runtime`、`POST /start`、`POST /stop` | 内核运行状态与生命周期 |
-| `GET /api/v1/flows`、`PUT /{id}`、`POST /{id}/activate` | 校验、保存、激活配置版本 |
+| `GET /api/v1/flows`、`PUT /{id}`、`POST /{id}/enable|stop|reload` | 校验、保存、管理 Flow 状态机与配置版本 |
 | `GET /api/v1/components` | 活跃图、类型、健康状态 |
 | `GET /api/v1/sessions`、`GET /{id}`、`POST /{id}/cancel` | 会话查询与协作取消 |
 | `GET /api/v1/plugins`、`POST /reload`、`POST /{id}/enable|disable` | 插件管理 |
