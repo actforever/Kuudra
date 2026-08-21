@@ -29,19 +29,34 @@ Kuudra 是一个本地自动化事件流内核。它不再把“宏”当作一�
 
 ### 3.1 统一消息
 
-所有组件只接收和发出 `Signal`。不再区分内核级的 Event 与 Command；原先“Envelope”表达的路由、会话和追踪元数据直接成为 `Signal` 的一部分。
+Kuudra 将业务消息分为严格单向的三个阶段，不再区分内核级的 Event 与 Command：
+
+```text
+RawSignal  →  RootSignal  →  Signal
+无会话          会话准入请求       已绑定会话
+```
+
+`RawSignal` 仅用于原始事件处理，不含会话；`RootSignal` 由 SessionProcessor 产生，携带会话创建说明；只有经 Runtime 准入后的 `Signal` 才有会话并可进入 Actor。
 
 ```java
-public record Signal(
+public record RawSignal(
     UUID messageId,
-    UUID sessionId,
-    KuudraFlowRef flow,          // 当前所属 KuudraFlow 与 revision
     String type,                 // 例如 input.key.pressed、gesture.a.double
     Instant occurredAt,
     ComponentRef producer,
     Map<String, Object> payload, // JSON 兼容、不可变
-    ContextDelta contextDelta,   // 本跳新增/修改的会话上下文
     Trace trace                  // 路径、深度、因果关系
+) {}
+```
+
+```java
+public record RootSignal(RawSignal raw, SessionSpec sessionSpec) {}
+
+public record Signal(
+    RawSignal raw,
+    UUID sessionId,
+    KuudraFlowRef flow,
+    ContextDelta contextDelta
 ) {}
 ```
 
@@ -51,40 +66,45 @@ public record Signal(
 - `payload` 表达事实；不允许组件修改已经入队的消息。
 - `contextDelta` 表达本跳产生的、需要传给后继链路的值；运行时在分发时创建新的上下文视图。
 - `messageId` 唯一，`trace.causationId` 指向直接父消息，`trace.rootMessageId` 便于关联观测。
-- Flow 内信号的完整地址为 `flowId:type`；组件配置中只写本 Flow 的 `type`。导出信号保留其来源 `FlowRef`，导入方不能伪造或覆盖来源。
+- KuudraFlow 内信号的完整地址为 `flowId:type`；组件配置中只写本 Flow 的 `type`。export 的 Signal 保留其来源 `KuudraFlowRef`，导入方不能伪造或覆盖来源。
 - Payload、上下文和配置值必须是 JSON 值（null、boolean、number、string、array、object）。插件内部对象不可泄漏到消息边界。
 
 ### 3.2 五类组件
 
 | 组件 | 输入 | 输出 | 职责 |
 | --- | --- | --- | --- |
-| `SignalSource` 信号源 | 外部世界 | 0..n 信号 | 监听键鼠、定时器、HTTP、游戏状态等 |
-| `SignalAdapter` 信号适配器 | 信号 | 0..n 信号 | 筛选、重命名、投影/补充 payload、限流；无跨消息状态 |
-| `SignalProcessor` 信号处理器 | 信号流 | 0..n 信号 | 有状态识别、聚合、窗口/超时、分支；状态默认按 KuudraFlow 隔离 |
-| `Actor` 行为体 | 信号 | 动作结果和 0..n 信号 | 按绑定规则异步调用插件动作，可生成后继信号 |
+| `SignalSource` 信号源 | 外部世界 | 0..n RawSignal | 监听键鼠、定时器、HTTP、游戏状态等 |
+| `SignalAdapter` 信号适配器 | RawSignal 或 Signal | 同阶段 0..n 消息 | 筛选、重命名、投影/补充 payload、限流；无跨消息状态 |
+| `SignalProcessor` 信号处理器 | RawSignal 或 Signal | 同阶段 0..n 消息 | 有状态识别、聚合、窗口/超时、分支；状态默认按 KuudraFlow 隔离 |
+| `SessionProcessor` 会话处理器 | RawSignal | 0..n RootSignal | 指定会话名称、分组键和准入策略，是唯一的阶段桥接点 |
+| `Actor` 行为体 | Signal | 动作结果和 0..n Signal | 按绑定规则异步调用插件动作，后继 Signal 继承原会话 |
 | 动作 Action | 参数与执行上下文 | 结果 | 最小的副作用单元，例如 `robot.keyTap` |
 
-`SignalAdapter` 不是“信号源专属”或“Actor 专属”对象，而是图中的普通处理节点。`SignalProcessor` 是手势、时序和聚合策略的承载点：简单策略可单独作为节点串联，复杂策略可由插件提供组合/链式 Processor。为方便配置，SignalSource 和 Actor 可声明内联 `postAdapters`；装配器将其展开成显式边。
+`SignalAdapter` 不是“信号源专属”或“Actor 专属”对象，而是图中的普通处理节点。`SignalProcessor` 是手势、时序和聚合策略的承载点：简单策略可单独作为节点串联，复杂策略可由插件提供组合/链式 Processor。SessionProcessor 是 RawSignal 阶段的终点，Actor 永远不能接收 RawSignal。为方便配置，SignalSource 和 Actor 可声明内联 `postAdapters`；装配器将其展开成显式边。
 
 ### 3.3 图而不是线
 
-`KuudraFlow` 是版本化有向图，也是 Runtime 内最小的调度、隔离、健康检查与生命周期单元；下文简称 Flow。节点为组件，边为订阅规则。一个 SignalSource 发出的信号是会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。每个 KuudraFlow 具有自己的信号命名空间、组件实例、SignalProcessor 状态和上下文。KuudraFlow ID 在控制平面与工作平面之间全局唯一、创建后不可修改；配置加载器接受 UUID 或雪花 ID 形式的字符串，建议由 TUI/API 创建时自动生成 UUIDv7，避免用户手写冲突。
+`KuudraFlow` 是版本化有向图，也是 Runtime 内最小的调度、隔离、健康检查与生命周期单元；下文简称 Flow。节点为组件，边为订阅规则。SignalSource 发出的 RawSignal 经前置 SignalAdapter/SignalProcessor 链和 SessionProcessor 后，才成为会话根；同一会话可在多条边分裂，也可由任意节点再次入队。允许环，但默认须显式写 `allowCycle: true`，且受最大深度、重复边和速率保护。每个 KuudraFlow 具有自己的信号命名空间、组件实例、SignalProcessor 状态和上下文。KuudraFlow ID 在控制平面与工作平面之间全局唯一、创建后不可修改；配置加载器接受 UUID 或雪花 ID 形式的字符串，建议由 TUI/API 创建时自动生成 UUIDv7，避免用户手写冲突。
 
 ```
-SignalSource ──> SignalAdapter ──> SignalProcessor ──> Actor ──> SignalAdapter ──┐
-                  │                                     │
-                  └──────────────────> Actor <──────────────────┘
+RawSignal 阶段：  SignalSource → SignalAdapter → SignalProcessor → SessionProcessor
+                                                                  ↓
+会话阶段：       Signal ───────────────→ SignalProcessor → Actor → SignalAdapter ──┐
+                                            │                                      │
+                                            └──────────────→ Actor <───────────────┘
 ```
 
-SignalProcessor 不是单独、全局的消息队列消费者，而是图节点：它消费信号、维护状态，并产生更高层信号。
+SignalProcessor 不是单独、全局的消息队列消费者，而是图节点：它消费消息、维护状态，并产生更高层消息。RawSignal 阶段建议保持无环，避免重复构造 RootSignal；环只允许存在于会话阶段的 Signal 图中。
+
+会话阶段的 SignalProcessor 可以融合**同一 SessionId** 下的多个 Signal，并将结果保留在该会话中；它不得直接融合不同 SessionId 的 Signal，装配器与 Runtime 均应拒绝这种 Processor 契约。确有跨会话聚合需求时，必须显式 export 会话 Signal，再由目标 KuudraFlow import 为 RawSignal、在其前置处理链聚合并经 SessionProcessor 创建新会话。这样不会把已有会话退回 RawSignal，也不会发生会话上下文/取消链路的隐式合并。
 
 ### 3.4 Flow 间导入与导出
 
-默认情况下，工作 Flow 内部信号绝不被其他工作 Flow 看见。工作 Flow 可通过 `exports` 将指定信号发布到受控的全局交换层；另一个工作 Flow 或控制平面 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `SignalTaskQueue` 上的一条受校验跨 Flow 投递路径。
+默认情况下，工作 Flow 内部信号绝不被其他工作 Flow 看见。工作 Flow 可通过 `exports` 将指定 Signal 发布到受控的全局交换层；另一个工作 Flow 或控制平面 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `KuudraTaskQueue` 上的一条受校验跨 Flow 投递路径。
 
-一次 import 会在目标 Flow 中创建一个新的 **子会话（child session）**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、SignalProcessor 状态和 work count。导入内容只包含被 export 的 Signal payload 和 trace，不传递父会话上下文；需要共享会话/上下文的多个 Actor 必须置于同一 Flow。
+import 的内容在目标 Flow 中以 RawSignal 进入前置处理链，导入内容只包含来源 Signal 的 payload 和 trace，不传递父会话上下文；目标 Flow 由自己的 SessionProcessor 决定是否、何时生成 RootSignal。若准入成功，Runtime 创建一个新的 **子会话（child session）**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、SignalProcessor 状态和 work count。需要共享会话/上下文的多个 Actor 必须置于同一 Flow。
 
-Runtime 维护父子会话索引。父会话进入任一终态（`COMPLETED`、`CANCELLED`、`FAILED`）时，所有仍活跃的子会话都会收到**协作式取消请求**；请求本身不截断子会话队列，子 Flow 的组件链决定是停止、收尾后停止，还是继续完成链路。子会话结束不会影响父会话，也不延长父会话的引用计数。父会话与子会话可独立查询。目标 Flow 被停止或子会话单独取消时，同样不得反向取消父会话。这样的单向请求关系避免等待子会话造成死锁，也符合跨 Flow 仅传递信号、而不共享执行链的隔离原则。
+KuudraRuntime 维护父子会话索引。父会话进入任一终态（`COMPLETED`、`CANCELLED`、`FAILED`）时，所有仍活跃的子会话都会收到**协作式取消请求**；请求本身不截断子会话队列，子 Flow 的组件链决定是停止、收尾后停止，还是继续完成链路。子会话结束不会影响父会话，也不延长父会话的引用计数。父会话与子会话可独立查询。目标 Flow 被停止或子会话单独取消时，同样不得反向取消父会话。这样的单向请求关系避免等待子会话造成死锁，也符合跨 Flow 仅传递信号、而不共享执行链的隔离原则。
 
 跨 Flow 边也参与图校验。静态工作 Flow import/export 环必须显式允许，并使用跨 Flow 的 `maxHops`、`maxMessages` 和 `visitedExport` 限额；这防止 A 导出给 B、B 又导入并导回 A 时形成无限会话链。控制平面 Flow 可导入工作 Flow 的 export 用于观测和决策，但工作 Flow 不得导入控制平面内部控制信号。
 
@@ -92,22 +112,22 @@ Runtime 维护父子会话索引。父会话进入任一终态（`COMPLETED`、`
 
 ### 4.1 调度模型
 
-- 每个进程只创建一个 `KuudraRuntime`；它拥有唯一的、共享且有界的 `SignalTaskQueue`。队列项是 `(signal, targetNodeId, kuudraFlowRevision)`，而不是“广播后让全部组件扫描”。所有 SignalSource、SignalAdapter、SignalProcessor 和 Actor 产生的信号都经由它调度。
-- `SignalTaskQueue` 是 Runtime 内部 SPI，不让组件直接操纵：
+- 每个进程只创建一个 `KuudraRuntime`；它拥有唯一的、共享且有界的 `KuudraTaskQueue`。队列项是 `(message, targetNodeId, kuudraFlowRevision)`，而不是“广播后让全部组件扫描”。所有 RawSignal、RootSignal 和 Signal 的处理都经由它调度。
+- `KuudraTaskQueue` 是 Runtime 内部 SPI，不让组件直接操纵：
 
 ```java
-interface SignalTaskQueue extends AutoCloseable {
-  OfferResult offer(SignalTask task);
-  Optional<SignalTask> poll(Duration timeout);
+interface KuudraTaskQueue extends AutoCloseable {
+  OfferResult offer(KuudraTask task);
+  Optional<KuudraTask> poll(Duration timeout);
   QueueSnapshot snapshot();
   void close();
 }
 ```
 
-  首期使用 JDK 并发原语实现，不引入第三方消息中间件：全局容量由 `Semaphore` 控制，每个 KuudraFlow 使用受锁保护的有界 `ArrayDeque`，调度器按加权轮转选取 Flow 队列。这同时满足总背压、Flow 配额与公平性；未来可替换为 Disruptor、持久化队列或远程 Broker 适配器，但这些实现必须保持上述有界、取消、顺序与拒绝语义。
+  `KuudraTask` 是 `RawSignalTask | RootSignalTask | SignalTask` 的密封类型。首期使用 JDK 并发原语实现，不引入第三方消息中间件：全局容量由 `Semaphore` 控制，每个 KuudraFlow 使用受锁保护的有界 `ArrayDeque`，调度器按加权轮转选取 Flow 队列。这同时满足总背压、Flow 配额与公平性；未来可替换为 Disruptor、持久化队列或远程 Broker 适配器，但这些实现必须保持上述有界、取消、顺序与拒绝语义。
 - KuudraFlow 不是物理队列隔离单元，而是**逻辑隔离单元**：每项任务都携带确定的 Flow revision、会话 ID 和目标节点；只能路由到该 Flow 图内允许的边。不同 Flow 共享背压和工作池，但不共享上下文、SignalProcessor 状态或组件实例，除非显式使用全局上下文/共享插件资源。
 - 为避免一个 Flow 挤占全局队列，调度器按 Flow 维护配额和公平性（建议加权轮转）；每个 Flow 还可声明 `maxQueuedTasks`、每会话上限及其溢出策略。全局队列满时先执行全局策略，再应用 Flow/边级策略并产生诊断事件。
-- SignalSource 回调必须极短：创建根会话、封装 Signal、按入口边投递，绝不直接跑用户动作。调度器执行 SignalAdapter/SignalProcessor 的轻量处理；Flow 级 SignalProcessor 状态由 KuudraRuntime 按 `(flowRevision, processorId)` 管理，同一状态分区必须串行化（或由 Processor 声明等价的原子实现）。需要按键/设备等分区时，Processor 声明 `partitionBy` 表达式，Runtime 按其结果分别串行。
+- SignalSource 回调必须极短：封装 RawSignal、按入口边投递，绝不直接跑用户动作。SessionProcessor 产生 RootSignal 后，KuudraRuntime 的 `SessionAdmissionController` 才创建会话和第一个 Signal。调度器执行 SignalAdapter/SignalProcessor 的轻量处理；Flow 级 SignalProcessor 状态由 KuudraRuntime 按 `(flowRevision, processorId)` 管理，同一状态分区必须串行化（或由 Processor 声明等价的原子实现）。需要按键/设备等分区时，Processor 声明 `partitionBy` 表达式，Runtime 按其结果分别串行。
 - `partitionBy` 是 SignalProcessor 的状态分区键，不是新的消息队列。例如 `partitionBy: "signal.payload.key"` 会让所有 A 键信号共享同一份窗口计数并串行处理，而 B 键信号使用另一份计数、可与 A 并行；未配置时全部信号使用默认分区。它适合双击、按键保持、按设备计数等跨会话聚合策略。
 - 同一会话的 Signal 带有递增序号，KuudraRuntime 通过 `SessionLane` 保证默认按序处理；不同会话没有全局顺序保证，可以并行进入调度与执行。显式并行的 Actor 绑定是唯一例外：它允许同会话内多个 Action 并发，因而这些 Action 完成后产生的后继 Signal 按完成先后入队，不承诺彼此的完成顺序。
 - 所有 Actor 统一异步执行。KuudraRuntime 拥有有界的 `ActorExecutionPool`（首期为 JDK `ThreadPoolExecutor`）以及独立、只承担延时/超时的 `ScheduledExecutorService`；调度线程绝不等待 Action 完成。Actor 匹配绑定规则后向 ActorExecutionPool 提交 Action，持有会话 work count，待 `CompletionStage<ActionResult>` 完成后才投递结果 Signal 并释放引用。
@@ -122,18 +142,19 @@ interface Action {
 }
 ```
 
-- Actor 的并发策略由组件声明：`serial`、`per-session-serial`、`parallel(limit)`、`latest-wins`。同一会话内多条命中绑定默认 `per-session-serial`，按声明顺序执行；不同会话的绑定默认具备并行资格，只有被 Actor/Action 明确声明为 `serial` 或受 `parallel(limit)` 限制时才会等待。只有显式声明 `parallel` 才允许同会话绑定并发。Runtime 通过执行 lane/信号量强制这些策略；涉及键盘/鼠标的 AWT Robot 动作默认 `serial`。线程池和其待执行队列同样有界，饱和时按 Actor 的拒绝策略处理并发布诊断，而不是让执行器无限堆积或阻塞 SignalTaskQueue。
+- Actor 的并发策略由组件声明：`serial`、`per-session-serial`、`parallel(limit)`、`latest-wins`。同一会话内多条命中绑定默认 `per-session-serial`，按声明顺序执行；不同会话的绑定默认具备并行资格，只有被 Actor/Action 明确声明为 `serial` 或受 `parallel(limit)` 限制时才会等待。只有显式声明 `parallel` 才允许同会话绑定并发。Runtime 通过执行 lane/信号量强制这些策略；涉及键盘/鼠标的 AWT Robot 动作默认 `serial`。线程池和其待执行队列同样有界，饱和时按 Actor 的拒绝策略处理并发布诊断，而不是让执行器无限堆积或阻塞 KuudraTaskQueue。
 - 队列满时按入口/边定义 `reject`、`drop-latest`、`drop-oldest` 或 `block-source`；输入钩子默认 `drop-latest` 并计数告警，禁止无限内存队列。
 
 运行时不应只有一个线程，更不能在处理完一个 bundle 后退出循环。异步动作完成后必须通过调度器继续派发结果信号，而不是在动作线程上递归调用下一节点。
 
 ### 4.2 分发算法
 
-1. SignalSource 生成根 Signal，创建 `Session`，初始 work count 为 1。
-2. 根据入口边匹配器复制出若干目标任务；每成功入队一个任务，保留一次会话引用。
-3. KuudraRuntime 调度线程取出任务，先检查会话是否已经终态、目标 Flow revision 是否仍可执行，再执行目标组件；若有取消请求，将 `CancellationToken` 传给组件。
-4. SignalAdapter/SignalProcessor 返回零或多个 `Emission`（信号、上下文增量、可选延迟）；Actor 则异步完成后返回同类 Emission。调度器为每个匹配后继创建新任务并保留引用。
-5. 当前任务的 `finally` 中释放一次引用。引用归零时，若组件链已确认取消则标记 `CANCELLED`，否则正常标记 `COMPLETED`。
+1. SignalSource 生成 RawSignal；前置 SignalAdapter/SignalProcessor 链可丢弃、重映射或聚合它。
+2. SessionProcessor 输出 RootSignal；SessionAdmissionController 按会话策略创建 Session，初始 work count 为 1，并构造第一个带 SessionId 的 Signal。
+3. 根据会话阶段入口边匹配器复制出若干目标任务；每成功入队一个任务，保留一次会话引用。
+4. KuudraRuntime 调度线程取出任务，先检查会话是否已经终态、目标 Flow revision 是否仍可执行，再执行目标组件；若有取消请求，将 `CancellationToken` 传给组件。
+5. 会话阶段的 SignalAdapter/SignalProcessor 返回零或多个 `Emission`（Signal、上下文增量、可选延迟）；Actor 则异步完成后返回同类 Emission。调度器为每个匹配后继创建新任务并保留引用。
+6. 当前任务的 `finally` 中释放一次引用。引用归零时，若组件链已确认取消则标记 `CANCELLED`，否则正常标记 `COMPLETED`。
 
 一个任务只拥有一个引用；创建后继前 retain、入队失败立即 release。这使“分裂 + 引用计数归零结束”成为内核不变量而不是插件约定。
 
@@ -159,9 +180,22 @@ interface Session {
 }
 ```
 
-状态为 `ACTIVE → CANCELLATION_REQUESTED → {COMPLETED | CANCELLED | FAILED}`，其中 `CANCELLATION_REQUESTED` 不是终态。取消是协作式的：Runtime 记录请求并将 `CancellationToken` 传给每个后续/在途组件调用，但不会强制线程中断、丢弃队列任务或禁止后继信号。组件可选择三种响应：`CONTINUE`（忽略请求并继续链路）、`DRAIN_THEN_CANCEL`（完成当前安全边界后不再派生后继）、`CANCEL_NOW`（停止后继并确认取消）。只有组件链确认取消且 work count 归零时，会话才进入 `CANCELLED`；否则即使收到请求，也可以正常进入 `COMPLETED`。会话终态会向其全部子会话发出同样的协作式取消请求。
+`SessionId` 是全局唯一的 UUIDv7；`sessionName` 则由 SessionProcessor 定义，是用于会话准入和控制选择器的逻辑名称，不是唯一 ID。SessionProcessor 为每个 RootSignal 提供：
 
-会话由根信号创建，而不是由 Actor 创建；import 信号是目标 Flow 的受关联根信号。一个 SignalProcessor 的超时仍属于触发它的会话；定时器仅持有会话引用。SignalProcessor 的默认状态域是 Flow 级别，因此“双击”等多个原始输入的聚合自然可行；Processor 可显式声明 `stateScope: session`，以获得单会话状态。全局状态只能经明确的 `global` ContextStore 访问，不能悄悄混入 Processor 状态。
+```yaml
+session:
+  name: double-a-action
+  admissionKey: "${raw.payload.key}"   # 可选；缺省为全局默认键
+  policy: PARALLEL                       # PARALLEL | QUEUED | TOGGLE | IGNORE
+```
+
+实际准入分组键为 `(kuudraFlowId, sessionName, admissionKey)`。`PARALLEL` 为每个 RootSignal 创建会话；`QUEUED` 在同组有活动会话时将 RootSignal 存入该组有界 FIFO，当前会话终态后才创建下一会话；`TOGGLE` 请求取消已有会话并丢弃当前 RootSignal；`IGNORE` 直接丢弃当前 RootSignal。`QUEUED` 默认最多暂存 64 个 RootSignal，满后按 `drop-latest` 处理，且允许在配置中覆盖容量与溢出策略。
+
+控制命令可用精确 `SessionId` 操作单个会话，或用 `(flowId, sessionName, admissionKey)` 选择一组会话。会话暂停后仍视为该组的活动会话：QUEUED 继续按容量积压 RootSignal，IGNORE 丢弃，TOGGLE 发出协作式取消请求。
+
+会话状态为 `ACTIVE → PAUSING → PAUSED → ACTIVE`，以及 `ACTIVE/PAUSED → CANCELLATION_REQUESTED → {COMPLETED | CANCELLED | FAILED}`；`CANCELLATION_REQUESTED` 不是终态。按 SessionId 或会话选择器执行 `pause_session` 时，Runtime 允许在途节点完成，但将该会话的后继 Signal 存入会话 Continuation 表；`resume_session` 后按原顺序继续。取消是协作式的：Runtime 记录请求并将 `CancellationToken` 传给每个后续/在途组件调用，但不会强制线程中断、丢弃队列任务或禁止后继信号。组件可选择三种响应：`CONTINUE`（忽略请求并继续链路）、`DRAIN_THEN_CANCEL`（完成当前安全边界后不再派生后继）、`CANCEL_NOW`（停止后继并确认取消）。只有组件链确认取消且 work count 归零时，会话才进入 `CANCELLED`；否则即使收到请求，也可以正常进入 `COMPLETED`。会话终态会向其全部子会话发出同样的协作式取消请求。
+
+会话由 RootSignal 准入创建，而不是由 Actor 创建；import 内容在目标 Flow 的 RawSignal 阶段经过 SessionProcessor 后成为受关联根信号。会话阶段中一个 SignalProcessor 的超时仍属于触发它的会话；定时器仅持有会话引用。RawSignal 阶段的 Processor 默认状态域是 Flow 级别，因此“双击”等多个原始输入的聚合自然可行；会话阶段的 Processor 默认绑定当前会话，也可显式声明 `stateScope: session`。全局状态只能经明确的 `global` ContextStore 访问，不能悄悄混入 Processor 状态。
 
 ### 5.2 上下文作用域
 
@@ -395,7 +429,7 @@ controlFlows:
     privileges: [runtime.work-flow.stop]
 ```
 
-控制平面 Flow 与工作 Flow 使用同一组件图、共享 `SignalTaskQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 KuudraRuntime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 SignalSource，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `control/` Actor 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可通过专用控制 Actor 发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
+控制平面 Flow 与工作 Flow 使用同一组件图、共享 `KuudraTaskQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 KuudraRuntime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 SignalSource，或通过 import 显式订阅工作 Flow 的 export。控制平面 Flow 可通过受权限保护的 `control/` Actor 派发 `WorkFlowControlCommand`，例如紧急停止所有工作 Flow；它也可通过专用控制 Actor 发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
 
 ```yaml
 kuudraFlow:
@@ -414,10 +448,10 @@ components:
   - id: only-a
     type: signal-adapter/json
     config:
-      when: "message.type == 'jnativehook.key.pressed' && message.payload.key == 'A'"
+      when: "raw.type == 'jnativehook.key.pressed' && raw.payload.key == 'A'"
       emit:
         type: input.a.pressed
-        payload: { key: "${message.payload.key}" }
+        payload: { key: "${raw.payload.key}" }
   - id: double-a
     type: signal-processor/window-count
     config:
@@ -427,6 +461,12 @@ components:
       emitType: gesture.a.doublePressed
       reset: on-match
       stateScope: flow
+  - id: begin-double-a-session
+    type: session-processor/default
+    config:
+      session:
+        name: double-a-action
+        policy: PARALLEL
   - id: robot
     type: actor/action-bindings
     config:
@@ -437,7 +477,8 @@ components:
 edges:
   - { from: keyboard, to: only-a }
   - { from: only-a, to: double-a }
-  - { from: double-a, to: robot }
+  - { from: double-a, to: begin-double-a-session }
+  - { from: begin-double-a-session, to: robot }
 policies:
   queue: { maxQueuedTasks: 1024, overflow: drop-latest, weight: 1 }
   session: { maxHops: 64, maxMessages: 10000 }
@@ -471,6 +512,10 @@ components:
   - id: escape
     type: signal-source/jnativehook.keyboard
     config: { listen: [key.pressed], key: ESCAPE }
+  - id: begin-control-session
+    type: session-processor/default
+    config:
+      session: { name: emergency-stop, policy: IGNORE }
   - id: stop-all
     type: control/flow-lifecycle-controller
     config:
@@ -479,7 +524,8 @@ components:
           command: stop
           target: { scope: all-work-flows }
 edges:
-  - { from: escape, to: stop-all }
+  - { from: escape, to: begin-control-session }
+  - { from: begin-control-session, to: stop-all }
 ```
 
 其中 `control/flow-lifecycle-controller` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予相应的 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
@@ -492,12 +538,12 @@ edges:
 
 | 管线 | 数据 | 消费者 | 语义 |
 | --- | --- | --- | --- |
-| `SignalTaskQueue` | 业务信号及其后继任务 | SignalSource、SignalAdapter、SignalProcessor、Actor | 参与 KuudraFlow 执行；有会话、背压、取消和重试语义 |
+| `KuudraTaskQueue` | RawSignal、RootSignal、Signal 及其后继任务 | SignalSource、SignalAdapter、SignalProcessor、SessionProcessor、Actor | 参与 KuudraFlow 执行；有会话、背压、取消和重试语义 |
 | `SystemEventBus` | 运行状态、会话变化、插件/Flow 生命周期、诊断、指标采样 | Web、TUI、Dashboard、日志/监控适配器 | 仅观测，不得反向改变 Flow；允许按订阅者丢弃或采样 |
 
 `SystemEventBus` 的事件至少包含 `eventId`、`occurredAt`、`severity`、`category`、`flowId`（可选）、`sessionId`（可选）、`subject`、`data` 和 `traceId`。它不是业务 Signal 的镜像：默认不投递每一个原始按键，避免观测本身拖垮自动化；调试模式下可对指定 Flow/会话开启采样后的信号追踪。
 
-`kuudra-app` 以框架无关的实时订阅端口暴露 `SystemEventBus`，例如 `SystemEventSubscriptionService.subscribe(filter)` 返回 `java.util.concurrent.Flow.Publisher<SystemEvent>`；它不依赖 WebSocket、SSE、Spring 或 JavaFX。`kuudra-web` 负责将该订阅端口适配为 WebSocket 推送，并可额外提供 SSE 轻量备选。该通道纯用于实时观测，不写入 SQLite。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 SignalTaskQueue。KuudraRuntime 可保留一个短期内存环形缓冲区以支持瞬时重连；超过该窗口时客户端回退到 REST 状态快照，而不是查询历史系统事件。
+`kuudra-app` 以框架无关的实时订阅端口暴露 `SystemEventBus`，例如 `SystemEventSubscriptionService.subscribe(filter)` 返回 `java.util.concurrent.Flow.Publisher<SystemEvent>`；它不依赖 WebSocket、SSE、Spring 或 JavaFX。`kuudra-web` 负责将该订阅端口适配为 WebSocket 推送，并可额外提供 SSE 轻量备选。该通道纯用于实时观测，不写入 SQLite。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 KuudraTaskQueue。KuudraRuntime 可保留一个短期内存环形缓冲区以支持瞬时重连；超过该窗口时客户端回退到 REST 状态快照，而不是查询历史系统事件。
 
 Web 模块是薄适配层，只调用 application service；它不得依赖 JavaFX，也不得直接访问插件实例。
 
@@ -554,6 +600,6 @@ plugins/*               独立构建和发布的插件 Fat JAR
 ## 12. 已确认的扩展边界
 
 - 动作实现保持 Java 插件模型；YAML 只声明组件及其参数，不承载任意脚本。
-- 将来通过桥接插件支持跨语言执行 Flow：桥接器把 Kuudra 信号和动作请求编码为稳定协议，经 TCP、Unix Domain Socket 或 Windows 命名管道发送给外部进程；回传结果/信号再由桥接器投递到共享 SignalTaskQueue。
+- 将来通过桥接插件支持跨语言执行 Flow：桥接器把 Kuudra 信号和动作请求编码为稳定协议，经 TCP、Unix Domain Socket 或 Windows 命名管道发送给外部进程；回传结果/信号再由桥接器投递到共享 KuudraTaskQueue。
 - 跨进程桥接必须有协议版本、消息大小/超时限制、请求—响应关联 ID、取消帧、重连策略和能力声明。外部进程不取得 Runtime 内存访问权，也不能绕开队列、会话和权限校验。
 - 按键租约及取消后的补偿释放是 AWT Robot 插件的具体设计，暂不固化为核心会话语义；内核只保证取消信号与动作结束通知可被插件可靠接收。
