@@ -197,10 +197,13 @@ NEW → INITIALIZING → STARTING_CONTROL → STARTING_WORK → RUNNING → STOP
 - 控制平面任一必需 Flow 启动失败时，Runtime 先协作停止本次已启动的其他控制平面 Flow，再进入 `DEGRADED`：管理 API、诊断和 `retry-control` 保持可用，但所有工作 Flow 均不得启动，避免半启动控制平面作出不完整控制。
 - 控制平面成功后进入 `STARTING_WORK`，再启动已声明为启用的工作 Flow。工作平面的启动行为由 `runtime.startup.mode` 决定：`strict-all` 要求所有启用工作 Flow 均健康，否则已启动的工作 Flow 也协作停止、Runtime 进入 `DEGRADED`；`allow-degraded` 允许健康工作 Flow 继续运行，不健康 Flow 进入 `FAILED/DEGRADED`，Runtime 进入 `DEGRADED` 并保留管理能力。
 - `runtime.stop` 从 `RUNNING` 或 `DEGRADED` 进入 `STOPPING`，先停止工作平面，再停止控制平面；所有安全 drain 完成后为 `STOPPED`。
+- 已运行的控制平面 Flow 后续变为 `UNHEALTHY` 时，Runtime 进入 `DEGRADED` 并发布高优先级诊断，但不自动停止工作 Flow；管理 API 与仍健康的控制 Flow 保持可用，是否停止工作平面由管理员或健康控制 Flow 的显式命令决定。
 
 控制平面 Flow 与工作 Flow **不是主从关系**。两者都由 Runtime 调度，均不能直接持有或修改其他 Flow 的内部状态；控制平面仅凭授权的 `WorkFlowControlCommand` 请求 Runtime 执行操作。Runtime 和 `StateStore` 才是状态与调度的权威来源。
 
 不将控制平面 Flow 设计为“主节点”的原因是：它本身是用户配置、可热重载且可能失败的图；若 Runtime 的启动、调度、状态一致性或权限判定依赖它，会形成“主节点尚未启动便无法启动”“主节点误操作自身”“主节点失败导致状态权威丢失”的循环。Kubernetes 式控制平面—节点关系适合未来的多进程/多机器执行层：届时可把 Runtime 的工作执行部分演化为受核心控制服务协调的 agent，而不是把某一个控制平面 Flow 变成主节点。
+
+控制平面 Flow 的职责是观测、决策和发送受限控制命令，而不是执行一般自动化动作。装配器必须按 Flow plane 校验组件类型：控制平面中的 Source、Filter、Router 可使用通用类型；但 Executor 节点必须使用 `control/` 命名空间下的类型，且其可绑定 Action 也必须属于 `control/` 命名空间。插件注册组件/动作时声明 `allowedPlanes`，配置中即使手写普通执行器或 AWT Robot 动作也会被拒绝。例如 `control/executor/commands` 可调用 `control/work-flow-stop`、`control/work-flow-pause`、`control/system-event-publish`；`executor/action-bindings`、`awt-robot.*` 等普通执行器只能存在于工作 Flow。
 
 ### 5.5 Flow 健康检查与启动探针
 
@@ -443,17 +446,17 @@ components:
     type: source/jnativehook.keyboard
     config: { listen: [key.pressed], key: ESCAPE }
   - id: stop-all
-    type: executor/action-bindings
+    type: control/executor/commands
     config:
       bindings:
         - when: "message.type == 'jnativehook.key.pressed'"
-          action: runtime-control.work-flow-stop
+          action: control/work-flow-stop
           with: { target: all-work-flows }
 edges:
   - { from: escape, to: stop-all }
 ```
 
-其中 `runtime-control.work-flow-stop` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
+其中 `control/work-flow-stop` 只能在 `kuudra.yaml` 为该控制平面 Flow 授予 `runtime.work-flow.stop` 权限后装配成功；默认不允许工作 Flow 调用。
 
 装配流水线：读取 `kuudra.yaml` → Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、import/export、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
 
