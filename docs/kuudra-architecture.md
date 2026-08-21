@@ -458,7 +458,7 @@ imports:
     cancellation: linked
 ```
 
-`ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 Router 中继续判断、重映射或执行动作。`revision: active` 是默认策略，始终接收来源 Flow 当前激活 revision 的 export；如需稳定绑定，可写 `revision: 42`（或完整 revision ID）。被锁定的 revision 未激活/不存在时，导入边校验失败并拒绝激活该 Flow，避免静默丢信号。
+`ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 SignalProcessor 中继续判断、重映射或执行动作。`revision: active` 是默认策略，始终接收来源 Flow 当前激活 revision 的 export；如需稳定绑定，可写 `revision: 42`（或完整 revision ID）。被锁定的 revision 未激活/不存在时，导入边校验失败并拒绝激活该 Flow，避免静默丢信号。
 
 全局紧急停止 Flow 的最小示例：
 
