@@ -219,7 +219,7 @@ ACTIVE → RELOADING_DRAIN → STARTING
 - `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待组件链 drain 后进入 `STOPPED`。超时不是强制停止：Flow 保持 `STOPPING`，发布超时诊断，且不得卸载仍可能执行的插件/组件；管理员可继续等待、重试请求或使用明确标注为不安全的强制隔离操作。
 - `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号**不暂存**，一律按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
 - `resume`：`PAUSED → ACTIVE`；按原有顺序/公平调度策略将暂停续延表中的任务重新投递，因此从暂停所在节点的下一跳继续。暂停会话仍持有 work count，可被查询或收到取消请求；暂停状态下由组件的取消回调决定是否确认取消并删除续延，未确认时续延会保留到 `resume`。
-- `reload`：先在不产生副作用的前提下解析、校验并编译候选 revision；随后旧 revision 进入 `RELOADING_DRAIN`，停止 Source 与 import 入口接收新根信号，但允许其已有会话及后继链路自然排空。只有旧 revision 的活跃会话归零、组件和资源安全关闭后，才创建并启动新 revision。默认不设超时、不发送取消请求，语义等同于 Docker Compose 的“停止旧服务后再启动新服务”；reload 期间的新外部/import 信号按入口策略拒绝或丢弃。候选 revision 在实际启动阶段失败时，Flow 进入 `FAILED` 并保留诊断，管理员需修复后再次 reload。
+- `reload`：只作用于被指定的目标 Flow，不暂停其他工作 Flow。先在不产生副作用的前提下解析、校验并编译候选 revision；随后旧 revision 进入 `RELOADING_DRAIN`，停止 Source 与 import 入口接收新根信号，但允许其已有会话及后继链路自然排空。只有旧 revision 的活跃会话归零、组件和资源安全关闭后，才创建并启动新 revision。默认不设超时、不发送取消请求，语义等同于 Docker Compose 的“停止旧服务后再启动新服务”；reload 期间的新外部/import 信号按入口策略拒绝或丢弃。候选 revision 在实际启动阶段失败时，Flow 直接进入 `FAILED` 并保留诊断，**不尝试回滚或重新启动旧 revision**；管理员修复后再次 reload。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
 Kuudra 将 Flow 分为两个层级：**控制平面 Flow** 与**工作 Flow**。控制平面 Flow 能经受权限保护的 `runtime-control` Action 派发 `WorkFlowControlCommand`（如 `work-flow.enable`、`work-flow.stop`、`work-flow.reload`、`work-session.cancel`）；工作 Flow 永远不能调用这些动作。此类命令只作用于工作 Flow，不能停止、暂停、取消或重载控制平面 Flow，从而避免控制逻辑误伤自身。
@@ -442,7 +442,7 @@ edges:
 
 `SystemEventBus` 的事件至少包含 `eventId`、`occurredAt`、`severity`、`category`、`flowId`（可选）、`sessionId`（可选）、`subject`、`data` 和 `traceId`。它不是业务 Signal 的镜像：默认不投递每一个原始按键，避免观测本身拖垮自动化；调试模式下可对指定 Flow/会话开启采样后的信号追踪。
 
-运行时将 `SystemEventBus` 适配为 WebSocket 推送，SSE 可作为轻量备选；它是纯实时观测通道，不写入 SQLite。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 SignalQueue。Runtime 可保留一个短期内存环形缓冲区以支持瞬时重连；超过该窗口时客户端回退到 REST 状态快照，而不是查询历史系统事件。
+`kuudra-app` 以框架无关的实时订阅端口暴露 `SystemEventBus`，例如 `SystemEventSubscriptionService.subscribe(filter)` 返回 `Flow.Publisher<SystemEvent>`；它不依赖 WebSocket、SSE、Spring 或 JavaFX。`kuudra-web` 负责将该订阅端口适配为 WebSocket 推送，并可额外提供 SSE 轻量备选。该通道纯用于实时观测，不写入 SQLite。每个订阅者有独立有界缓冲区，慢客户端只丢自己的低优先级事件，不得阻塞 SignalQueue。Runtime 可保留一个短期内存环形缓冲区以支持瞬时重连；超过该窗口时客户端回退到 REST 状态快照，而不是查询历史系统事件。
 
 Web 模块是薄适配层，只调用 application service；它不得依赖 JavaFX，也不得直接访问插件实例。
 
@@ -479,7 +479,7 @@ kuudra-runtime          共享队列、调度、会话、图执行、SystemEvent
 kuudra-config           YAML/JSON/TOML、schema、表达式、Flow 编译（依赖 api）
 kuudra-state            StateStore、嵌入式存储与外部存储适配器（依赖 api）
 kuudra-plugin-manager   描述符、依赖解析、ClassLoader、生命周期（依赖 api）
-kuudra-application      用例服务：Flow、会话、插件、运行时（依赖上述模块）
+kuudra-app              用例服务：Flow、会话、插件、运行时，以及框架无关的实时事件订阅端口（依赖上述模块）
 kuudra-web              Spring Boot REST/WebSocket/SSE 适配器（依赖 application）
 kuudra-tui              HTTP/WebSocket 客户端（不依赖 runtime）
 plugins/*               独立构建和发布的插件 Fat JAR
@@ -493,7 +493,7 @@ plugins/*               独立构建和发布的插件 Fat JAR
 2. 实现 `kuudra-state` 的嵌入式 StateStore，以及 Runtime（状态机、共享有界队列、Flow 公平调度、分支引用计数、取消、串并行执行、SystemEventBus），以假 Source/Action 验证不变量。
 3. 实现 Config 编译器、schema、表达式和图校验；完成双击示例的端到端测试。
 4. 实现 Plugin Manager 和一个 JNativeHook Source 插件、一个 AWT Robot Action 插件；先支持冷加载，再实现 drain 型重载。
-5. 实现 Application + REST/WebSocket API + TUI；Dashboard 最后接入。
+5. 实现 `kuudra-app` 的用例与事件订阅端口，再实现 `kuudra-web` 的 REST/WebSocket/SSE 适配器与 TUI；Dashboard 最后接入。
 6. 从旧项目逐个迁移行为：先把原 Action 拆成 Robot/延迟等原子动作，再用 Flow 配置复现功能。每迁移一个宏都保留输入—输出回放测试。
 
 ## 12. 已确认的扩展边界
