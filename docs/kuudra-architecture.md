@@ -82,7 +82,9 @@ Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
 
 默认情况下，Flow 内部信号绝不被其他 Flow 看见。Flow 可通过 `exports` 将指定信号发布到受控的全局交换层；另一个 Flow 只能用 `imports` 按来源 Flow、来源版本策略和信号类型显式订阅。全局交换层不是第二个业务队列：它只是共享 `SignalQueue` 上的一条受校验跨 Flow 投递路径。
 
-一次 import 会在目标 Flow 中创建一个新的 **imported session**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、Router 状态和 work count。这样目标 Flow 的会话结束不会因等待来源 Flow 而死锁，且它仍可独立被查询和取消。默认的取消语义是 `linked`：来源会话取消时，尚活跃的 imported session 也收到协作式取消请求；目标 Flow 被单独停止或会话被单独取消时，不反向取消来源。可在 import 上声明 `cancellation: detached` 以关闭这条单向传播。
+一次 import 会在目标 Flow 中创建一个新的 **子会话（child session）**，保留 `parentSessionId`、根因果 ID 和来源 Flow 信息，但拥有目标 Flow 自己的上下文、Router 状态和 work count。导入内容只包含被 export 的 Signal payload 和 trace，不传递父会话上下文；需要共享会话/上下文的多个执行器必须置于同一 Flow。
+
+Runtime 维护父子会话索引。父会话进入任一终态（`COMPLETED`、`CANCELLED`、`FAILED`）时，所有仍活跃的子会话都会收到**协作式取消请求**；请求本身不截断子会话队列，子 Flow 的组件链决定是停止、收尾后停止，还是继续完成链路。子会话结束不会影响父会话，也不延长父会话的引用计数。父会话与子会话可独立查询。目标 Flow 被停止或子会话单独取消时，同样不得反向取消父会话。这样的单向请求关系避免等待子会话造成死锁，也符合跨 Flow 仅传递信号、而不共享执行链的隔离原则。
 
 跨 Flow 边也参与图校验。静态 Flow import/export 环必须显式允许，并使用跨 Flow 的 `maxHops`、`maxMessages` 和 `visitedExport` 限额；这防止 A 导出给 B、B 又导入并导回 A 时形成无限会话链。
 
@@ -105,9 +107,9 @@ Source ──> Filter ──> Router ──> Executor ──> Filter ──┐
 
 1. Source 生成根消息，创建 `Session`，初始 work count 为 1。
 2. 根据入口边匹配器复制出若干目标任务；每成功入队一个任务，保留一次会话引用。
-3. 工作线程取出任务，先检查会话取消标志、目标 Flow revision 是否仍可执行，再执行目标组件。
+3. 工作线程取出任务，先检查会话是否已经终态、目标 Flow revision 是否仍可执行，再执行目标组件；若有取消请求，将 `CancellationToken` 传给组件。
 4. 组件返回零或多个 `Emission`（信号、上下文增量、可选延迟）。调度器为每个匹配后继创建新任务并保留引用。
-5. 当前任务的 `finally` 中释放一次引用。引用归零时正常完成会话；取消请求下，引用归零时标记取消完成。
+5. 当前任务的 `finally` 中释放一次引用。引用归零时，若组件链已确认取消则标记 `CANCELLED`，否则正常标记 `COMPLETED`。
 
 一个任务只拥有一个引用；创建后继前 retain、入队失败立即 release。这使“分裂 + 引用计数归零结束”成为内核不变量而不是插件约定。
 
@@ -133,7 +135,7 @@ interface Session {
 }
 ```
 
-状态为 `ACTIVE → {COMPLETED | CANCELLING → CANCELLED | FAILED}`。取消是协作式的：调度器不再派生新工作；尚未开始的任务被跳过；插件在 `ExecutionContext.cancellation()` 处检查。不能安全中止的本地调用允许跑完，但不得再发后继信号。
+状态为 `ACTIVE → CANCELLATION_REQUESTED → {COMPLETED | CANCELLED | FAILED}`，其中 `CANCELLATION_REQUESTED` 不是终态。取消是协作式的：Runtime 记录请求并将 `CancellationToken` 传给每个后续/在途组件调用，但不会强制线程中断、丢弃队列任务或禁止后继信号。组件可选择三种响应：`CONTINUE`（忽略请求并继续链路）、`DRAIN_THEN_CANCEL`（完成当前安全边界后不再派生后继）、`CANCEL_NOW`（停止后继并确认取消）。只有组件链确认取消且 work count 归零时，会话才进入 `CANCELLED`；否则即使收到请求，也可以正常进入 `COMPLETED`。会话终态会向其全部子会话发出同样的协作式取消请求。
 
 会话由根信号创建，而不是由执行器创建；import 信号是目标 Flow 的受关联根信号。一个 Router 的超时仍属于触发它的会话；定时器仅持有会话引用。Router 的默认状态域是 Flow 级别，因此“双击”等多个原始输入的聚合自然可行；Router 可显式声明 `stateScope: session`，以获得单会话状态。全局状态只能经明确的 `global` ContextStore 访问，不能悄悄混入 Router 状态。
 
@@ -149,22 +151,26 @@ interface Session {
 
 上下文必须是持久化/不可变视图：分支得到同一父上下文加自己的 delta，不能共享一个可变 `Map`。显式 `ContextStore` 操作才能写 session/global，避免并发分支隐式覆盖。建议用 CAS 版本号，冲突策略为 `fail`、`last-write-wins` 或插件提供的合并器。
 
-### 5.3 Flow 生命周期与协作式停止
+### 5.3 Flow 生命周期、暂停与协作式停止
 
 每个 Flow 由 Runtime 维护独立状态机：
 
 ```text
-DISCOVERED → VALIDATED → INACTIVE → STARTING → ACTIVE → STOPPING → STOPPED
-                         │              │             │
-                         └──────────────┴─────────────┴──→ FAILED
+DISCOVERED → VALIDATED → INACTIVE → STARTING → ACTIVE → PAUSING → PAUSED
+                         │              │                 │          │
+                         └──────────────┴─────────────────┴──────────┴──→ FAILED
+                                                         PAUSED → ACTIVE
+ACTIVE/PAUSING/PAUSED → STOPPING → STOPPED
 ```
 
 - `enable`：`INACTIVE/STOPPED → STARTING → ACTIVE`；创建组件、恢复插件资源、启动 Source。
-- `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待 drain 或达到超时，最后 `STOPPED`。
+- `disable` 或 `stop`：`ACTIVE → STOPPING`；先停止 Source 接收新外部输入，再对该 Flow 的会话发送协作式取消请求，等待组件链 drain 后进入 `STOPPED`。超时不是强制停止：Flow 保持 `STOPPING`，发布超时诊断，且不得卸载仍可能执行的插件/组件；管理员可继续等待、重试请求或使用明确标注为不安全的强制隔离操作。
+- `pause`：`ACTIVE → PAUSING`；停止 Source 与 import 入口接收新根信号。正在执行的节点允许完成当前处理；调度器将该 Flow 已排队但未执行的任务及当前节点产生的后继任务，以不可变的 `Continuation`（目标节点、Signal、上下文视图、Flow revision）写入暂停续延表，而不再执行。所有在途任务到达这一边界后转为 `PAUSED`。暂停期间的新外部/导入信号按 Flow 的入口溢出策略拒绝或丢弃，并发布诊断。
+- `resume`：`PAUSED → ACTIVE`；按原有顺序/公平调度策略将暂停续延表中的任务重新投递，因此从暂停所在节点的下一跳继续。暂停会话仍持有 work count，可被查询或收到取消请求；暂停状态下由组件的取消回调决定是否确认取消并删除续延，未确认时续延会保留到 `resume`。
 - `reload`：先校验并创建新 revision；成功后按策略切换至新 revision，旧 revision 选择 drain/cancel/timeout 后卸载。失败保持旧 revision `ACTIVE`。
 - `FAILED`：停止接收新输入，保留诊断；管理员可修复配置后 `reload`，或显式 `disable` 清理资源。
 
-控制面使用带类型的 `FlowControlCommand`（如 `flow.enable`、`flow.stop`、`flow.reload`、`session.cancel`），由 API、TUI 或 Dashboard 派发。它与业务 `SignalQueue`、只读的 `SystemEventBus` 都不同：控制命令不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；组件必须协作检查 token 并释放资源，但允许当前不可安全中断的操作收尾后才结束。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
+控制面使用带类型的 `FlowControlCommand`（如 `flow.enable`、`flow.stop`、`flow.reload`、`session.cancel`），由 API、TUI 或 Dashboard 派发。它与业务 `SignalQueue`、只读的 `SystemEventBus` 都不同：控制命令不进入用户定义的 edges，也不能被普通 Filter/Router 误消费。Runtime 在状态变更时向目标 Flow 的组件发送生命周期回调和 `CancellationToken`；取消回调与每次执行上下文都必须允许组件作出 `CONTINUE`、`DRAIN_THEN_CANCEL` 或 `CANCEL_NOW` 的响应。所有命令结果和状态变化都会发布为 `SystemEvent` 供前端观测。
 
 ### 5.4 占位符与表达式
 
@@ -229,14 +235,16 @@ capabilities: [input.global.keyboard, input.global.mouse]
 
 配置模型称为 `kuudra-flow`，默认序列化格式为 YAML。它是普通的声明式 YAML 文档，不采用 Kubernetes 的 `apiVersion`/`kind` 风格，也不应允许在配置内执行 Groovy/Java。复杂逻辑由 Router/Action 插件实现。配置模型与格式解耦：首期实现 YAML 读取器，后续可以增加 JSON、TOML 读取器；它们必须编译为相同的内部 `FlowDefinition`。
 
-运行目录结构如下。每个 Flow 一份文件，因而可独立校验、加载、启停和热重载；`kuudra.yaml` 是 Runtime 总清单，不承载用户 Flow 图。
+运行目录结构如下。每个普通 Flow 一份文件，因而可独立校验、加载、启停和热重载；`kuudra.yaml` 是 Runtime 总清单，不承载用户 Flow 图。
 
 ```text
 kuudra-home/
-  kuudra.yaml                 # 全局运行时、插件、全局上下文、共享动作定义
+  kuudra.yaml                 # 全局运行时、插件、全局上下文、全局 Flow 清单
   flows/
     double-a-to-c.yaml
     rapid-fire.yaml
+  system-flows/               # 全局 Flow 定义
+    emergency-stop.yaml
   plugins/                    # 插件 Fat JAR
   jnativehook-input/          # 由该插件创建并拥有的插件家目录
     config.yaml
@@ -258,15 +266,15 @@ plugins:
 flows:
   directory: flows
   autoLoad: true
+  watch: false                 # 配置变更不会自动重载；仅 API/TUI 显式 reload
 globalContext:
   features: { rapidFire: false }
-sharedActions:
-  safe-key-tap:
-    type: awt-robot.key-tap
-    defaults: { releaseOnCancel: true }
+globalFlows:
+  - file: system-flows/emergency-stop.yaml
+    privileges: [runtime.flow.stop]
 ```
 
-`sharedActions` 是可复用的动作定义和默认参数，不是自动运行的“全局宏”。Flow 中可用 `actionRef: safe-key-tap` 引用它，并在本地覆盖参数；装配器在激活时展开并校验所引用动作的插件类型。
+全局 Flow 与普通 Flow 使用同一组件图、共享 `SignalQueue`、拥有自己的会话和生命周期；区别是它们由 `kuudra.yaml` 显式登记，并可被授予受限的 Runtime 权限。它们不是所有信号的默认订阅者：仍须拥有自己的 Source，或通过 import 显式订阅普通 Flow 的 export。全局 Flow 可通过受权限保护的 `runtime-control` Action 派发 `FlowControlCommand`，例如紧急停止所有普通 Flow；它也可发布 `SystemEvent` 供 Dashboard 观测。`SystemEventBus` 本身仍保持只读，不能被普通 Flow 直接消费或反向控制。
 
 ```yaml
 flow:
@@ -331,6 +339,28 @@ imports:
 ```
 
 `ammo-guard` 导入到的是 `rapid-fire:weapon.fire.requested`，而不是全局模糊匹配的同名信号；它可以在自己的 Router 中继续判断、重映射或执行动作。
+
+全局紧急停止 Flow 的最小示例：
+
+```yaml
+# system-flows/emergency-stop.yaml
+flow: { id: emergency-stop, scope: global, version: 1 }
+components:
+  - id: escape
+    type: source/jnativehook.keyboard
+    config: { listen: [key.pressed], key: ESCAPE }
+  - id: stop-all
+    type: executor/action-bindings
+    config:
+      bindings:
+        - when: "message.type == 'jnativehook.key.pressed'"
+          action: runtime-control.flow-stop
+          with: { target: all-regular-flows }
+edges:
+  - { from: escape, to: stop-all }
+```
+
+其中 `runtime-control.flow-stop` 只能在 `kuudra.yaml` 为该全局 Flow 授予 `runtime.flow.stop` 权限后装配成功；默认不允许普通 Flow 调用。
 
 装配流水线：读取 `kuudra.yaml` → Parse YAML/JSON/TOML → 统一 `FlowDefinition` → schema 验证 → 插件/版本解析 → 表达式编译 → 组件工厂实例化 → 图校验（ID、边、类型、环、import/export、能力）→ 生成不可变 Flow revision → 原子激活。失败不得影响当前活跃版本。
 
