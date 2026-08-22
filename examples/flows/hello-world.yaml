@@ -3,7 +3,7 @@ id: hello-world
 components:
   loop-emitter:
     type: event-source
-    component: event-source/hello-world/loop-emitter
+    component: hello-world/loop-emitter
     target: session
     enabled: true
   session:
@@ -14,7 +14,7 @@ components:
       policy: IGNORE
   print:
     type: actor
-    component: actor/hello-world/console-printer
+    component: hello-world/console-printer
 
 routes:
   - from: session

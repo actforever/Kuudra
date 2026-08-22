@@ -39,6 +39,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.nio.file.Files;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 /** Framework-independent App facade. Its lifecycle owns a Runtime but not any HTTP/Web/TUI adapter. */
 public final class KuudraApp implements AutoCloseable, AppLifecycle {
@@ -91,7 +93,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
-            Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugin-homes") : bootstrapConfig.pluginHomeDirectory();
+            Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.pluginHomeDirectory();
             plugins = new DefaultPluginManager(homes, runtime::registerSource);
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) applyConfiguration(bootstrapConfig);
@@ -150,7 +152,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public synchronized Resource startEventSource(String flowId, String resourceId) {
         ManagedEventSource managed = requireEventSource(flowId, resourceId);
         if (managed.registration == null) {
-            if (managed.source == null) managed.source = requirePlugins().createComponent(managed.componentReference, EventSource.class);
+            if (managed.source == null) managed.source = requirePlugins().createComponent(componentReference("event-source", managed.componentReference), EventSource.class);
             managed.registration = requireRuntime().registerSource(flowId, managed.targetNodeId, managed.source).toCompletableFuture().join();
         }
         return managed.snapshot();
@@ -189,10 +191,15 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         public Status { flows = List.copyOf(flows); }
     }
     public synchronized void loadPluginArchives(List<Path> pluginArchives) throws IOException {
+        loadPluginArchives(pluginArchives, List.of());
+    }
+    private synchronized void loadPluginArchives(List<Path> pluginArchives, List<KuudraConfig.PluginReference> requested) throws IOException {
         List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(pluginArchives, KuudraApp.class.getClassLoader());
         try {
-            for (PluginArchiveLoader.LoadedArchive archive : loaded) requirePlugins().register(archive.plugin());
-            archives.addAll(loaded);
+            List<PluginArchiveLoader.LoadedArchive> selected = selectPlugins(loaded, requested);
+            for (PluginArchiveLoader.LoadedArchive archive : selected) requirePlugins().register(archive.plugin());
+            archives.addAll(selected);
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) if (!selected.contains(archive)) archive.close();
         } catch (RuntimeException error) {
             for (PluginArchiveLoader.LoadedArchive archive : loaded) try { archive.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
             throw error;
@@ -205,11 +212,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             List<Path> pluginArchives = new ArrayList<>();
             for (Path directory : config.pluginDirectories()) {
                 Files.createDirectories(directory);
-                try (var files = Files.list(directory)) {
+                if (!config.pluginsToLoad().isEmpty()) try (var files = Files.list(directory)) {
                     pluginArchives.addAll(files.filter(path -> path.getFileName().toString().endsWith(".jar")).sorted().toList());
                 }
             }
-            loadPluginArchives(pluginArchives);
+            loadPluginArchives(pluginArchives, config.pluginsToLoad());
             startPlugins().toCompletableFuture().join();
             for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
             for (KuudraConfig.FlowConfig flow : config.flows().values()) {
@@ -241,9 +248,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Map<String, FlowNode> nodes = new LinkedHashMap<>();
         for (KuudraConfig.NodeConfig node : definition.nodes().values()) {
             FlowNode compiled = switch (node.type()) {
-                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(node.component(), EventAdapter.class), node.options());
-                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(node.component(), EventProcessor.class), node.options());
-                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(node.component(), Actor.class), node.options());
+                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), EventAdapter.class), node.options());
+                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), EventProcessor.class), node.options());
+                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), Actor.class), node.options());
                 case "session-allocator" -> new FlowNode.AllocatorNode(node.id(), sessionSpec(node));
                 default -> throw new IllegalArgumentException("Unsupported Flow node type: " + node.type());
             };
@@ -262,6 +269,32 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return new SessionSpec(name, admissionKey, policy, parent);
     }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
+    private static String componentReference(String type, String component) {
+        if (component.startsWith(type + "/")) return component; // Compatibility with the former full reference syntax.
+        String[] parts = component.split("/", -1);
+        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) throw new IllegalArgumentException("Component must be namespace/component-id: " + component);
+        return type + "/" + component;
+    }
+    private static List<PluginArchiveLoader.LoadedArchive> selectPlugins(List<PluginArchiveLoader.LoadedArchive> loaded, List<KuudraConfig.PluginReference> requested) {
+        if (requested.isEmpty()) return List.of();
+        Map<String, PluginArchiveLoader.LoadedArchive> byId = new LinkedHashMap<>();
+        for (PluginArchiveLoader.LoadedArchive archive : loaded) byId.put(archive.plugin().metadata().id(), archive);
+        Set<String> selectedIds = new LinkedHashSet<>();
+        for (KuudraConfig.PluginReference reference : requested) {
+            PluginArchiveLoader.LoadedArchive archive = byId.get(reference.pluginId());
+            if (archive == null || !archive.plugin().metadata().namespace().equals(reference.namespace())) throw new IllegalArgumentException("Requested plugin archive is unavailable: " + reference);
+            selectPluginAndDependencies(archive, byId, selectedIds);
+        }
+        return loaded.stream().filter(archive -> selectedIds.contains(archive.plugin().metadata().id())).toList();
+    }
+    private static void selectPluginAndDependencies(PluginArchiveLoader.LoadedArchive archive, Map<String, PluginArchiveLoader.LoadedArchive> byId, Set<String> selectedIds) {
+        if (!selectedIds.add(archive.plugin().metadata().id())) return;
+        for (String dependency : archive.plugin().metadata().dependencies()) {
+            PluginArchiveLoader.LoadedArchive dependencyArchive = byId.get(dependency);
+            if (dependencyArchive == null) throw new IllegalArgumentException("Plugin dependency archive is unavailable: " + dependency);
+            selectPluginAndDependencies(dependencyArchive, byId, selectedIds);
+        }
+    }
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, String name, String admissionKey, String status, boolean cancellationRequested, java.util.Set<UUID> parentSessionIds) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }

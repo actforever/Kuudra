@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Bean;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -54,10 +55,33 @@ public class KuudraWebApplication {
 
     @Bean(destroyMethod = "close")
     KuudraApp kuudraApp(Environment environment) throws IOException {
-        Map<String, Object> values = Binder.get(environment)
-                .bind("kuudra", Bindable.mapOf(String.class, Object.class))
-                .orElse(Map.of());
-        Path baseDirectory = Path.of(environment.getProperty("kuudra.base-directory", "."));
+        Map<String, Object> values = appConfiguration(environment);
+        String configuredBaseDirectory = environment.getProperty("kuudra.base-directory");
+        Path baseDirectory = configuredBaseDirectory == null || configuredBaseDirectory.isBlank()
+                ? executableDirectoryOrWorkingDirectory() : Path.of(configuredBaseDirectory);
         return KuudraApp.createConfigured(new KuudraConfigResource(values, baseDirectory, "Spring application configuration"));
+    }
+
+    private static Map<String, Object> appConfiguration(Environment environment) {
+        Binder binder = Binder.get(environment);
+        Map<String, Object> runtime = new LinkedHashMap<>();
+        runtime.put("queueCapacity", environment.getProperty("kuudra.runtime.queue-capacity", Integer.class, 1_024));
+        runtime.put("workerThreads", environment.getProperty("kuudra.runtime.worker-threads", Integer.class, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)));
+        Map<String, Object> plugins = new LinkedHashMap<>();
+        plugins.put("directories", binder.bind("kuudra.plugins.directories", Bindable.listOf(String.class)).orElse(List.of()));
+        plugins.put("homeDirectory", environment.getProperty("kuudra.plugins.home-directory", ".kuudra/plugins"));
+        plugins.put("load", binder.bind("kuudra.plugins.load", Bindable.listOf(String.class)).orElse(List.of()));
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("runtime", runtime);
+        values.put("plugins", plugins);
+        values.put("flowsDirectory", environment.getProperty("kuudra.flows-directory", "flows"));
+        values.put("globalContext", binder.bind("kuudra.global-context", Bindable.mapOf(String.class, Object.class)).orElse(Map.of()));
+        return values;
+    }
+
+    private static Path executableDirectoryOrWorkingDirectory() {
+        java.io.File source = new ApplicationHome(KuudraWebApplication.class).getSource();
+        if (source != null && source.isFile() && source.getParentFile() != null) return source.getParentFile().toPath();
+        return Path.of(".");
     }
 }

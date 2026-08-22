@@ -5,7 +5,7 @@
 插件 JAR 在 `META-INF/kuudra-plugin/metadata.toml` 中声明：
 
 ```toml
-id = "hello-world-source"
+id = "hello-world"
 namespace = "hello-world"
 version = "0.1.0"
 entrypoint = "io.github.actforever.kuudra.demo.hello.HelloWorldPlugin"

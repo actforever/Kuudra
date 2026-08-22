@@ -22,6 +22,7 @@ class KuudraConfigTest {
                   workerThreads: 2
                 plugins:
                   directories: [plugins]
+                  load: [demo/demo-plugin]
                 flowsDirectory: flows
                 globalContext:
                   profile: demo
@@ -48,7 +49,8 @@ class KuudraConfigTest {
                 """);
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("kuudra.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
-        assertEquals(directory.resolve(".kuudra/plugin-homes").toAbsolutePath().normalize(), config.pluginHomeDirectory());
+        assertEquals(directory.resolve(".kuudra/plugins").toAbsolutePath().normalize(), config.pluginHomeDirectory());
+        assertEquals("demo/demo-plugin", config.pluginsToLoad().get(0).toString());
         assertEquals("demo", config.flows().get("demo").id());
         assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
         assertEquals("source", config.flows().get("demo").sources().get(0).id());

@@ -6,11 +6,13 @@
 
 ```yaml
 kuudra:
-  base-directory: .
+  base-directory: D:/kuudra
   plugins:
     directories:
-      - plugins
-    homeDirectory: .kuudra/plugin-homes
+      - .kuudra/plugins
+    homeDirectory: .kuudra/plugins
+    load:
+      - hello-world/hello-world
   flowsDirectory: flows
   globalContext:
     profile: production

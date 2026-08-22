@@ -4,8 +4,10 @@ runtime:
   workerThreads: 2
 
 plugins:
-  directories: []
-  homeDirectory: .kuudra/plugin-homes
+  directories:
+    - .kuudra/plugins
+  homeDirectory: .kuudra/plugins
+  load: []
 
 flowsDirectory: flows
 globalContext: {}

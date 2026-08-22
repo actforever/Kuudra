@@ -4,8 +4,10 @@ runtime:
 
 plugins:
   directories:
-    - .kuudra/plugin-archives
-  homeDirectory: .kuudra/plugin-homes
+    - .kuudra/plugins
+  homeDirectory: .kuudra/plugins
+  load:
+    - hello-world/hello-world
 
 flowsDirectory: flows
 
