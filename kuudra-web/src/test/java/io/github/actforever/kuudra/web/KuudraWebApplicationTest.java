@@ -17,9 +17,9 @@ class KuudraWebApplicationTest {
     private MockMvc mvc;
 
     @Test
-    void exposesRuntimeHealthOverRest() throws Exception {
-        mvc.perform(get("/api/v1/runtime/health"))
+    void exposesAppStatusOverRestWithoutCreatingAnApp() throws Exception {
+        mvc.perform(get("/api/v1/app"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"));
+                .andExpect(jsonPath("$.status").value("UNREACHABLE"));
     }
 }

@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 class OpenApiConfiguration {
     @Bean
     OpenAPI kuudraOpenApi() {
-        return new OpenAPI().info(new Info().title("Kuudra Runtime API").version("v1")
+        return new OpenAPI().info(new Info().title("Kuudra App API").version("v1")
                 .description("Kuudra 内核运行时观测与生命周期控制接口。"));
     }
 }
