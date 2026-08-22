@@ -1,42 +1,24 @@
 package io.github.actforever.kuudra.config;
 
-import io.github.actforever.kuudra.api.SessionPolicy;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.io.StringReader;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KuudraConfigTest {
     @Test
-    void compilesTheRestrictedYamlDemoConfiguration() throws Exception {
-        KuudraConfig.DemoConfig config = KuudraConfig.loadDemo(new StringReader("""
-                runtime:
-                  queueCapacity: 32
-                  actorThreads: 2
-                flow:
-                  id: demo
-                  sessionName: demo-session
-                  policy: IGNORE
-                  acceptType: gesture.double
-                action:
-                  simulateKey: C
-                ingress:
-                  id: input
-                  inputType: key.press
-                  key: A
-                  doublePressWindowMs: 500
-                """));
-
-        assertEquals(32, config.queueCapacity());
-        assertEquals(SessionPolicy.IGNORE, config.policy());
-        assertEquals("C", config.simulateKey());
+    void modelsAnEventGraphWithoutChoosingASerializationFormat() {
+        KuudraConfig.FlowConfig flow = new KuudraConfig.FlowConfig("demo", Map.of(
+                "normalize", new KuudraConfig.NodeConfig("normalize", "event-adapter", "event-adapter/input/normalize", Map.of()),
+                "allocate", new KuudraConfig.NodeConfig("allocate", "session-allocator", null, Map.of("policy", "PARALLEL"))
+        ), List.of(new KuudraConfig.EdgeConfig("normalize", "allocate")), List.of(new KuudraConfig.SourceBinding("event-source/input/keyboard", "normalize")));
+        assertEquals("demo", flow.id()); assertEquals("session-allocator", flow.nodes().get("allocate").type());
     }
-
     @Test
-    void rejectsYamlFeaturesOutsideTheMinimalCompilerContract() {
-        assertThrows(IOException.class, () -> KuudraConfig.loadDemo(new StringReader("runtime:\n  queueCapacity: [32]\n")));
+    void rejectsPluginComponentOmissionForNonCoreNodes() {
+        assertThrows(IllegalArgumentException.class, () -> new KuudraConfig.NodeConfig("actor", "actor", null, Map.of()));
     }
 }
