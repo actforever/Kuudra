@@ -96,11 +96,11 @@ class DefaultPluginManagerTest {
         List<String> calls = new ArrayList<>();
         manager.register(new RecordingPlugin("base", List.of(), calls));
         manager.register(new PluginArchiveLoader.LoadedPlugin(metadata, new RecordingPlugin("annotated", List.of(), calls),
-                List.of(new PluginComponentDefinition("annotated", "test-plugin", PluginComponentKind.SIGNAL_SOURCE, "test-source", TestSource.class))));
+                List.of(new PluginComponentDefinition("annotated", "test-plugin", PluginComponentKind.EVENT_SOURCE, "test-source", TestSource.class))));
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
-        assertEquals("annotated", manager.components().find("signal-source/test-plugin/test-source").orElseThrow().pluginId());
-        assertTrue(manager.components().create("signal-source/test-plugin/test-source", io.github.actforever.kuudra.api.RawSignalSource.class) instanceof TestSource);
+        assertEquals("annotated", manager.components().find("event-source/test-plugin/test-source").orElseThrow().pluginId());
+        assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.EventSource.class) instanceof TestSource);
     }
 
     private static class RecordingPlugin implements KuudraPlugin {
@@ -149,9 +149,9 @@ class DefaultPluginManagerTest {
         }
     }
 
-    @io.github.actforever.kuudra.plugin.annotation.SignalSource("test-source")
-    public static final class TestSource implements io.github.actforever.kuudra.api.RawSignalSource {
-        @Override public void setEmitter(io.github.actforever.kuudra.api.RawSignalEmitter emitter) { }
+    @io.github.actforever.kuudra.plugin.annotation.EventSource("test-source")
+    public static final class TestSource implements io.github.actforever.kuudra.api.EventSource {
+        @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
     }

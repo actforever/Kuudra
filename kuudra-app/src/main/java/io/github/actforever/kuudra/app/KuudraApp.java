@@ -2,13 +2,13 @@ package io.github.actforever.kuudra.app;
 
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.SessionSnapshot;
-import io.github.actforever.kuudra.api.RawSignalSource;
+import io.github.actforever.kuudra.api.Event;
+import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.SourceRegistration;
 import io.github.actforever.kuudra.plugin.DefaultPluginManager;
 import io.github.actforever.kuudra.plugin.PluginArchiveLoader;
 import io.github.actforever.kuudra.plugin.PluginComponentRegistry;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
-import io.github.actforever.kuudra.runtime.IngressPipeline;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
 
 import java.io.IOException;
@@ -65,8 +65,7 @@ public final class KuudraApp implements AutoCloseable {
 
     /** Application assembly API used by configuration compilers, not by transport adapters. */
     public void registerFlow(KuudraFlow flow) { runtime.registerFlow(flow); }
-    public void registerIngress(IngressPipeline pipeline) { runtime.registerIngress(pipeline); }
-    public boolean publishRaw(String ingressPipelineId, io.github.actforever.kuudra.api.RawSignal signal) { return runtime.publishRaw(ingressPipelineId, signal); }
+    public boolean publish(String flowId, String targetNodeId, Event event) { return runtime.publish(flowId, targetNodeId, event); }
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException { return runtime.awaitNoActiveSessions(timeout); }
 
     /** Loads and validates plugin metadata, dependencies and annotated component definitions. */
@@ -86,11 +85,11 @@ public final class KuudraApp implements AutoCloseable {
 
     /**
      * Configuration assembly hook: resolves a plugin declaration such as
-     * {@code signal-source/hello-world/loop-emitter}, constructs it, then attaches it to an ingress pipeline.
+     * {@code event-source/hello-world/loop-emitter}, constructs it, then attaches it to a Flow node.
      */
-    public java.util.concurrent.CompletionStage<SourceRegistration> installSignalSource(String componentReference, String ingressPipelineId) {
-        RawSignalSource source = plugins.components().create(componentReference, RawSignalSource.class);
-        return runtime.registerSource(ingressPipelineId, source);
+    public java.util.concurrent.CompletionStage<SourceRegistration> installEventSource(String componentReference, String flowId, String targetNodeId) {
+        EventSource source = plugins.components().create(componentReference, EventSource.class);
+        return runtime.registerSource(flowId, targetNodeId, source);
     }
 
     @Override

@@ -77,4 +77,19 @@ public final class KuudraConfig {
     public record DemoConfig(int queueCapacity, int actorThreads, String flowId, String sessionName,
                              SessionPolicy policy, String acceptType, String simulateKey,
                              String ingressId, String inputType, String key, int doublePressWindowMs) { }
+
+    /** Format-neutral aggregate compiled from kuudra.yaml and files in flows/. */
+    public record RuntimeConfig(Map<String, String> plugins, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+        public RuntimeConfig { plugins = Map.copyOf(plugins); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
+    }
+
+    /** Declarative Event graph. Component references use type/namespace/name. */
+    public record FlowConfig(String id, Map<String, NodeConfig> nodes, java.util.List<EdgeConfig> edges, java.util.List<SourceBinding> sources) {
+        public FlowConfig { if (id == null || id.isBlank()) throw new IllegalArgumentException("flow id must not be blank"); nodes = Map.copyOf(nodes); edges = java.util.List.copyOf(edges); sources = java.util.List.copyOf(sources); }
+    }
+    public record NodeConfig(String id, String type, String component, Map<String, Object> options) {
+        public NodeConfig { if (id == null || id.isBlank()) throw new IllegalArgumentException("node id must not be blank"); if (type == null || type.isBlank()) throw new IllegalArgumentException("node type must not be blank"); options = Map.copyOf(options); }
+    }
+    public record EdgeConfig(String from, String to) { }
+    public record SourceBinding(String component, String targetNodeId) { }
 }

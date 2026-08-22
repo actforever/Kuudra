@@ -5,5 +5,5 @@ import java.util.List;
 
 @FunctionalInterface
 public interface Actor {
-    CompletionStage<List<Signal>> act(Signal signal, ActionContext context);
+    CompletionStage<List<Event>> act(Event event, ActionContext context);
 }

@@ -1,20 +1,17 @@
 package io.github.actforever.kuudra.runtime;
 
-import io.github.actforever.kuudra.api.RawSignal;
-import io.github.actforever.kuudra.api.RawSignalProcessor;
-import io.github.actforever.kuudra.api.RawSignalSource;
-import io.github.actforever.kuudra.api.RootSignal;
-import io.github.actforever.kuudra.api.RootSignalSource;
-import io.github.actforever.kuudra.api.SourceRegistration;
+import io.github.actforever.kuudra.api.Event;
+import io.github.actforever.kuudra.api.EventContext;
+import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.FlowStatus;
+import io.github.actforever.kuudra.api.ParentTerminationPolicy;
 import io.github.actforever.kuudra.api.RuntimeStateView;
 import io.github.actforever.kuudra.api.SessionContext;
-import io.github.actforever.kuudra.api.SessionProcessorContext;
+import io.github.actforever.kuudra.api.SessionReference;
 import io.github.actforever.kuudra.api.SessionSnapshot;
 import io.github.actforever.kuudra.api.SessionStatus;
-import io.github.actforever.kuudra.api.Signal;
-import io.github.actforever.kuudra.api.SignalContext;
+import io.github.actforever.kuudra.api.SourceRegistration;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
 import io.github.actforever.kuudra.logging.KuudraLog;
@@ -23,9 +20,11 @@ import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -38,14 +37,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Single-process queue-driven runtime for all three signal stages. */
+/** Single-queue Event runtime. Routing into an Allocator or Processor detaches a current Session. */
 public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
+    private static final int MAX_HOPS = 1_024;
     private static final org.slf4j.Logger LOG = KuudraLog.getLogger(KuudraRuntime.class);
     private final Object monitor = new Object();
     private final Map<String, RegisteredFlow> flows = new HashMap<>();
-    private final Map<String, IngressPipeline> pipelines = new HashMap<>();
     private final Map<UUID, ManagedSession> sessions = new HashMap<>();
-    private final Map<GroupKey, ArrayDeque<RootSignal>> queuedRoots = new HashMap<>();
+    private final Map<GroupKey, ArrayDeque<AllocationRequest>> queuedAllocations = new HashMap<>();
+    private final Map<UUID, Set<UUID>> childrenByParent = new HashMap<>();
     private final CopyOnWriteArrayList<SourceRegistration> sourceRegistrations = new CopyOnWriteArrayList<>();
     private final KuudraTaskQueue queue;
     private final ExecutorService dispatcher;
@@ -53,16 +53,11 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private final SimpleSystemEventBus events = new SimpleSystemEventBus();
     private final AtomicBoolean running = new AtomicBoolean(true);
 
-    public KuudraRuntime(int queueCapacity, int workerThreads) {
-        this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads);
-    }
-
+    public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads); }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) {
         if (workerThreads < 1) throw new IllegalArgumentException("workerThreads must be positive");
-        this.queue = queue;
-        dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
-        workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker"));
-        dispatcher.execute(this::dispatchLoop);
+        this.queue = queue; dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
+        workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker")); dispatcher.execute(this::dispatchLoop);
         LOG.info("KuudraRuntime started with {} worker(s)", workerThreads);
     }
 
@@ -75,153 +70,100 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         }
         event("flow.registered", Map.of("flowId", flow.id()));
     }
-
-    public void activateFlow(String flowId) {
-        synchronized (monitor) { requireFlow(flowId).status = FlowStatus.ACTIVE; }
-        event("flow.active", Map.of("flowId", flowId));
-    }
-
-    /** Stop accepting roots but retain session continuations until explicitly resumed or stopped. */
-    public void pauseFlow(String flowId) {
-        synchronized (monitor) {
-            RegisteredFlow flow = requireFlow(flowId);
-            if (flow.status == FlowStatus.ACTIVE) flow.status = FlowStatus.PAUSED;
-        }
-        event("flow.paused", Map.of("flowId", flowId));
-    }
-
-    /** Re-enqueue continuations held while the Flow was paused. */
-    public void resumeFlow(String flowId) {
-        List<RuntimeTask.SignalTask> deferred;
-        synchronized (monitor) {
-            RegisteredFlow flow = requireFlow(flowId);
-            if (flow.status != FlowStatus.PAUSED) return;
-            flow.status = FlowStatus.ACTIVE;
-            deferred = List.copyOf(flow.deferred);
-            flow.deferred.clear();
-        }
-        deferred.forEach(task -> {
-            if (!offer(task)) {
-                synchronized (monitor) { ManagedSession session = sessions.get(task.sessionId()); if (session != null) release(session, null); }
-            }
-        });
-        event("flow.resumed", Map.of("flowId", flowId, "continuations", deferred.size()));
-    }
-
-    /** Close the root admission gate and cooperatively cancel current sessions. */
+    public void activateFlow(String flowId) { setFlowStatus(flowId, FlowStatus.ACTIVE, "flow.active"); }
+    /** PAUSED flows reject new delivery; they do not retain an unbounded in-memory backlog. */
+    public void pauseFlow(String flowId) { setFlowStatus(flowId, FlowStatus.PAUSED, "flow.paused"); }
+    public void resumeFlow(String flowId) { activateFlow(flowId); }
     public void stopFlow(String flowId) {
-        List<UUID> toCancel = new ArrayList<>();
-        List<RuntimeTask.SignalTask> deferred;
+        List<UUID> active;
         synchronized (monitor) {
-            RegisteredFlow flow = requireFlow(flowId);
-            flow.status = FlowStatus.STOPPING;
-            deferred = List.copyOf(flow.deferred);
-            flow.deferred.clear();
-            sessions.values().stream().filter(s -> s.flow.id().equals(flowId) && s.isActive()).forEach(s -> toCancel.add(s.id));
+            RegisteredFlow flow = requireFlow(flowId); flow.status = FlowStatus.STOPPING;
+            active = sessions.values().stream().filter(s -> s.flow.id().equals(flowId) && s.isActive()).map(s -> s.id).toList();
         }
-        toCancel.forEach(this::cancel);
-        deferred.forEach(task -> {
-            if (!offer(task)) {
-                synchronized (monitor) {
-                    ManagedSession session = sessions.get(task.sessionId());
-                    if (session != null) release(session, null);
-                }
-            }
+        active.forEach(this::cancel); markStoppedIfDrained(flowId); event("flow.stopping", Map.of("flowId", flowId));
+    }
+    private void setFlowStatus(String flowId, FlowStatus status, String eventType) {
+        synchronized (monitor) { requireFlow(flowId).status = status; }
+        event(eventType, Map.of("flowId", flowId));
+    }
+
+    /** Binds a plugin EventSource to the first node of a Flow. Sources may only emit unbound Events. */
+    public CompletionStage<SourceRegistration> registerSource(String flowId, String targetNodeId, EventSource source) {
+        synchronized (monitor) { requireFlow(flowId).flow.node(targetNodeId); }
+        source.setEmitter(event -> {
+            if (event.hasSession()) throw new IllegalArgumentException("EventSource must emit an unbound Event");
+            return publish(flowId, targetNodeId, event);
         });
-        event("flow.stopping", Map.of("flowId", flowId));
-    }
-
-    public void registerIngress(IngressPipeline pipeline) {
-        synchronized (monitor) {
-            if (pipelines.putIfAbsent(pipeline.id(), pipeline) != null) throw new IllegalArgumentException("duplicate ingress: " + pipeline.id());
-        }
-    }
-
-    public CompletionStage<SourceRegistration> registerSource(String pipelineId, RawSignalSource source) {
-        synchronized (monitor) {
-            if (!pipelines.containsKey(pipelineId)) throw new IllegalArgumentException("unknown ingress: " + pipelineId);
-        }
-        source.setEmitter(raw -> publishRaw(pipelineId, raw));
         return source.start().thenApply(ignored -> registerSourceStop(source::stop));
     }
-
-    public CompletionStage<SourceRegistration> registerRootSource(RootSignalSource source) {
-        source.setEmitter(this::publishRoot);
-        return source.start().thenApply(ignored -> registerSourceStop(source::stop));
-    }
-
     private SourceRegistration registerSourceStop(java.util.function.Supplier<CompletionStage<Void>> stop) {
-        AtomicBoolean removed = new AtomicBoolean();
-        AtomicReference<SourceRegistration> reference = new AtomicReference<>();
+        AtomicBoolean removed = new AtomicBoolean(); AtomicReference<SourceRegistration> reference = new AtomicReference<>();
         SourceRegistration registration = () -> {
             if (!removed.compareAndSet(false, true)) return CompletableFuture.completedFuture(null);
-            sourceRegistrations.remove(reference.get());
-            return stop.get();
+            sourceRegistrations.remove(reference.get()); return stop.get();
         };
-        reference.set(registration);
-        sourceRegistrations.add(registration);
-        return registration;
+        reference.set(registration); sourceRegistrations.add(registration); return registration;
     }
 
-    public boolean publishRaw(String pipelineId, RawSignal signal) {
-        synchronized (monitor) {
-            if (!pipelines.containsKey(pipelineId)) throw new IllegalArgumentException("unknown ingress: " + pipelineId);
-        }
-        return offer(new RuntimeTask.RawTask(pipelineId, signal));
+    /** Publishes an Event to an explicit Flow node. The target edge determines session propagation. */
+    public boolean publish(String flowId, String targetNodeId, Event event) {
+        RegisteredFlow flow;
+        synchronized (monitor) { flow = requireFlow(flowId); if (flow.status != FlowStatus.ACTIVE) return rejected("flow.inactive", flowId, targetNodeId); }
+        return enqueue(flow.flow, targetNodeId, event);
+    }
+    private boolean rejected(String type, String flowId, String nodeId) {
+        event(type, Map.of("flowId", flowId, "nodeId", nodeId)); return false;
     }
 
-    public boolean publishRoot(RootSignal signal) { return offer(new RuntimeTask.RootTask(signal)); }
-
-    public boolean cancel(UUID sessionId) {
+    public boolean cancel(UUID sessionId) { return requestCancellation(sessionId, "explicit"); }
+    private boolean requestCancellation(UUID sessionId, String reason) {
+        List<UUID> descendants = List.of();
         synchronized (monitor) {
             ManagedSession session = sessions.get(sessionId);
-            if (session == null || !session.isActive()) return false;
-            session.cancelled.set(true);
+            if (session == null || !session.isActive() || !session.cancelled.compareAndSet(false, true)) return false;
             session.status = SessionStatus.CANCELLATION_REQUESTED;
+            descendants = childSessions(sessionId, ParentTerminationPolicy.ON_PARENT_CANCELLATION);
         }
-        event("session.cancel.requested", Map.of("sessionId", sessionId.toString()));
-        return true;
+        event("session.cancel.requested", Map.of("sessionId", sessionId.toString(), "reason", reason));
+        descendants.forEach(child -> requestCancellation(child, "parent-cancelled")); return true;
     }
 
     @Override public boolean hasActiveSession(String flowId, String sessionName) { return activeSessionCount(flowId, sessionName) > 0; }
     @Override public int activeSessionCount(String flowId, String sessionName) {
-        synchronized (monitor) {
-            return (int) sessions.values().stream().filter(s -> s.isActive() && s.flow.id().equals(flowId)
-                    && s.root.sessionSpec().name().equals(sessionName)).count();
-        }
+        synchronized (monitor) { return (int) sessions.values().stream().filter(s -> s.isActive() && s.flow.id().equals(flowId) && s.spec.name().equals(sessionName)).count(); }
     }
-    @Override public Optional<SessionSnapshot> session(UUID sessionId) {
-        synchronized (monitor) { return Optional.ofNullable(sessions.get(sessionId)).map(ManagedSession::snapshot); }
-    }
+    @Override public Optional<SessionSnapshot> session(UUID sessionId) { synchronized (monitor) { return Optional.ofNullable(sessions.get(sessionId)).map(ManagedSession::snapshot); } }
     @Override public Optional<FlowSnapshot> flow(String flowId) {
         synchronized (monitor) {
-            RegisteredFlow flow = flows.get(flowId);
-            if (flow == null) return Optional.empty();
+            RegisteredFlow flow = flows.get(flowId); if (flow == null) return Optional.empty();
             int active = (int) sessions.values().stream().filter(s -> s.isActive() && s.flow.id().equals(flowId)).count();
-            return Optional.of(new FlowSnapshot(flowId, flow.status, active, flow.deferred.size()));
+            return Optional.of(new FlowSnapshot(flowId, flow.status, active, 0));
         }
     }
-    /** Immutable diagnostic snapshot of all currently registered Flows. */
-    public List<FlowSnapshot> flows() {
-        synchronized (monitor) {
-            return flows.keySet().stream().map(this::flow).flatMap(Optional::stream).toList();
-        }
-    }
+    public List<FlowSnapshot> flows() { synchronized (monitor) { return flows.keySet().stream().map(this::flow).flatMap(Optional::stream).toList(); } }
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
         synchronized (monitor) {
             while (sessions.values().stream().anyMatch(ManagedSession::isActive)) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) return false;
-                TimeUnit.NANOSECONDS.timedWait(monitor, remaining);
+                long remaining = deadline - System.nanoTime(); if (remaining <= 0) return false; TimeUnit.NANOSECONDS.timedWait(monitor, remaining);
             }
             return true;
         }
     }
 
-    private boolean offer(RuntimeTask task) {
-        boolean accepted = running.get() && queue.offer(task);
-        if (!accepted) event("queue.rejected", Map.of("task", task.getClass().getSimpleName()));
+    private boolean enqueue(KuudraFlow flow, String targetNodeId, Event original) {
+        if (original.lineage().hops() > MAX_HOPS) return rejected("event.rejected.maxHops", flow.id(), targetNodeId);
+        FlowNode target = flow.node(targetNodeId);
+        Event delivered = (target instanceof FlowNode.ProcessorNode || target instanceof FlowNode.AllocatorNode)
+                ? original.withoutSession() : original;
+        if (target instanceof FlowNode.ActorNode && !delivered.hasSession()) return rejected("event.rejected.actorRequiresSession", flow.id(), targetNodeId);
+        if (delivered.hasSession() && !flow.id().equals(delivered.session().flowId())) return rejected("event.rejected.crossFlowSession", flow.id(), targetNodeId);
+        ManagedSession owner = null;
+        if (delivered.hasSession()) {
+            synchronized (monitor) { owner = sessions.get(delivered.session().id()); if (owner == null || !owner.isActive()) return false; owner.work.incrementAndGet(); }
+        }
+        boolean accepted = running.get() && queue.offer(new RuntimeTask.EventTask(flow.id(), targetNodeId, delivered));
+        if (!accepted) { if (owner != null) release(owner, null); event("queue.rejected", Map.of("task", "EventTask")); }
         return accepted;
     }
 
@@ -232,216 +174,163 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             catch (RuntimeException error) { event("runtime.dispatch.failed", Map.of("error", error.toString())); }
         }
     }
-
     private void dispatch(RuntimeTask task) {
-        if (task instanceof RuntimeTask.RawTask raw) dispatchRaw(raw);
-        else if (task instanceof RuntimeTask.RootTask root) admit(root.signal());
-        else if (task instanceof RuntimeTask.SignalTask signal) dispatchSignal(signal);
-    }
-
-    private void dispatchRaw(RuntimeTask.RawTask task) {
-        IngressPipeline pipeline;
-        synchronized (monitor) { pipeline = pipelines.get(task.pipelineId()); }
-        if (pipeline == null) return;
-        List<RawSignal> signals = List.of(task.signal());
-        for (RawSignalProcessor processor : pipeline.processors()) {
-            List<RawSignal> next = new ArrayList<>();
-            for (RawSignal raw : signals) next.addAll(processor.process(raw));
-            signals = List.copyOf(next);
-            if (signals.isEmpty()) return;
-        }
-        for (RawSignal raw : signals) for (IngressPipeline.Output output : pipeline.outputs()) {
-            if (!output.selector().test(raw)) continue;
-            RegisteredFlow flow;
-            synchronized (monitor) { flow = requireFlow(output.flowId()); }
-            if (flow.status != FlowStatus.ACTIVE) continue;
-            List<RootSignal> roots = flow.flow.sessionProcessor().process(raw, new SessionProcessorContext(flow.flow.id(), this));
-            roots.forEach(this::publishRoot);
-        }
-    }
-
-    private void admit(RootSignal root) {
-        ManagedSession created = null;
-        synchronized (monitor) {
-            RegisteredFlow registration = requireFlow(root.flowId());
-            if (registration.status != FlowStatus.ACTIVE) { event("root.rejected.inactiveFlow", Map.of("flowId", root.flowId())); return; }
-            GroupKey key = new GroupKey(root.flowId(), root.sessionSpec().name(), root.sessionSpec().admissionKey());
-            boolean active = sessions.values().stream().anyMatch(s -> s.isActive() && s.group.equals(key));
-            switch (root.sessionSpec().policy()) {
-                case IGNORE -> { if (active) return; }
-                case TOGGLE -> {
-                    if (active) {
-                        sessions.values().stream().filter(s -> s.isActive() && s.group.equals(key)).forEach(s -> { s.cancelled.set(true); s.status = SessionStatus.CANCELLATION_REQUESTED; });
-                        return;
-                    }
-                }
-                case QUEUED -> {
-                    if (active) { queuedRoots.computeIfAbsent(key, ignored -> new ArrayDeque<>()).addLast(root); return; }
-                }
-                case PARALLEL -> { }
-            }
-            created = createSession(registration.flow, root, key);
-        }
-        enqueueEntry(created);
-    }
-
-    private ManagedSession createSession(KuudraFlow flow, RootSignal root, GroupKey group) {
-        ManagedSession session = new ManagedSession(UUID.randomUUID(), flow, root, group, workers);
-        sessions.put(session.id, session);
-        event("session.active", Map.of("sessionId", session.id.toString(), "flowId", flow.id()));
-        return session;
-    }
-
-    private void enqueueEntry(ManagedSession session) {
-        Signal signal = new Signal(session.root.raw(), session.id, session.flow.id(), session.nextSequence());
-        enqueueSignal(session, session.flow.entryNodeId(), signal);
-    }
-
-    private void enqueueSignal(ManagedSession session, String nodeId, Signal signal) {
-        if (!session.flow.id().equals(signal.flowId()) || !session.id.equals(signal.sessionId())) {
-            fail(session, new IllegalArgumentException("a Flow node cannot emit a signal for another Flow/session")); return;
-        }
-        session.work.incrementAndGet();
-        RuntimeTask.SignalTask task = new RuntimeTask.SignalTask(session.id, nodeId, signal);
-        synchronized (monitor) {
-            RegisteredFlow flow = requireFlow(session.flow.id());
-            if (flow.status == FlowStatus.PAUSED) {
-                flow.deferred.add(task);
-                return;
-            }
-        }
-        if (!offer(task)) release(session, null);
-    }
-
-    private void dispatchSignal(RuntimeTask.SignalTask task) {
+        RuntimeTask.EventTask eventTask = (RuntimeTask.EventTask) task;
+        RegisteredFlow registration;
+        synchronized (monitor) { registration = flows.get(eventTask.flowId()); }
+        if (registration == null || registration.status != FlowStatus.ACTIVE) { releaseIfBound(eventTask.event(), null); return; }
+        if (!eventTask.event().hasSession()) { workers.execute(() -> execute(registration.flow, eventTask, null)); return; }
         ManagedSession session;
-        synchronized (monitor) { session = sessions.get(task.sessionId()); }
-        if (session == null || !session.isActive()) return;
-        synchronized (monitor) {
-            RegisteredFlow flow = requireFlow(session.flow.id());
-            if (flow.status == FlowStatus.PAUSED) { flow.deferred.add(task); return; }
+        synchronized (monitor) { session = sessions.get(eventTask.event().session().id()); }
+        if (session == null || !session.isActive() || session.cancelled.get()) { releaseIfBound(eventTask.event(), null); return; }
+        session.submit(() -> execute(registration.flow, eventTask, session));
+    }
+
+    private CompletionStage<Void> execute(KuudraFlow flow, RuntimeTask.EventTask task, ManagedSession owner) {
+        FlowNode node;
+        try { node = flow.node(task.nodeId()); }
+        catch (RuntimeException error) { finishTask(owner, error); return CompletableFuture.failedFuture(error); }
+        if (node instanceof FlowNode.AllocatorNode allocator) {
+            allocate(flow, allocator, task.event()); finishTask(owner, null); return CompletableFuture.completedFuture(null);
         }
-        session.submit(() -> {
-            CompletableFuture<Void> completion = new CompletableFuture<>();
-            FlowNode node = session.flow.nodes().get(task.nodeId());
-            if (node == null) {
-                IllegalArgumentException error = new IllegalArgumentException("unknown flow node: " + task.nodeId());
-                release(session, error);
-                completion.completeExceptionally(error);
-                return completion;
-            }
-            SignalContext context = new SignalContext(session.id, session.flow.id(), session.context.snapshot(), session.context, session.cancelled::get);
+        EventContext context = owner == null
+                ? new EventContext(flow.id(), null, Map.of(), null, () -> false)
+                : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get);
+        CompletionStage<List<Event>> stage = node instanceof FlowNode.AdapterNode adapter ? adapter.apply(task.event(), context)
+                : node instanceof FlowNode.ProcessorNode processor ? processor.apply(task.event(), context)
+                : ((FlowNode.ActorNode) node).apply(task.event(), context);
+        return stage.handle((emitted, error) -> {
+            if (error != null) { finishTask(owner, error); return null; }
             try {
-                node.apply(task.signal(), context).whenComplete((out, error) -> {
-                    if (error == null) {
-                        for (Signal emitted : out) for (String next : session.flow.next(task.nodeId())) enqueueSignal(session, next, emitted);
-                    }
-                    release(session, error);
-                    if (error == null) completion.complete(null); else completion.completeExceptionally(error);
-                });
-            } catch (RuntimeException error) { release(session, error); completion.completeExceptionally(error); }
-            return completion;
+                List<Event> normalized = normalize(node, task.event(), emitted);
+                for (Event output : normalized) for (String next : flow.next(node.id())) enqueue(flow, next, output);
+                finishTask(owner, null);
+            } catch (RuntimeException failure) { finishTask(owner, failure); throw failure; }
+            return null;
         });
     }
 
-    private void release(ManagedSession session, Throwable error) {
-        if (error != null) { fail(session, error); return; }
-        if (session.work.decrementAndGet() != 0) return;
-        complete(session);
+    private List<Event> normalize(FlowNode node, Event input, List<Event> emitted) {
+        if (emitted == null) throw new IllegalArgumentException("component emitted null event list");
+        List<Event> result = new ArrayList<>();
+        for (Event output : emitted) {
+            if (output == null) throw new IllegalArgumentException("component emitted null Event");
+            Event derived = output.withLineage(output.lineage().descendFrom(input, false));
+            if (node instanceof FlowNode.ProcessorNode) derived = derived.withoutSession();
+            if ((node instanceof FlowNode.AdapterNode || node instanceof FlowNode.ActorNode) && input.hasSession()) {
+                if (derived.session() != null && !derived.session().equals(input.session())) throw new IllegalArgumentException("component cannot replace a Session");
+                derived = derived.withSession(input.session());
+            }
+            result.add(derived);
+        }
+        return List.copyOf(result);
     }
 
+    private void allocate(KuudraFlow flow, FlowNode.AllocatorNode allocator, Event event) {
+        if (event.hasSession()) throw new IllegalArgumentException("Allocator accepts only unbound Events");
+        ManagedSession created = null;
+        synchronized (monitor) {
+            RegisteredFlow registration = requireFlow(flow.id()); if (registration.status != FlowStatus.ACTIVE) return;
+            GroupKey key = new GroupKey(flow.id(), allocator.id(), allocator.sessionSpec().name(), allocator.sessionSpec().admissionKey());
+            boolean active = sessions.values().stream().anyMatch(s -> s.isActive() && s.group.equals(key));
+            switch (allocator.sessionSpec().policy()) {
+                case IGNORE -> { if (active) return; }
+                case TOGGLE -> { if (active) { sessions.values().stream().filter(s -> s.isActive() && s.group.equals(key)).map(s -> s.id).toList().forEach(id -> requestCancellation(id, "toggle")); return; } }
+                case QUEUED -> { if (active) { queuedAllocations.computeIfAbsent(key, ignored -> new ArrayDeque<>()).addLast(new AllocationRequest(flow, allocator, event)); return; } }
+                case PARALLEL -> { }
+            }
+            created = createSession(flow, allocator, event, key);
+        }
+        routeAllocated(created, allocator, event);
+        if (requiresParentCancellation(created)) requestCancellation(created.id, "parent-already-terminal");
+    }
+    private ManagedSession createSession(KuudraFlow flow, FlowNode.AllocatorNode allocator, Event event, GroupKey key) {
+        ManagedSession session = new ManagedSession(UUID.randomUUID(), flow, allocator.sessionSpec(), key, event.lineage().parentSessionIds(), workers);
+        sessions.put(session.id, session); session.parents.forEach(parent -> childrenByParent.computeIfAbsent(parent, ignored -> new HashSet<>()).add(session.id));
+        event("session.active", Map.of("sessionId", session.id.toString(), "flowId", flow.id(), "allocatorId", allocator.id())); return session;
+    }
+    private void routeAllocated(ManagedSession session, FlowNode.AllocatorNode allocator, Event event) {
+        Event bound = event.withSession(new SessionReference(session.id, session.flow.id()));
+        for (String next : session.flow.next(allocator.id())) enqueue(session.flow, next, bound);
+        if (session.work.get() == 0) complete(session);
+    }
+
+    private void finishTask(ManagedSession owner, Throwable error) { if (owner != null) release(owner, error); }
+    private void releaseIfBound(Event event, Throwable error) {
+        if (!event.hasSession()) return; ManagedSession session; synchronized (monitor) { session = sessions.get(event.session().id()); } if (session != null) release(session, error);
+    }
+    private void release(ManagedSession session, Throwable error) {
+        if (error != null) { fail(session, error); return; }
+        if (session.work.decrementAndGet() == 0) complete(session);
+    }
     private void fail(ManagedSession session, Throwable error) {
         if (!session.terminal.compareAndSet(false, true)) return;
         synchronized (monitor) { session.status = SessionStatus.FAILED; monitor.notifyAll(); }
-        event("session.failed", Map.of("sessionId", session.id.toString(), "error", error.toString()));
-        admitNext(session.group);
-        markStoppedIfDrained(session.flow.id());
+        event("session.failed", Map.of("sessionId", session.id.toString(), "error", error.toString())); terminal(session);
     }
-
     private void complete(ManagedSession session) {
-        synchronized (monitor) {
-            if (!session.isActive()) return;
-            session.status = session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED;
-            monitor.notifyAll();
-        }
-        event("session." + session.status.name().toLowerCase(), Map.of("sessionId", session.id.toString()));
-        admitNext(session.group);
-        markStoppedIfDrained(session.flow.id());
+        if (!session.terminal.compareAndSet(false, true)) return;
+        synchronized (monitor) { session.status = session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED; monitor.notifyAll(); }
+        event("session." + session.status.name().toLowerCase(), Map.of("sessionId", session.id.toString())); terminal(session);
     }
-
-    private void admitNext(GroupKey group) {
-        RootSignal next = null;
+    private void terminal(ManagedSession session) {
+        childSessions(session.id, ParentTerminationPolicy.ON_PARENT_TERMINAL).forEach(child -> requestCancellation(child, "parent-terminal"));
+        admitNext(session.group); markStoppedIfDrained(session.flow.id());
+    }
+    private boolean requiresParentCancellation(ManagedSession child) {
+        if (child.spec.parentTerminationPolicy() == ParentTerminationPolicy.NONE) return false;
         synchronized (monitor) {
-            ArrayDeque<RootSignal> pending = queuedRoots.get(group);
+            return child.parents.stream().map(sessions::get).filter(java.util.Objects::nonNull).anyMatch(parent ->
+                    child.spec.parentTerminationPolicy() == ParentTerminationPolicy.ON_PARENT_TERMINAL ? !parent.isActive() : parent.cancelled.get());
+        }
+    }
+    private List<UUID> childSessions(UUID parent, ParentTerminationPolicy required) {
+        synchronized (monitor) { return childrenByParent.getOrDefault(parent, Set.of()).stream().map(sessions::get).filter(s -> s != null && s.isActive() && s.spec.parentTerminationPolicy() == required).map(s -> s.id).toList(); }
+    }
+    private void admitNext(GroupKey group) {
+        AllocationRequest next = null;
+        synchronized (monitor) {
+            ArrayDeque<AllocationRequest> pending = queuedAllocations.get(group);
             if (pending != null && !pending.isEmpty() && sessions.values().stream().noneMatch(s -> s.isActive() && s.group.equals(group))) {
-                next = pending.removeFirst();
-                if (pending.isEmpty()) queuedRoots.remove(group);
+                next = pending.removeFirst(); if (pending.isEmpty()) queuedAllocations.remove(group);
             }
         }
-        if (next != null) publishRoot(next);
+        if (next != null) allocate(next.flow, next.allocator, next.event);
     }
-
     private void markStoppedIfDrained(String flowId) {
         boolean stopped = false;
         synchronized (monitor) {
             RegisteredFlow flow = requireFlow(flowId);
-            if (flow.status == FlowStatus.STOPPING && sessions.values().stream().noneMatch(s -> s.isActive() && s.flow.id().equals(flowId)) && flow.deferred.isEmpty()) {
-                flow.status = FlowStatus.STOPPED;
-                stopped = true;
-            }
+            if (flow.status == FlowStatus.STOPPING && sessions.values().stream().noneMatch(s -> s.isActive() && s.flow.id().equals(flowId))) { flow.status = FlowStatus.STOPPED; stopped = true; }
         }
         if (stopped) event("flow.stopped", Map.of("flowId", flowId));
     }
-
-    private RegisteredFlow requireFlow(String id) {
-        RegisteredFlow flow = flows.get(id);
-        if (flow == null) throw new IllegalArgumentException("unknown flow: " + id);
-        return flow;
-    }
+    private RegisteredFlow requireFlow(String id) { RegisteredFlow flow = flows.get(id); if (flow == null) throw new IllegalArgumentException("unknown flow: " + id); return flow; }
     private void event(String type, Map<String, Object> data) { events.publish(SystemEvent.of(type, data)); }
 
     @Override public void close() {
         if (!running.compareAndSet(true, false)) return;
-        for (SourceRegistration registration : sourceRegistrations) {
-            try { registration.unregister().toCompletableFuture().join(); } catch (RuntimeException ignored) { }
-        }
-        synchronized (monitor) { sessions.values().stream().filter(ManagedSession::isActive).forEach(s -> { s.cancelled.set(true); s.status = SessionStatus.CANCELLATION_REQUESTED; }); }
-        queue.close(); dispatcher.shutdownNow(); workers.shutdownNow();
-        LOG.info("KuudraRuntime stopped");
+        for (SourceRegistration registration : sourceRegistrations) try { registration.unregister().toCompletableFuture().join(); } catch (RuntimeException ignored) { }
+        synchronized (monitor) { sessions.values().stream().filter(ManagedSession::isActive).forEach(s -> s.cancelled.set(true)); }
+        queue.close(); dispatcher.shutdownNow(); workers.shutdownNow(); LOG.info("KuudraRuntime stopped");
     }
 
-    private record GroupKey(String flowId, String name, String admissionKey) { }
-    private static final class RegisteredFlow {
-        private final KuudraFlow flow;
-        private FlowStatus status = FlowStatus.ACTIVE;
-        private final List<RuntimeTask.SignalTask> deferred = new ArrayList<>();
-        private RegisteredFlow(KuudraFlow flow) { this.flow = flow; }
-    }
-
+    private record GroupKey(String flowId, String allocatorId, String name, String admissionKey) { }
+    private record AllocationRequest(KuudraFlow flow, FlowNode.AllocatorNode allocator, Event event) { }
+    private static final class RegisteredFlow { private final KuudraFlow flow; private FlowStatus status = FlowStatus.ACTIVE; private RegisteredFlow(KuudraFlow flow) { this.flow = flow; } }
     private static final class ManagedSession {
-        private final UUID id; private final KuudraFlow flow; private final RootSignal root; private final GroupKey group;
-        private final AtomicBoolean cancelled = new AtomicBoolean(); private final AtomicBoolean terminal = new AtomicBoolean(); private final AtomicInteger work = new AtomicInteger();
-        private final AtomicSessionContext context = new AtomicSessionContext();
-        private CompletableFuture<Void> tail = CompletableFuture.completedFuture(null);
-        private long sequence; private volatile SessionStatus status = SessionStatus.ACTIVE;
-        private ManagedSession(UUID id, KuudraFlow flow, RootSignal root, GroupKey group, Executor executor) {
-            this.id = id; this.flow = flow; this.root = root; this.group = group; this.executor = executor;
-        }
-        private final Executor executor;
-        private synchronized long nextSequence() { return sequence++; }
-        private synchronized void submit(java.util.function.Supplier<CompletionStage<Void>> operation) {
-            tail = tail.handle((ignored, error) -> null).thenComposeAsync(ignored -> operation.get().toCompletableFuture(), executor);
-        }
+        private final UUID id; private final KuudraFlow flow; private final io.github.actforever.kuudra.api.SessionSpec spec; private final GroupKey group; private final Set<UUID> parents;
+        private final AtomicBoolean cancelled = new AtomicBoolean(); private final AtomicBoolean terminal = new AtomicBoolean(); private final AtomicInteger work = new AtomicInteger(); private final AtomicSessionContext context = new AtomicSessionContext();
+        private final Executor executor; private CompletableFuture<Void> tail = CompletableFuture.completedFuture(null); private volatile SessionStatus status = SessionStatus.ACTIVE;
+        private ManagedSession(UUID id, KuudraFlow flow, io.github.actforever.kuudra.api.SessionSpec spec, GroupKey group, Set<UUID> parents, Executor executor) { this.id = id; this.flow = flow; this.spec = spec; this.group = group; this.parents = Set.copyOf(parents); this.executor = executor; }
+        private synchronized void submit(java.util.function.Supplier<CompletionStage<Void>> operation) { tail = tail.handle((ignored, error) -> null).thenComposeAsync(ignored -> operation.get().toCompletableFuture(), executor); }
         private boolean isActive() { return status == SessionStatus.ACTIVE || status == SessionStatus.CANCELLATION_REQUESTED; }
-        private SessionSnapshot snapshot() { return new SessionSnapshot(id, flow.id(), root.sessionSpec().name(), root.sessionSpec().admissionKey(), status, cancelled.get()); }
+        private SessionSnapshot snapshot() { return new SessionSnapshot(id, flow.id(), spec.name(), spec.admissionKey(), status, cancelled.get(), parents); }
     }
-
     private static final class AtomicSessionContext implements SessionContext {
         private final AtomicReference<Map<String, Object>> values = new AtomicReference<>(Map.of());
         @Override public Map<String, Object> snapshot() { return values.get(); }
         @Override public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) { return values.compareAndSet(expected, Map.copyOf(replacement)); }
-        @Override public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> operation) {
-            while (true) { Map<String, Object> current = values.get(); Map<String, Object> next = Map.copyOf(operation.apply(current)); if (values.compareAndSet(current, next)) return next; }
-        }
+        @Override public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> operation) { while (true) { Map<String, Object> current = values.get(); Map<String, Object> next = Map.copyOf(operation.apply(current)); if (values.compareAndSet(current, next)) return next; } }
     }
 }
