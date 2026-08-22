@@ -245,7 +245,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
                 completion.completeExceptionally(error);
                 return completion;
             }
-            SignalContext context = new SignalContext(session.id, session.flow.id(), session.context.snapshot(), session.cancelled::get);
+            SignalContext context = new SignalContext(session.id, session.flow.id(), session.context.snapshot(), session.context, session.cancelled::get);
             try {
                 node.apply(task.signal(), context).whenComplete((out, error) -> {
                     if (error == null) {

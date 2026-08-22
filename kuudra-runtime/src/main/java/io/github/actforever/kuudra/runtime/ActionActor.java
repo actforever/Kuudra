@@ -5,6 +5,7 @@ import io.github.actforever.kuudra.api.ActionCall;
 import io.github.actforever.kuudra.api.Actor;
 import io.github.actforever.kuudra.api.Signal;
 import io.github.actforever.kuudra.api.ActionContext;
+import io.github.actforever.kuudra.api.ActionExecutionMode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,14 +20,31 @@ public final class ActionActor implements Actor {
     public ActionActor(List<Binding> bindings) { this.bindings = List.copyOf(bindings); }
     @Override public CompletionStage<List<Signal>> act(Signal signal, ActionContext context) {
         List<Binding> matched = bindings.stream().filter(binding -> binding.when.test(signal)).toList();
-        CompletableFuture<List<Signal>> chain = CompletableFuture.completedFuture(new ArrayList<>());
+        CompletableFuture<List<Signal>> serial = CompletableFuture.completedFuture(new ArrayList<>());
+        List<CompletableFuture<List<Signal>>> parallel = new ArrayList<>();
         for (Binding binding : matched) {
-            chain = chain.thenCompose(out -> binding.action.execute(new ActionCall(signal, context, binding.arguments))
-                    .thenApply(result -> { out.addAll(result.emissions()); return out; }).toCompletableFuture());
+            if (binding.mode == ActionExecutionMode.PARALLEL) {
+                parallel.add(binding.action.execute(new ActionCall(signal, context, binding.arguments))
+                        .thenApply(result -> result.emissions()).toCompletableFuture());
+            } else {
+                serial = serial.thenCompose(out -> binding.action.execute(new ActionCall(signal, context, binding.arguments))
+                        .thenApply(result -> { out.addAll(result.emissions()); return out; }).toCompletableFuture());
+            }
         }
-        return chain.thenApply(List::copyOf);
+        CompletableFuture<?>[] all = new CompletableFuture<?>[parallel.size() + 1];
+        all[0] = serial;
+        for (int i = 0; i < parallel.size(); i++) all[i + 1] = parallel.get(i);
+        CompletableFuture<List<Signal>> serialResult = serial;
+        return CompletableFuture.allOf(all).thenApply(ignored -> {
+            List<Signal> emissions = new ArrayList<>(serialResult.join());
+            parallel.forEach(stage -> emissions.addAll(stage.join()));
+            return List.copyOf(emissions);
+        });
     }
-    public record Binding(Predicate<Signal> when, Action action, Map<String, Object> arguments) {
+    public record Binding(Predicate<Signal> when, Action action, Map<String, Object> arguments, ActionExecutionMode mode) {
         public Binding { arguments = Map.copyOf(arguments); }
+        public Binding(Predicate<Signal> when, Action action, Map<String, Object> arguments) {
+            this(when, action, arguments, ActionExecutionMode.SERIAL);
+        }
     }
 }

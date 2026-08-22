@@ -5,6 +5,6 @@ import java.util.UUID;
 
 /** Immutable view supplied to adapters, processors and Actors for a single signal. */
 public record SignalContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
-                            CancellationToken cancellationToken) {
+                            SessionContext sessionContext, CancellationToken cancellationToken) {
     public SignalContext { sessionValues = Map.copyOf(sessionValues); }
 }

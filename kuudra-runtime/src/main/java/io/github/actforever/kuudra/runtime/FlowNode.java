@@ -28,7 +28,7 @@ public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.Processo
     }
     record ActorNode(String id, Actor actor) implements FlowNode {
         @Override public CompletionStage<List<Signal>> apply(Signal signal, SignalContext context) {
-            return actor.act(signal, new ActionContext(context.sessionId(), context.flowId(), context.sessionValues(), context.cancellationToken()));
+            return actor.act(signal, new ActionContext(context.sessionId(), context.flowId(), context.sessionValues(), context.sessionContext(), context.cancellationToken()));
         }
     }
 }

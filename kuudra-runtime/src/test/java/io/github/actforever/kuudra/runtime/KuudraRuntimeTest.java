@@ -1,7 +1,11 @@
 package io.github.actforever.kuudra.runtime;
 
 import io.github.actforever.kuudra.api.RawSignal;
+import io.github.actforever.kuudra.api.RawSignalEmitter;
+import io.github.actforever.kuudra.api.RawSignalSource;
 import io.github.actforever.kuudra.api.RootSignal;
+import io.github.actforever.kuudra.api.RootSignalEmitter;
+import io.github.actforever.kuudra.api.RootSignalSource;
 import io.github.actforever.kuudra.api.SessionPolicy;
 import io.github.actforever.kuudra.api.SessionSpec;
 import io.github.actforever.kuudra.api.Signal;
@@ -84,6 +88,58 @@ class KuudraRuntimeTest {
         }
     }
 
+    @Test
+    void rawAndRootSourcesAreLifecycleManagedAndSystemEventsAreObservable() throws Exception {
+        CountDownLatch rawActed = new CountDownLatch(1);
+        CountDownLatch rootActed = new CountDownLatch(1);
+        CountDownLatch completedEvent = new CountDownLatch(2);
+        TestRawSource rawSource = new TestRawSource(raw("source.raw"));
+        TestRootSource rootSource = new TestRootSource(root("root-flow", SessionPolicy.PARALLEL));
+        KuudraRuntime runtime = new KuudraRuntime(32, 1);
+        try {
+            runtime.systemEvents().subscribe(event -> { if (event.type().startsWith("session.completed")) completedEvent.countDown(); });
+            runtime.registerFlow(oneActorFlow("raw-flow", SessionPolicy.PARALLEL, (signal, context) -> {
+                rawActed.countDown(); return CompletableFuture.completedFuture(List.of());
+            }));
+            runtime.registerFlow(oneActorFlow("root-flow", SessionPolicy.PARALLEL, (signal, context) -> {
+                rootActed.countDown(); return CompletableFuture.completedFuture(List.of());
+            }));
+            runtime.registerIngress(new IngressPipeline("source-in", List.of(), List.of(new IngressPipeline.Output(raw -> true, "raw-flow"))));
+            runtime.registerSource("source-in", rawSource).toCompletableFuture().join();
+            runtime.registerRootSource(rootSource).toCompletableFuture().join();
+            assertTrue(rawActed.await(1, TimeUnit.SECONDS));
+            assertTrue(rootActed.await(1, TimeUnit.SECONDS));
+            assertTrue(completedEvent.await(1, TimeUnit.SECONDS));
+        } finally {
+            runtime.close();
+        }
+        assertTrue(rawSource.stopped.get());
+        assertTrue(rootSource.stopped.get());
+    }
+
+    @Test
+    void actionCanAtomicallyUpdateSessionContextForLaterGraphNodes() throws Exception {
+        CountDownLatch observed = new CountDownLatch(1);
+        var write = (io.github.actforever.kuudra.api.Action) call -> {
+            call.context().sessionContext().update(values -> Map.of("combo", 2));
+            return CompletableFuture.completedFuture(new io.github.actforever.kuudra.api.ActionResult(List.of(call.signal())));
+        };
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.registerFlow(new KuudraFlow("context", rootProcessor(SessionPolicy.PARALLEL), "write",
+                    Map.of(
+                            "write", new FlowNode.ActorNode("write", new ActionActor(List.of(new ActionActor.Binding(s -> true, write, Map.of())))),
+                            "read", new FlowNode.ActorNode("read", (signal, context) -> {
+                                assertEquals(2, context.sessionValues().get("combo"));
+                                observed.countDown();
+                                return CompletableFuture.completedFuture(List.of());
+                            })
+                    ), Map.of("write", List.of("read"))));
+            runtime.publishRoot(root("context", SessionPolicy.PARALLEL));
+            assertTrue(observed.await(1, TimeUnit.SECONDS));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
     private static KuudraFlow oneActorFlow(String id, SessionPolicy policy, io.github.actforever.kuudra.api.Actor actor) {
         return new KuudraFlow(id, rootProcessor(policy), "actor", Map.of("actor", new FlowNode.ActorNode("actor", actor)), Map.of());
     }
@@ -99,5 +155,22 @@ class KuudraRuntimeTest {
     private static Signal retype(Signal signal, String type) {
         return new Signal(new RawSignal(signal.raw().id(), type, signal.raw().occurredAt(), signal.raw().payload()),
                 signal.sessionId(), signal.flowId(), signal.sequence());
+    }
+
+    private static final class TestRawSource implements RawSignalSource {
+        private final RawSignal signal; private final java.util.concurrent.atomic.AtomicBoolean stopped = new java.util.concurrent.atomic.AtomicBoolean();
+        private RawSignalEmitter emitter;
+        private TestRawSource(RawSignal signal) { this.signal = signal; }
+        @Override public void setEmitter(RawSignalEmitter emitter) { this.emitter = emitter; }
+        @Override public java.util.concurrent.CompletionStage<Void> start() { emitter.emit(signal); return CompletableFuture.completedFuture(null); }
+        @Override public java.util.concurrent.CompletionStage<Void> stop() { stopped.set(true); return CompletableFuture.completedFuture(null); }
+    }
+    private static final class TestRootSource implements RootSignalSource {
+        private final RootSignal signal; private final java.util.concurrent.atomic.AtomicBoolean stopped = new java.util.concurrent.atomic.AtomicBoolean();
+        private RootSignalEmitter emitter;
+        private TestRootSource(RootSignal signal) { this.signal = signal; }
+        @Override public void setEmitter(RootSignalEmitter emitter) { this.emitter = emitter; }
+        @Override public java.util.concurrent.CompletionStage<Void> start() { emitter.emit(signal); return CompletableFuture.completedFuture(null); }
+        @Override public java.util.concurrent.CompletionStage<Void> stop() { stopped.set(true); return CompletableFuture.completedFuture(null); }
     }
 }
