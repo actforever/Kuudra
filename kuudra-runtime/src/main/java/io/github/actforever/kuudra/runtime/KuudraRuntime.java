@@ -18,6 +18,7 @@ import io.github.actforever.kuudra.api.SignalContext;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
 import io.github.actforever.kuudra.logging.KuudraLog;
+import io.github.actforever.kuudra.logging.KuudraBanner;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -59,6 +60,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) {
         if (workerThreads < 1) throw new IllegalArgumentException("workerThreads must be positive");
+        KuudraBanner.print();
         this.queue = queue;
         dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
         workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker"));
