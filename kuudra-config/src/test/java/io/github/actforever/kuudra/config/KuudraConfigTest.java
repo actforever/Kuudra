@@ -15,15 +15,12 @@ class KuudraConfigTest {
 
     @Test
     void loadsRuntimeAndFlowYamlFiles() throws Exception {
-        Path flows = Files.createDirectory(directory.resolve("flows"));
+        Path home = Files.createDirectory(directory.resolve(".kuudra"));
+        Path flows = Files.createDirectory(home.resolve("flows"));
         Files.writeString(directory.resolve("config.yaml"), """
                 runtime:
                   queue-capacity: 32
                   worker-threads: 2
-                plugins:
-                  directories: [plugins]
-                  load: [demo/demo-plugin]
-                flows-directory: flows
                 global-context:
                   profile: demo
                 """);
@@ -49,8 +46,7 @@ class KuudraConfigTest {
                 """);
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
-        assertEquals(directory.resolve(".kuudra/plugins").toAbsolutePath().normalize(), config.pluginHomeDirectory());
-        assertEquals("demo/demo-plugin", config.pluginsToLoad().get(0).toString());
+        assertEquals(home.toAbsolutePath().normalize(), config.homeDirectory());
         assertEquals("demo", config.flows().get("demo").id());
         assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
         assertEquals("source", config.flows().get("demo").sources().get(0).id());
@@ -65,12 +61,20 @@ class KuudraConfigTest {
     void loadsFrameworkNeutralConfigurationResource() throws Exception {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(new KuudraConfigResource(Map.of(
                 "runtime", Map.of("queue-capacity", 48, "worker-threads", 3),
-                "plugins", Map.of("directories", java.util.List.of("plugins")),
+                "home-directory", "custom-home",
                 "global-context", Map.of("profile", "host")), directory, "host configuration"));
 
         assertEquals(48, config.runtime().queueCapacity());
         assertEquals(3, config.runtime().workerThreads());
-        assertEquals(directory.resolve("plugins").toAbsolutePath().normalize(), config.pluginDirectories().get(0));
+        assertEquals(directory.resolve("custom-home").toAbsolutePath().normalize(), config.homeDirectory());
         assertEquals("host", config.globalContext().get("profile"));
+    }
+
+    @Test
+    void rejectsRemovedPluginAndFlowDirectoryConfiguration() {
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
+                Map.of("plugins", Map.of()), directory, "legacy plugin configuration")));
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
+                Map.of("flows-directory", "flows"), directory, "legacy flow configuration")));
     }
 }

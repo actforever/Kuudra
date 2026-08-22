@@ -9,7 +9,7 @@ Kuudra 是单 Runtime、队列驱动的事件编排内核。插件和核心只�
 | 组件 | 输入 | 输出 | 职责 |
 | --- | --- | --- | --- |
 | `@EventSource` | 无 | 无会话 Event | 从键盘、计时器、网络等外部系统采集事件。 |
-| `@EventAdapter` | Event | Event | 过滤、事件名与属性重映射、占位符解析；可任意串联。 |
+| `@EventAdapter` | Event | Event | 过滤、事件名与属性重映射；可任意串联，并通过 EventContext 接收 Runtime 已解析的节点配置。 |
 | `@EventProcessor` | 无会话 Event | 无会话 Event | 手势识别、窗口计数、聚合、解释或丢弃。 |
 | `@Actor` | 带会话 Event | Event | 异步执行动作；可随时通过 `ActionContext.emit` 产生 Event，默认继承输入会话。 |
 

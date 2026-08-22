@@ -50,16 +50,14 @@ public final class KuudraYamlLoader {
         Objects.requireNonNull(resource, "resource");
         Path base = resource.baseDirectory();
         Map<String, Object> root = resource.values();
+        if (root.containsKey("plugins")) throw new IOException("Configuration key 'plugins' has been removed; use <home-directory>/plugins");
+        if (root.containsKey("flows-directory")) throw new IOException("Configuration key 'flows-directory' has been removed; use <home-directory>/flows");
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
-        Map<String, Object> plugins = optionalMapping(root, "plugins");
-        List<Path> pluginDirectories = strings(plugins.get("directories")).stream().map(value -> base.resolve(value).normalize()).toList();
-        Path pluginHomeDirectory = base.resolve(string(plugins.getOrDefault("home-directory", ".kuudra/plugins"), "plugins.home-directory")).normalize();
-        List<KuudraConfig.PluginReference> pluginsToLoad = pluginReferences(plugins.get("load"));
-        String flowsDirectory = string(root.getOrDefault("flows-directory", "flows"), "flows-directory");
-        Map<String, KuudraConfig.FlowConfig> flows = loadFlows(base.resolve(flowsDirectory).normalize());
-        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), pluginDirectories, pluginHomeDirectory, pluginsToLoad,
+        Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
+        Map<String, KuudraConfig.FlowConfig> flows = loadFlows(homeDirectory.resolve("flows"));
+        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), homeDirectory,
                 optionalMapping(root, "global-context"), flows);
     }
 
@@ -122,17 +120,6 @@ public final class KuudraYamlLoader {
     }
     private static Map<String, Object> optionalMapping(Map<String, Object> map, String key) throws IOException { return !map.containsKey(key) ? Map.of() : mapping(map.get(key), key); }
     private static List<Object> list(Object value) throws IOException { if (value == null) return List.of(); if (!(value instanceof List<?> list)) throw new IOException("Expected list"); return List.copyOf(list); }
-    private static List<String> strings(Object value) throws IOException { List<String> result = new ArrayList<>(); for (Object item : list(value)) result.add(string(item, "list item")); return List.copyOf(result); }
-    private static List<KuudraConfig.PluginReference> pluginReferences(Object value) throws IOException {
-        List<KuudraConfig.PluginReference> result = new ArrayList<>();
-        for (String reference : strings(value)) {
-            String[] parts = reference.split("/", -1);
-            if (parts.length != 2) throw new IOException("Plugin reference must be namespace/plugin-id: " + reference);
-            try { result.add(new KuudraConfig.PluginReference(parts[0], parts[1])); }
-            catch (IllegalArgumentException error) { throw new IOException("Invalid plugin reference: " + reference, error); }
-        }
-        return List.copyOf(result);
-    }
     private static Object required(Map<String, Object> map, String key) throws IOException { Object value = map.get(key); if (value == null) throw new IOException("Missing required value: " + key); return value; }
     private static String string(Object value, String location) throws IOException { if (!(value instanceof String text) || text.isBlank()) throw new IOException("Expected non-blank string at " + location); return text; }
     private static int integer(Map<String, Object> map, String key, int fallback) throws IOException { Object value = map.get(key); if (value == null) return fallback; if (value instanceof Number number) return number.intValue(); try { return Integer.parseInt(string(value, key)); } catch (NumberFormatException error) { throw new IOException("Expected integer at " + key, error); } }

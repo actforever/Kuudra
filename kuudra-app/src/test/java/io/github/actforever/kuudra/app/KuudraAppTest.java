@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KuudraAppTest {
     @TempDir Path directory;
@@ -80,5 +81,13 @@ class KuudraAppTest {
             assertEquals("explicit", app.globalContext().get("source"));
             assertEquals(true, app.globalContext().get("retained"));
         }
+    }
+
+    @Test
+    void rejectsEveryInvalidJarInTheFixedPluginDirectory() throws Exception {
+        Path plugins = Files.createDirectories(directory.resolve(".kuudra/plugins"));
+        Files.writeString(plugins.resolve("not-a-kuudra-plugin.jar"), "invalid jar");
+
+        assertThrows(IllegalStateException.class, () -> KuudraApp.createFromDefaultLocations(directory));
     }
 }

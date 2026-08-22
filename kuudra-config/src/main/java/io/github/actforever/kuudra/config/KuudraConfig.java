@@ -12,16 +12,12 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from config.yaml and the definitions in flows/. */
-    public record RuntimeConfig(RuntimeSettings runtime, List<Path> pluginDirectories, Path pluginHomeDirectory, List<PluginReference> pluginsToLoad, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
-        public RuntimeConfig { pluginDirectories = List.copyOf(pluginDirectories); pluginHomeDirectory = pluginHomeDirectory.toAbsolutePath().normalize(); pluginsToLoad = List.copyOf(pluginsToLoad); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
-    }
-    /** Explicit plugin selection in the stable namespace/plugin-id notation. */
-    public record PluginReference(String namespace, String pluginId) {
-        public PluginReference {
-            if (namespace == null || !namespace.matches("[a-z0-9][a-z0-9-]*")) throw new IllegalArgumentException("plugin namespace must match [a-z0-9][a-z0-9-]*");
-            if (pluginId == null || !pluginId.matches("[a-z0-9][a-z0-9-]*")) throw new IllegalArgumentException("plugin id must match [a-z0-9][a-z0-9-]*");
+    public record RuntimeConfig(RuntimeSettings runtime, Path homeDirectory, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+        public RuntimeConfig {
+            homeDirectory = homeDirectory.toAbsolutePath().normalize();
+            globalContext = Map.copyOf(globalContext);
+            flows = Map.copyOf(flows);
         }
-        @Override public String toString() { return namespace + "/" + pluginId; }
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads) {
         public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }

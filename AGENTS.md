@@ -27,7 +27,7 @@ The tracked Maven reactor is:
 
 `plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations, currently containing `kuudra-hello-world-plugin`. It is not part of the Kuudra core reactor. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts to be available in the local Maven repository.
 
-For packaged Web, the default runtime directory is `<jar-directory>/.kuudra/plugins`: plugin JAR archives and namespace-named plugin homes share that directory. `plugins.directories` scans it for archives; `plugins.home-directory` controls homes. A namespace home is created only when that plugin enters initialization. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce a collision with the build-only `plugins/` directory.
+For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins`: every JAR is strictly loaded, while plugin-id-named homes share that directory and are created only when the plugin enters initialization. Invalid/non-Kuudra JARs are fatal startup errors. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce configurable plugin directories or a collision with the build-only `plugins/` directory.
 
 ## Architecture decisions already made
 
@@ -38,7 +38,7 @@ For packaged Web, the default runtime directory is `<jar-directory>/.kuudra/plug
 - Component references must use `type/namespace/name`, for example `event-source/hello-world/loop-emitter` and `actor/hello-world/console-printer`.
 - A `KuudraFlow` is the runtime scheduling unit. A single `KuudraRuntime` is owned by the active `KuudraApp`.
 - Actors execute asynchronously. `Actor.act` returns `CompletionStage<Void>` and may call `ActionContext.emit(Event)` at any point; Runtime automatically applies the current Session and lineage. Ordering is preserved within one session by default; independent sessions may proceed in parallel.
-- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, dependency-aware ClassLoaders, annotation-discovered components, and declared dependency ordering. `plugins.load` explicitly selects archives in `namespace/plugin-id` notation; selected plugins bring their declared dependencies. A dependency plugin's classes/resources are visible to its dependents; cycles and missing dependency archives are errors. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
+- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, dependency-aware ClassLoaders, annotation-discovered components, and declared dependency ordering. Every JAR in `<home-directory>/plugins` is loaded; a dependency plugin's classes/resources are visible to its dependents, and invalid archives, cycles, duplicate IDs and missing dependencies are errors. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
 - `kuudra-web` is an adapter only. Its lifecycle is conceptually independent from App lifecycle: stopping App closes Runtime/plugins but must not make HTTP lifecycle endpoints disappear.
 
 See `docs/kuudra-event-architecture.md`, `docs/kuudra-architecture.md`, and `docs/kuudra-app-management.md` before changing these boundaries.
@@ -58,10 +58,10 @@ kuudra-web
 ```
 
 - App configuration is owned entirely by `KuudraApp`; Web does not source Kuudra settings from Spring. Configuration is deeply merged in ascending priority: packaged `kuudra-app/src/main/resources/config.yaml`, `<home-directory>/config.yaml`, then an explicit `KuudraConfigResource` or configuration path passed while creating the App. For packaged Web, relative paths use the executable JAR directory as their base; standalone App defaults to the working directory.
-- Global YAML contains root `home-directory`, runtime queue/worker settings, plugin directories, `flows-directory`, and `global-context`. All schema keys use lowercase kebab-case. The packaged default sets `home-directory: .kuudra`; that directory contains the optional user `config.yaml`.
+- Global YAML contains root `home-directory`, runtime queue/worker settings and `global-context`. All schema keys use lowercase kebab-case. The packaged default sets `home-directory: .kuudra`; that directory contains optional user `config.yaml`, fixed `plugins/`, and fixed `flows/` directories.
 - Each Flow YAML uses Compose-style `components` and `routes`. An `event-source` component is a separately controlled resource; other node types currently supported by the compiler are `event-adapter`, `event-processor`, `session-allocator`, and `actor`. The component `type` is declared by the node and `component` uses `namespace/component-id` (for example `hello-world/loop-emitter`), not the former duplicated type-prefixed form.
 - Flow is a scope for component names, routing and sessions; starting, pausing or stopping a Flow changes its routing/session gate and does not implicitly start or stop its resources. Event sources are queried and controlled through App resource APIs and `/api/v1/app/flows/{flowId}/resources/event-sources/...`.
-- Flow files live under the configured `flows-directory`. Plugin JARs are local deployment artifacts and are not part of the core reactor.
+- Flow files live under fixed `<home-directory>/flows`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 
 Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, `kuudra.system.*` Event handling, and cross-language bridges remain future work. All Flows are peers; do not reintroduce a control-plane Flow without an explicit architecture decision. YAML preserves placeholder templates until Runtime resolves them against Event, Session, global and Flow scopes. Supported syntax and limitations are documented in `docs/kuudra-bootstrap.md`; do not change it without matching tests.
@@ -85,7 +85,7 @@ mvn -f plugins/pom.xml clean package
 
 The current machine has previously failed full forked tests because of a small Windows paging file. Running Surefire in-process can then fail Spring/Mockito's ByteBuddy self-attach requirement. These are environment failures, not established product failures. Prefer targeted module tests and a real packaged Web bootstrap verification; report the exact command and limitation in handoff/final output.
 
-For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write `.kuudra/config.yaml` and the referenced Flow YAML under `flows/`, launch `kuudra-web`, then query `GET /api/v1/app/status`. Expected result: `RUNNING`, one `hello-world` Flow, and HelloWorld Actor output.
+For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write `.kuudra/config.yaml` and the referenced Flow YAML under `.kuudra/flows/`, launch `kuudra-web`, then query `GET /api/v1/app/status`. Expected result: `RUNNING`, one `hello-world` Flow, and HelloWorld Actor output.
 
 ## Working rules
 

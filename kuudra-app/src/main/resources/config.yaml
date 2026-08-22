@@ -5,11 +5,4 @@ runtime:
   queue-capacity: 1024
   worker-threads: 2
 
-plugins:
-  directories:
-    - .kuudra/plugins
-  home-directory: .kuudra/plugins
-  load: []
-
-flows-directory: flows
 global-context: {}
