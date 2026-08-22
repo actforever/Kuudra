@@ -5,6 +5,11 @@ import io.github.actforever.kuudra.api.EventContext;
 import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.FlowStatus;
+import io.github.actforever.kuudra.api.FlowContext;
+import io.github.actforever.kuudra.api.GlobalContext;
+import io.github.actforever.kuudra.api.ContextCodec;
+import io.github.actforever.kuudra.api.ContextCodecs;
+import io.github.actforever.kuudra.api.ValueContext;
 import io.github.actforever.kuudra.api.ParentTerminationPolicy;
 import io.github.actforever.kuudra.api.PlaceholderResolver;
 import io.github.actforever.kuudra.api.RuntimeStateView;
@@ -52,7 +57,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private final ExecutorService dispatcher;
     private final ExecutorService workers;
     private final SimpleSystemEventBus events = new SimpleSystemEventBus();
-    private final Map<String, Object> globalContext;
+    private final AtomicGlobalContext globalContext;
     private final AtomicBoolean running = new AtomicBoolean(true);
 
     public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of()); }
@@ -60,12 +65,14 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) { this(queue, workerThreads, Map.of()); }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String, Object> globalContext) {
         if (workerThreads < 1) throw new IllegalArgumentException("workerThreads must be positive");
-        this.queue = queue; this.globalContext = Map.copyOf(globalContext); dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
+        this.queue = queue; this.globalContext = new AtomicGlobalContext(globalContext); dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
         workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker")); dispatcher.execute(this::dispatchLoop);
         LOG.info("KuudraRuntime started with {} worker(s)", workerThreads);
     }
 
     public SystemEventBus systemEvents() { return events; }
+    public GlobalContext globalContext() { return globalContext; }
+    public FlowContext flowContext(String flowId) { synchronized (monitor) { return requireFlow(flowId).context; } }
     public int queuedTasks() { return queue.size(); }
 
     public void registerFlow(KuudraFlow flow) {
@@ -199,10 +206,14 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             allocate(flow, allocator, task.event()); finishTask(owner, null); return CompletableFuture.completedFuture(null);
         }
         EventContext baseContext = owner == null
-                ? new EventContext(flow.id(), null, Map.of(), null, () -> false, globalContext, Map.of())
-                : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get, globalContext, Map.of());
+                ? new EventContext(flow.id(), null, Map.of(), null, registration.context.snapshot(), registration.context,
+                        () -> false, globalContext.snapshot(), globalContext, Map.of())
+                : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context,
+                        registration.context.snapshot(), registration.context, owner.cancelled::get,
+                        globalContext.snapshot(), globalContext, Map.of());
         EventContext context = new EventContext(baseContext.flowId(), baseContext.session(), baseContext.sessionValues(), baseContext.sessionContext(),
-                baseContext.cancellationToken(), globalContext, registration.configuration(task.nodeId()).resolve(task.event(), baseContext));
+                baseContext.flowValues(), baseContext.flowContext(), baseContext.cancellationToken(), baseContext.globalValues(),
+                baseContext.globalContext(), registration.configuration(task.nodeId()).resolve(task.event(), baseContext));
         if (node instanceof FlowNode.ActorNode actor) {
             return actor.apply(task.event(), context, output -> emitFromActor(flow, actor, task.event(), output)).handle((ignored, error) -> {
                 finishTask(owner, error); return null;
@@ -350,6 +361,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private record AllocationRequest(KuudraFlow flow, FlowNode.AllocatorNode allocator, Event event) { }
     private static final class RegisteredFlow {
         private final KuudraFlow flow;
+        private final AtomicFlowContext context = new AtomicFlowContext();
         private final Map<String, PlaceholderResolver.CompiledMap> configurations;
         private FlowStatus status = FlowStatus.ACTIVE;
         private RegisteredFlow(KuudraFlow flow) {
@@ -368,10 +380,30 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         private boolean isActive() { return status == SessionStatus.ACTIVE || status == SessionStatus.CANCELLATION_REQUESTED; }
         private SessionSnapshot snapshot() { return new SessionSnapshot(id, flow.id(), spec.name(), spec.admissionKey(), status, cancelled.get(), parents); }
     }
-    private static final class AtomicSessionContext implements SessionContext {
-        private final AtomicReference<Map<String, Object>> values = new AtomicReference<>(Map.of());
+    private static final class AtomicSessionContext extends AtomicValueContext implements SessionContext { }
+    private static final class AtomicFlowContext extends AtomicValueContext implements FlowContext { }
+    private static final class AtomicGlobalContext extends AtomicValueContext implements GlobalContext {
+        private AtomicGlobalContext(Map<String, Object> initial) { super(initial); }
+    }
+    private static class AtomicValueContext implements ValueContext {
+        private final ContextCodec codec = ContextCodecs.defaultCodec();
+        private final AtomicReference<Map<String, Object>> values;
+        private AtomicValueContext() { this(Map.of()); }
+        @SuppressWarnings("unchecked")
+        private AtomicValueContext(Map<String, Object> initial) { values = new AtomicReference<>((Map<String, Object>) codec.encode(initial)); }
         @Override public Map<String, Object> snapshot() { return values.get(); }
-        @Override public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) { return values.compareAndSet(expected, Map.copyOf(replacement)); }
-        @Override public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> operation) { while (true) { Map<String, Object> current = values.get(); Map<String, Object> next = Map.copyOf(operation.apply(current)); if (values.compareAndSet(current, next)) return next; } }
+        @SuppressWarnings("unchecked")
+        @Override public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) {
+            return values.compareAndSet(expected, (Map<String, Object>) codec.encode(replacement));
+        }
+        @SuppressWarnings("unchecked")
+        @Override public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> operation) {
+            while (true) {
+                Map<String, Object> current = values.get();
+                Map<String, Object> next = (Map<String, Object>) codec.encode(operation.apply(current));
+                if (values.compareAndSet(current, next)) return next;
+            }
+        }
+        @Override public ContextCodec codec() { return codec; }
     }
 }

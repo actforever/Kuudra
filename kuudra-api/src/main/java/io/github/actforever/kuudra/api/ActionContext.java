@@ -3,10 +3,22 @@ package io.github.actforever.kuudra.api;
 import java.util.Map;
 import java.util.UUID;
 
-public record ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
-                            SessionContext sessionContext, CancellationToken cancellationToken, EventEmitter emitter,
-                            Map<String, Object> globalValues, Map<String, Object> configuration) {
-    public ActionContext { sessionValues = Map.copyOf(sessionValues); globalValues = Map.copyOf(globalValues); configuration = Map.copyOf(configuration); java.util.Objects.requireNonNull(emitter, "emitter"); }
+public record ActionContext(UUID sessionId, String flowId,
+                            Map<String, Object> sessionValues, SessionContext sessionContext,
+                            Map<String, Object> flowValues, FlowContext flowContext,
+                            CancellationToken cancellationToken, EventEmitter emitter,
+                            Map<String, Object> globalValues, GlobalContext globalContext,
+                            Map<String, Object> configuration) {
+    public ActionContext {
+        sessionValues = Map.copyOf(sessionValues); flowValues = Map.copyOf(flowValues);
+        globalValues = Map.copyOf(globalValues); configuration = Map.copyOf(configuration);
+        java.util.Objects.requireNonNull(emitter, "emitter");
+    }
+    public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
+                         SessionContext sessionContext, CancellationToken cancellationToken, EventEmitter emitter,
+                         Map<String, Object> globalValues, Map<String, Object> configuration) {
+        this(sessionId, flowId, sessionValues, sessionContext, Map.of(), null, cancellationToken, emitter, globalValues, null, configuration);
+    }
     public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
                          SessionContext sessionContext, CancellationToken cancellationToken, EventEmitter emitter) {
         this(sessionId, flowId, sessionValues, sessionContext, cancellationToken, emitter, Map.of(), Map.of());
@@ -14,4 +26,9 @@ public record ActionContext(UUID sessionId, String flowId, Map<String, Object> s
 
     /** Emits a derived Event immediately. The Runtime supplies the current Session and lineage. */
     public boolean emit(Event event) { return emitter.emit(event); }
+    public <T> T configuration(String key, Class<T> type) {
+        Object value = configuration.get(key);
+        if (value == null) throw new IllegalArgumentException("Component configuration is missing: " + key);
+        return ContextCodecs.defaultCodec().decode(value, type);
+    }
 }

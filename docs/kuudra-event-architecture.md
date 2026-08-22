@@ -52,6 +52,19 @@ Session 是一次 Actor 执行链的上下文，包含：唯一 ID、Flow ID、�
 
 同一 Session 内的 Actor 投递按序执行；不同 Session 可以并行。Actor 分裂出多个 Event 时，这些分支共享 Session；最后一个工作引用结束时 Session 完成。
 
+## 四级数据作用域
+
+| 作用域 | 生命周期与共享边界 | 组件写入 |
+| --- | --- | --- |
+| Event | 单个不可变 Event；随路由传向下游 | 用 `EventData.with`/`Event.withData` 创建副本 |
+| Session | Session 生命周期；同一 Session 的组件共享 | `SessionContext.put/remove/update` |
+| Flow | Flow 在 Runtime 中的注册生命周期；跨 Session 共享 | `FlowContext.put/remove/update` |
+| Global | Runtime 生命周期；跨 Flow 共享 | `GlobalContext.put/remove/update` |
+
+配置占位符只读取这些作用域，不执行写操作。自动表达式 `${path}` 按 Event → Session → Flow → Global 查找；`${event#path}`、`${session#path}`、`${flow#path}`、`${global#path}` 只查指定作用域。每次组件执行使用稳定快照，代码写入在后续组件执行时可见；共享上下文通过原子替换保证并发安全。
+
+写入 POJO 时，默认 JSON codec 将其转换为不可变 JSON 兼容树，避免长期持有插件 ClassLoader 创建的对象。组件通过 `get(key, TargetType.class)` 恢复强类型；EventData 使用 `get(namespace, key, TargetType.class)`。
+
 取消是协作式的：Runtime 不再推进已取消 Session 的新 Actor 工作，Actor 通过 `CancellationToken` 自行清理资源。父 Session 对子 Session 的取消传播由 `SessionSpec.parentTerminationPolicy` 配置：`NONE`、`ON_PARENT_CANCELLATION` 或 `ON_PARENT_TERMINAL`。
 
 ## 配置与插件引用

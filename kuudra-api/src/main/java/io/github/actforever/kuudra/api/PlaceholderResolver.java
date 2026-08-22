@@ -74,7 +74,7 @@ public final class PlaceholderResolver {
 
     private static String[] expression(String expression) {
         String[] parts = expression.split("\\.");
-        if (parts.length < 2) throw unresolved(expression);
+        if (parts.length == 0 || java.util.Arrays.stream(parts).anyMatch(String::isBlank)) throw unresolved(expression);
         return parts;
     }
 
@@ -101,6 +101,17 @@ public final class PlaceholderResolver {
 
     private static Object lookup(String[] parts, Event event, EventContext context) {
         String expression = String.join(".", parts);
+        int scopeSeparator = parts[0].indexOf('#');
+        if (scopeSeparator >= 0) {
+            String scope = parts[0].substring(0, scopeSeparator);
+            String firstPath = parts[0].substring(scopeSeparator + 1);
+            if (scope.isBlank() || firstPath.isBlank()) throw unresolved(expression);
+            String[] path = parts.clone(); path[0] = firstPath;
+            return scoped(scope, path, event, context, expression);
+        }
+        if (!java.util.Set.of("event", "session", "flow", "global").contains(parts[0])) {
+            return automatic(parts, event, context, expression);
+        }
         return switch (parts[0]) {
             case "event" -> eventValue(parts, event, expression);
             case "session" -> sessionValue(parts, context, expression);
@@ -108,6 +119,48 @@ public final class PlaceholderResolver {
             case "flow" -> parts.length == 2 && parts[1].equals("id") ? context.flowId() : unresolved(expression);
             default -> throw unresolved(expression);
         };
+    }
+    private static Object scoped(String scope, String[] path, Event event, EventContext context, String expression) {
+        Lookup result = switch (scope) {
+            case "event" -> eventLookup(path, event);
+            case "session" -> context.session() == null ? Lookup.missing() : nestedFind(context.sessionValues(), path, 0);
+            case "flow" -> path.length == 1 && path[0].equals("id") ? Lookup.found(context.flowId()) : nestedFind(context.flowValues(), path, 0);
+            case "global" -> nestedFind(context.globalValues(), path, 0);
+            default -> Lookup.missing();
+        };
+        if (!result.found) {
+            if (scope.equals("session") && context.session() == null) throw new IllegalStateException("Placeholder requires a Session: ${" + expression + "}");
+            throw unresolved(expression);
+        }
+        return result.value;
+    }
+    private static Object automatic(String[] path, Event event, EventContext context, String expression) {
+        for (Lookup result : List.of(eventLookup(path, event),
+                context.session() == null ? Lookup.missing() : nestedFind(context.sessionValues(), path, 0),
+                nestedFind(context.flowValues(), path, 0), nestedFind(context.globalValues(), path, 0))) {
+            if (result.found) return result.value;
+        }
+        throw unresolved(expression);
+    }
+    private static Lookup eventLookup(String[] path, Event event) {
+        if (path.length == 1) {
+            Lookup metadata = switch (path[0]) {
+                case "id" -> Lookup.found(event.id().toString());
+                case "type" -> Lookup.found(event.type());
+                case "occurred-at", "occurredAt" -> Lookup.found(event.occurredAt().toString());
+                default -> Lookup.missing();
+            };
+            if (metadata.found) return metadata;
+            Object match = null; boolean found = false;
+            for (Map.Entry<String, Map<String, Object>> namespace : event.data().namespaces().entrySet()) {
+                if (!namespace.getValue().containsKey(path[0])) continue;
+                if (found) throw new IllegalArgumentException("Ambiguous EventData key; include its namespace: " + path[0]);
+                match = namespace.getValue().get(path[0]); found = true;
+            }
+            return found ? Lookup.found(match) : Lookup.missing();
+        }
+        if (path[0].equals("data")) return nestedFind(event.data().namespaces(), path, 1);
+        return nestedFind(event.data().namespaces(), path, 0);
     }
     private static Object eventValue(String[] parts, Event event, String expression) {
         if (parts.length == 2) return switch (parts[1]) {
@@ -132,6 +185,18 @@ public final class PlaceholderResolver {
             current = map.get(parts[index]);
         }
         return current;
+    }
+    private static Lookup nestedFind(Map<String, ?> root, String[] parts, int start) {
+        Object current = root;
+        for (int index = start; index < parts.length; index++) {
+            if (!(current instanceof Map<?, ?> map) || !map.containsKey(parts[index])) return Lookup.missing();
+            current = map.get(parts[index]);
+        }
+        return Lookup.found(current);
+    }
+    private record Lookup(boolean found, Object value) {
+        private static Lookup found(Object value) { return new Lookup(true, value); }
+        private static Lookup missing() { return new Lookup(false, null); }
     }
     private static IllegalArgumentException unresolved(String expression) { return new IllegalArgumentException("Unresolved placeholder: ${" + expression + "}"); }
 }

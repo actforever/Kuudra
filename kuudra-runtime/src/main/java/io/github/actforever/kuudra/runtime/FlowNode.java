@@ -35,7 +35,9 @@ public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.Processo
         public ActorNode(String id, Actor actor) { this(id, actor, java.util.Map.of()); }
         CompletionStage<Void> apply(Event event, EventContext context, EventEmitter emitter) {
             if (!event.hasSession()) return CompletableFuture.failedFuture(new IllegalArgumentException("Actor requires a session-bound Event"));
-            return actor.act(event, new io.github.actforever.kuudra.api.ActionContext(event.session().id(), event.session().flowId(), context.sessionValues(), context.sessionContext(), context.cancellationToken(), emitter, context.globalValues(), context.configuration()));
+            return actor.act(event, new io.github.actforever.kuudra.api.ActionContext(event.session().id(), event.session().flowId(),
+                    context.sessionValues(), context.sessionContext(), context.flowValues(), context.flowContext(),
+                    context.cancellationToken(), emitter, context.globalValues(), context.globalContext(), context.configuration()));
         }
     }
     private static void requireId(String id) { if (id == null || id.isBlank()) throw new IllegalArgumentException("node id must not be blank"); }

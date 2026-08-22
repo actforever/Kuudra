@@ -20,6 +20,7 @@ public record Event(UUID id, String type, Instant occurredAt, EventData data, Ev
     public boolean hasSession() { return session != null; }
     public Event withSession(SessionReference reference) { return new Event(id, type, occurredAt, data, lineage, Objects.requireNonNull(reference, "reference")); }
     public Event withLineage(EventLineage newLineage) { return new Event(id, type, occurredAt, data, Objects.requireNonNull(newLineage, "newLineage"), session); }
+    public Event withData(EventData newData) { return new Event(id, type, occurredAt, Objects.requireNonNull(newData, "newData"), lineage, session); }
     public Event withoutSession() { return session == null ? this : new Event(id, type, occurredAt, data, lineage.descendFrom(this, true), null); }
     public Event retype(String newType) { return new Event(id, newType, occurredAt, data, lineage, session); }
 }

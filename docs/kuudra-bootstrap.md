@@ -70,8 +70,8 @@ Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`
 1. `KuudraYamlLoader` 读取 Flow YAML，将节点 `options` 保存为未解析的 Map 模板；此时 Event 和 Session 尚不存在，因此不会做字符串替换。
 2. `KuudraApp` 编译 Flow 时，把 Adapter、Processor 和 Actor 的 options 模板保存在对应 `FlowNode` 中。
 3. Runtime 注册 Flow 时调用 `PlaceholderResolver.compileMap`。这一阶段只执行一次正则扫描、字符串静态片段切分、表达式路径切分以及 Map/List 模板递归编译，并把每个节点的 `CompiledMap` 保存在 `RegisteredFlow` 中。语法结构不会在 Event 热路径中重复解释。
-4. 每个 Event 到达节点时，`KuudraRuntime.execute` 构造当前 `EventContext`，其中包含 Event 对应的 Flow、可选 Session、Session 最新快照以及 App 的只读 `global-context`。
-5. Runtime 调用已编译模板的 `resolve`，此时只按预切分路径查询本次 Event/Session/global/Flow 值，并组装新的不可变 Map/List；原模板和已编译结构都不会被修改，可被不同 Event 和工作线程安全复用。
+4. 每个 Event 到达节点时，`KuudraRuntime.execute` 构造当前 `EventContext`，其中包含 Event、可选 Session、当前 Flow 和 Global 四级作用域的本次执行快照及可写上下文。
+5. Runtime 调用已编译模板的 `resolve`，此时只按预切分路径查询作用域值，并组装新的不可变 Map/List；原模板和已编译结构都不会被修改，可被不同 Event 和工作线程安全复用。
 6. Adapter 和 Processor 从 `EventContext.configuration()` 获取解析结果；Actor 从 `ActionContext.configuration()` 获取同一份解析结果。
 
 例如：
@@ -82,24 +82,31 @@ global-context:
 
 # <home-directory>/flows/example.yaml 中某个 actor 节点
 options:
-  key: ${event.data.input.key}
-  mode: ${session.values.mode}
-  profile: ${global.profile}
+  key: ${input.key}                # 自动按 Event -> Session -> Flow -> Global 查找
+  mode: ${session#mode}            # 只查 Session
+  profile: ${global#profile}       # 只查 Global
   label: ${flow.id}:${event.type}
 ```
 
 支持的表达式为：
 
-| 作用域 | 表达式 | 值来源 |
+| 查询模式 | 表达式 | 行为 |
 | --- | --- | --- |
-| Event | `${event.id}`、`${event.type}`、`${event.occurredAt}` | 当前 Event 的基础字段 |
-| EventData | `${event.data.<namespace>.<key>}` | 当前 Event 的命名空间数据，可继续访问嵌套 Map |
-| Session | `${session.id}`、`${session.flowId}` | 当前绑定的 Session |
-| Session 数据 | `${session.values.<key>}` | 执行该节点时的 Session 最新快照，可继续访问嵌套 Map |
-| 全局配置 | `${global.<key>}` | 合并配置中的 `global-context`，可继续访问嵌套 Map |
-| Flow | `${flow.id}` | 当前 Flow ID |
+| 自动查询 | `${<path>}`，如 `${input.key}` 或唯一的 `${key}` | 依次查询 Event、Session、Flow、Global，第一个命中立即返回 |
+| Event | `${event#<path>}`，如 `${event#input.key}` | 只查询当前 `EventData`；`id`、`type`、`occurred-at` 是 Event 元数据 |
+| Session | `${session#<path>}` | 只查询同一 Session 共享值 |
+| Flow | `${flow#<path>}` | 只查询同一 Flow、跨 Session 共享值；`${flow#id}` 返回 Flow ID |
+| Global | `${global#<path>}` | 只查询同一 Runtime、跨 Flow 共享值 |
 
-若整个字符串只有一个占位符，解析器保留原值类型，例如数字、布尔值、Map 或 List；若占位符嵌在较长字符串中，则通过 `String.valueOf` 转为文本。普通非字符串标量保持不变。表达式不存在会使当前节点执行失败，不会静默生成空值；无 Session 的节点引用 `${session...}` 会抛出明确错误。
+旧语法 `${event.data.input.key}`、`${session.values.mode}`、`${global.profile}`、`${flow.id}` 继续兼容。新配置应优先采用 `#` 明确作用域。配置只能读取作用域，不能声明写操作；插件组件在明确的业务时机通过 `sessionContext()`、`flowContext()`、`globalContext()` 的 `put/remove/update` 写入。Event 始终不可变，组件通过 `EventData.with` 或 `Event.withData` 生成派生值。
+
+EventData 保留 namespace 隔离。`${input.key}` 明确读取 `input` namespace；`${key}`/`${event#key}` 可以省略 namespace，但仅在该 key 只存在于一个 namespace 时成立，多个 namespace 同名会报歧义错误并要求显式写出 namespace。
+
+若整个字符串只有一个占位符，解析器保留原值类型，例如数字、布尔值、Map 或 List；若占位符嵌在较长字符串中，则通过 `String.valueOf` 转为文本。普通非字符串标量保持不变。表达式不存在会使当前节点执行失败，不会静默生成空值；无 Session 的节点显式引用 Session 会抛出明确错误。
+
+### 上下文值与类型转换
+
+Event、Session、Flow、Global 的业务值使用统一 `ContextCodec`。默认 `JsonContextCodec` 在写入边界把 POJO 编码一次，存储为不持有插件对象引用的不可变 JSON 兼容树；普通读取和占位符遍历不做反复 JSON 字符串序列化。组件需要强类型时调用 `context.sessionContext().get("key", Type.class)`、`flowContext().get(...)`、`globalContext().get(...)` 或 `event.data().get(namespace, key, Type.class)`；占位符已经注入节点 options 后，也可调用 `context.configuration("key", Type.class)`，Action 参数可调用 `call.argument("key", Type.class)`。只有这些强类型读取才执行反序列化。`ContextCodecs` 保留替换默认 codec 的扩展点。
 
 这条链路对 `event-adapter`、`event-processor` 和 `actor` 已闭环，并有 API 解析测试与 Runtime 组件注入测试覆盖。`session-allocator` 的策略在 App 启动编译 Flow 时就必须确定，不能使用事件期占位符；`event-source` 没有输入 Event 上下文，当前契约也不接收节点 options，因此同样不支持动态占位符。
 

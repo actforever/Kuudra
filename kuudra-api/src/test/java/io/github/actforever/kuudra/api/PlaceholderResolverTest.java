@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PlaceholderResolverTest {
+    record KeyStroke(String key, boolean pressed) { }
+
     @Test
     void resolvesEventSessionGlobalAndFlowScopesWithoutStringifyingWholeValues() {
         Event event = Event.of("input.press", EventData.of("input", Map.of("key", "A")));
@@ -45,5 +47,13 @@ class PlaceholderResolverTest {
         assertEquals(true, second.get("value"));
         assertEquals("demo:first", ((Map<?, ?>) ((List<?>) first.get("nested")).get(0)).get("label"));
         assertEquals("demo:second", ((Map<?, ?>) ((List<?>) second.get("nested")).get(0)).get("label"));
+    }
+
+    @Test
+    void eventDataEncodesPojoAsJsonTreeAndRestoresRequestedType() {
+        EventData data = EventData.of("keyboard", Map.of()).with("keyboard", "stroke", new KeyStroke("A", true));
+
+        assertEquals(Map.of("key", "A", "pressed", true), data.require("keyboard", "stroke"));
+        assertEquals(new KeyStroke("A", true), data.get("keyboard", "stroke", KeyStroke.class));
     }
 }

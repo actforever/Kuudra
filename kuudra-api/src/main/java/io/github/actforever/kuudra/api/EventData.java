@@ -30,6 +30,7 @@ public final class EventData {
     public static EventData of(String namespace, Map<String, Object> values) { return new EventData(Map.of(namespace, values)); }
     public Optional<Object> find(String namespace, String key) { return Optional.ofNullable(namespace(namespace).get(requireText(key, "attribute key"))); }
     public Object require(String namespace, String key) { return find(namespace, key).orElseThrow(() -> new IllegalArgumentException("Event data is missing " + namespace + "." + key)); }
+    public <T> T get(String namespace, String key, Class<T> type) { return ContextCodecs.defaultCodec().decode(require(namespace, key), type); }
     public EventData with(String namespace, String key, Object value) {
         Map<String, Map<String, Object>> copy = new LinkedHashMap<>(namespaces);
         Map<String, Object> section = new LinkedHashMap<>(copy.getOrDefault(namespace, Map.of()));
@@ -43,6 +44,8 @@ public final class EventData {
     @SuppressWarnings("unchecked")
     private static Object freeze(Object value) {
         if (value == null) throw new IllegalArgumentException("EventData does not permit null values");
+        if (!(value instanceof String || value instanceof Number || value instanceof Boolean || value instanceof EventData
+                || value instanceof Map<?, ?> || value instanceof List<?>)) return ContextCodecs.defaultCodec().encode(value);
         if (value instanceof String || value instanceof Number || value instanceof Boolean || value instanceof EventData) return value;
         if (value instanceof Map<?, ?> values) {
             Map<String, Object> copy = new LinkedHashMap<>();

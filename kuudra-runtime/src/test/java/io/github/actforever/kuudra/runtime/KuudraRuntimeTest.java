@@ -21,6 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraRuntimeTest {
+    record KeyStroke(String key, boolean pressed) { }
+
     @Test
     void sourceAdapterProcessorAllocatorAndActorUseOneEventGraph() throws Exception {
         CountDownLatch acted = new CountDownLatch(1);
@@ -95,6 +97,41 @@ class KuudraRuntimeTest {
                         observed.countDown();
                         return CompletableFuture.completedFuture(null);
                     }, Map.of("key", "${event.data.input.key}", "mode", "${session.values.mode}", "profile", "${global.profile}", "label", "${flow.id}:${event.type}"))
+            ), Map.of("allocate", List.of("set"), "set", List.of("inspect"))));
+            assertTrue(runtime.publish("flow", "allocate", Event.of("root", EventData.empty())));
+            assertTrue(observed.await(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void resolvesAutomaticAndExplicitScopesAndSharesTypedValues() throws Exception {
+        CountDownLatch observed = new CountDownLatch(1);
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1, Map.of("input", Map.of("shared", "global")))) {
+            runtime.registerFlow(new KuudraFlow("flow", Map.of(
+                    "allocate", new FlowNode.AllocatorNode("allocate", new SessionSpec("session", "key", SessionPolicy.PARALLEL)),
+                    "set", new FlowNode.ActorNode("set", (event, context) -> {
+                        context.globalContext().put("global-only", new KeyStroke("G", true));
+                        context.flowContext().put("input", Map.of("shared", "flow"));
+                        context.sessionContext().put("input", Map.of("shared", "session"));
+                        context.sessionContext().put("stroke", new KeyStroke("A", true));
+                        context.emit(Event.of("derived", EventData.of("input", Map.of("shared", "event", "stroke", new KeyStroke("E", true)))));
+                        return CompletableFuture.completedFuture(null);
+                    }),
+                    "inspect", new FlowNode.ActorNode("inspect", (event, context) -> {
+                        assertEquals("event", context.configuration().get("automatic"));
+                        assertEquals("event", context.configuration().get("event"));
+                        assertEquals("session", context.configuration().get("session"));
+                        assertEquals("flow", context.configuration().get("flow"));
+                        assertEquals("global", context.configuration().get("global"));
+                        assertEquals(new KeyStroke("A", true), context.sessionContext().get("stroke", KeyStroke.class));
+                        assertEquals(new KeyStroke("G", true), context.globalContext().get("global-only", KeyStroke.class));
+                        assertEquals(new KeyStroke("E", true), context.configuration("stroke", KeyStroke.class));
+                        assertEquals(new KeyStroke("E", true), context.configuration("direct-stroke", KeyStroke.class));
+                        observed.countDown();
+                        return CompletableFuture.completedFuture(null);
+                    }, Map.of("automatic", "${input.shared}", "event", "${event#input.shared}",
+                            "session", "${session#input.shared}", "flow", "${flow#input.shared}",
+                            "global", "${global#input.shared}", "stroke", "${event#input.stroke}", "direct-stroke", "${stroke}"))
             ), Map.of("allocate", List.of("set"), "set", List.of("inspect"))));
             assertTrue(runtime.publish("flow", "allocate", Event.of("root", EventData.empty())));
             assertTrue(observed.await(1, TimeUnit.SECONDS));

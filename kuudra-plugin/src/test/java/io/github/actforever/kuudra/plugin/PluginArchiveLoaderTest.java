@@ -27,7 +27,7 @@ class PluginArchiveLoaderTest {
         Path baseClasses = compile("base", Map.of(
                 "base.ParentType", """
                         package base;
-                        public final class ParentType {
+                        public record ParentType(String key, boolean pressed) {
                             public static String message() { return "from-parent"; }
                         }
                         """,
@@ -39,6 +39,7 @@ class PluginArchiveLoaderTest {
                 "child.ChildPlugin", """
                         package child;
                         import base.ParentType;
+                        import io.github.actforever.kuudra.api.ContextCodecs;
                         import io.github.actforever.kuudra.plugin.KuudraPlugin;
                         import java.util.concurrent.CompletableFuture;
                         import java.util.concurrent.CompletionStage;
@@ -47,6 +48,10 @@ class PluginArchiveLoaderTest {
                             public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
                             public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
                             public String parentMessage() { return ParentType.message(); }
+                            public ParentType roundTrip() {
+                                Object encoded = ContextCodecs.defaultCodec().encode(new ParentType("A", true));
+                                return ContextCodecs.defaultCodec().decode(encoded, ParentType.class);
+                            }
                         }
                         """), List.of(baseJar));
         Path childJar = jar("child.jar", childClasses, metadata("child", "child.ChildPlugin", List.of("base")), Map.of());
@@ -61,6 +66,10 @@ class PluginArchiveLoaderTest {
 
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));
+            Object restored = child.plugin().instance().getClass().getMethod("roundTrip").invoke(child.plugin().instance());
+            assertSame(base.classLoader().loadClass("base.ParentType"), restored.getClass());
+            assertEquals("A", restored.getClass().getMethod("key").invoke(restored));
+            assertEquals(true, restored.getClass().getMethod("pressed").invoke(restored));
             assertEquals("parent-resource", new String(child.classLoader().getResourceAsStream("base-resource.txt").readAllBytes()));
             assertEquals(1, child.classLoader().resources("base-resource.txt").count());
         } finally {
