@@ -4,8 +4,11 @@
     <parent><groupId>io.github.actforever</groupId><artifactId>kuudra</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>kuudra-app</artifactId>
     <dependencies>
+        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-api</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-runtime</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-config</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-plugin</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-logging</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
     </dependencies>
 </project>

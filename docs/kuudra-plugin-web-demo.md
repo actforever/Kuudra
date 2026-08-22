@@ -37,4 +37,4 @@ java -jar kuudra-web\target\kuudra-web-0.1.0-SNAPSHOT.jar
 - 会话：`GET /api/v1/sessions/{sessionId}`、`POST /api/v1/sessions/{sessionId}/cancel`
 - Knife4j：`http://127.0.0.1:8080/doc.html`
 
-`KuudraRuntime` 启动时会打印 Kuudra Core ASCII Banner；Web 模块自身的 Spring Boot Banner 只显示 `Kuudra Web Adapter`，明确其适配层身份。
+`KuudraApp` 是由 API、Config、Plugin、Logging 和 Runtime 组合出的应用外观，并在创建时打印 Kuudra ASCII Banner；Web 模块自身的 Spring Boot Banner 只显示 `Kuudra Web Adapter`，明确其适配层身份。`kuudra-web` 只依赖 `kuudra-app`，将其外观 API 映射为 HTTP，不直接访问 Runtime。

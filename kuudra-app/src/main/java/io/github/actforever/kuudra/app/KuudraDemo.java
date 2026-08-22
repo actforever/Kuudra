@@ -25,6 +25,7 @@ public final class KuudraDemo {
     private KuudraDemo() { }
 
     public static void main(String[] args) throws Exception {
+        KuudraBanner.print();
         KuudraConfig.DemoConfig config;
         try (var stream = KuudraDemo.class.getResourceAsStream("/demo/kuudra-demo.yaml")) {
             if (stream == null) throw new IllegalStateException("demo configuration resource is missing");

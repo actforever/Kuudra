@@ -24,6 +24,7 @@ public final class KuudraPluginDemo {
     private KuudraPluginDemo() { }
 
     public static void main(String[] args) throws Exception {
+        KuudraBanner.print();
         Path archive = args.length == 1
                 ? Path.of(args[0])
                 : Path.of("kuudra-hello-plugin", "target", "kuudra-hello-plugin-0.1.0-SNAPSHOT.jar");
