@@ -17,7 +17,6 @@
         <module>kuudra-hello-plugin</module>
         <module>kuudra-runtime</module>
         <module>kuudra-app</module>
-        <module>kuudra-app-http</module>
         <module>kuudra-web</module>
     </modules>
 

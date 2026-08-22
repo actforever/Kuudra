@@ -10,6 +10,3 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /doc.html
-kuudra:
-  app:
-    base-url: http://127.0.0.1:8081
