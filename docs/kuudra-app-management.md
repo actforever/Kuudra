@@ -12,6 +12,7 @@ NEW → STARTING → RUNNING → STOPPING → STOPPED
 | 方法 | 路径 | 含义 |
 | --- | --- | --- |
 | `GET` | `/api/v1/app` | App 状态、队列长度和 Flow 数。 |
+| `GET` | `/api/v1/app/status` | 当前 App 内核汇总：App 状态、队列、全部 Flow 摘要与活跃 Session 总数。 |
 | `POST` | `/api/v1/app/start` | 创建并启动内核。 |
 | `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
 | `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |

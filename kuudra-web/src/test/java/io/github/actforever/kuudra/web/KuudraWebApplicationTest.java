@@ -22,4 +22,12 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RUNNING"));
     }
+
+    @Test
+    void exposesCurrentAppKernelStatusWithoutRuntimeEndpoint() throws Exception {
+        mvc.perform(get("/api/v1/app/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.app.status").value("RUNNING"))
+                .andExpect(jsonPath("$.activeSessions").value(0));
+    }
 }

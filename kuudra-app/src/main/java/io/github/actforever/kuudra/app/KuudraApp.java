@@ -72,6 +72,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     @Override public synchronized AppSnapshot snapshot() {
         return runtime == null ? new AppSnapshot(status, 0, 0, detail) : new AppSnapshot(status, runtime.queuedTasks(), runtime.flows().size(), detail);
     }
+    /** Current App-owned kernel state, expressed without leaking Runtime implementation types. */
+    public synchronized Status status() {
+        AppSnapshot snapshot = snapshot();
+        List<Flow> flows = runtime == null ? List.of() : runtime.flows().stream().map(KuudraApp::flow).toList();
+        int activeSessions = flows.stream().mapToInt(Flow::activeSessions).sum();
+        return new Status(snapshot, flows, activeSessions);
+    }
     public SystemEventBus systemEvents() { return events; }
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
 
@@ -106,6 +113,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.status().name(), snapshot.activeSessions(), snapshot.deferredTasks()); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.name(), snapshot.admissionKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.parentSessionIds()); }
     public record Health(String status, int queuedTasks, int flows) { }
+    public record Status(AppSnapshot app, List<Flow> flows, int activeSessions) {
+        public Status { flows = List.copyOf(flows); }
+    }
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, String name, String admissionKey, String status, boolean cancellationRequested, java.util.Set<UUID> parentSessionIds) { }
 }

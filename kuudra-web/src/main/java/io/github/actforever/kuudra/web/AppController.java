@@ -25,6 +25,7 @@ class AppController {
     private final KuudraApp app;
     AppController(KuudraApp app) { this.app = app; }
     @GetMapping AppSnapshot snapshot() { return app.snapshot(); }
+    @GetMapping("/status") KuudraApp.Status status() { return app.status(); }
     @PostMapping("/start") AppSnapshot start() { app.start(); return app.snapshot(); }
     @PostMapping("/stop") AppSnapshot stop() { app.stop(); return app.snapshot(); }
     @PostMapping("/restart") AppSnapshot restart() { app.restart(); return app.snapshot(); }
