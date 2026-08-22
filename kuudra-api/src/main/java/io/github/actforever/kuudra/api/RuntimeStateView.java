@@ -8,4 +8,5 @@ public interface RuntimeStateView {
     boolean hasActiveSession(String flowId, String sessionName);
     int activeSessionCount(String flowId, String sessionName);
     Optional<SessionSnapshot> session(UUID sessionId);
+    Optional<FlowSnapshot> flow(String flowId);
 }

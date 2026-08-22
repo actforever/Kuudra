@@ -140,6 +140,30 @@ class KuudraRuntimeTest {
         }
     }
 
+    @Test
+    void pauseDefersSessionContinuationUntilResume() throws Exception {
+        CompletableFuture<List<Signal>> gate = new CompletableFuture<>();
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch secondRan = new CountDownLatch(1);
+        AtomicReference<Signal> firstSignal = new AtomicReference<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.registerFlow(new KuudraFlow("pause", rootProcessor(SessionPolicy.PARALLEL), "first",
+                    Map.of(
+                            "first", new FlowNode.ActorNode("first", (signal, context) -> { firstSignal.set(signal); firstStarted.countDown(); return gate; }),
+                            "second", new FlowNode.ActorNode("second", (signal, context) -> { secondRan.countDown(); return CompletableFuture.completedFuture(List.of()); })
+                    ), Map.of("first", List.of("second"))));
+            runtime.publishRoot(root("pause", SessionPolicy.PARALLEL));
+            assertTrue(firstStarted.await(1, TimeUnit.SECONDS));
+            runtime.pauseFlow("pause");
+            gate.complete(List.of(firstSignal.get()));
+            Thread.sleep(50);
+            assertEquals(1, runtime.flow("pause").orElseThrow().deferredTasks());
+            runtime.resumeFlow("pause");
+            assertTrue(secondRan.await(1, TimeUnit.SECONDS));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
     private static KuudraFlow oneActorFlow(String id, SessionPolicy policy, io.github.actforever.kuudra.api.Actor actor) {
         return new KuudraFlow(id, rootProcessor(policy), "actor", Map.of("actor", new FlowNode.ActorNode("actor", actor)), Map.of());
     }

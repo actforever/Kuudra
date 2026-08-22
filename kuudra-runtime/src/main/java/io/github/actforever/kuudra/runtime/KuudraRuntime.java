@@ -5,6 +5,8 @@ import io.github.actforever.kuudra.api.RawSignalProcessor;
 import io.github.actforever.kuudra.api.RawSignalSource;
 import io.github.actforever.kuudra.api.RootSignal;
 import io.github.actforever.kuudra.api.RootSignalSource;
+import io.github.actforever.kuudra.api.FlowSnapshot;
+import io.github.actforever.kuudra.api.FlowStatus;
 import io.github.actforever.kuudra.api.RuntimeStateView;
 import io.github.actforever.kuudra.api.SessionContext;
 import io.github.actforever.kuudra.api.SessionProcessorContext;
@@ -71,18 +73,50 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     }
 
     public void activateFlow(String flowId) {
-        synchronized (monitor) { requireFlow(flowId).active = true; }
+        synchronized (monitor) { requireFlow(flowId).status = FlowStatus.ACTIVE; }
         event("flow.active", Map.of("flowId", flowId));
+    }
+
+    /** Stop accepting roots but retain session continuations until explicitly resumed or stopped. */
+    public void pauseFlow(String flowId) {
+        synchronized (monitor) {
+            RegisteredFlow flow = requireFlow(flowId);
+            if (flow.status == FlowStatus.ACTIVE) flow.status = FlowStatus.PAUSED;
+        }
+        event("flow.paused", Map.of("flowId", flowId));
+    }
+
+    /** Re-enqueue continuations held while the Flow was paused. */
+    public void resumeFlow(String flowId) {
+        List<RuntimeTask.SignalTask> deferred;
+        synchronized (monitor) {
+            RegisteredFlow flow = requireFlow(flowId);
+            if (flow.status != FlowStatus.PAUSED) return;
+            flow.status = FlowStatus.ACTIVE;
+            deferred = List.copyOf(flow.deferred);
+            flow.deferred.clear();
+        }
+        deferred.forEach(task -> {
+            if (!offer(task)) {
+                synchronized (monitor) { ManagedSession session = sessions.get(task.sessionId()); if (session != null) release(session, null); }
+            }
+        });
+        event("flow.resumed", Map.of("flowId", flowId, "continuations", deferred.size()));
     }
 
     /** Close the root admission gate and cooperatively cancel current sessions. */
     public void stopFlow(String flowId) {
         List<UUID> toCancel = new ArrayList<>();
+        List<RuntimeTask.SignalTask> deferred;
         synchronized (monitor) {
-            requireFlow(flowId).active = false;
+            RegisteredFlow flow = requireFlow(flowId);
+            flow.status = FlowStatus.STOPPING;
+            deferred = List.copyOf(flow.deferred);
+            flow.deferred.clear();
             sessions.values().stream().filter(s -> s.flow.id().equals(flowId) && s.isActive()).forEach(s -> toCancel.add(s.id));
         }
         toCancel.forEach(this::cancel);
+        deferred.forEach(this::offer);
         event("flow.stopping", Map.of("flowId", flowId));
     }
 
@@ -134,6 +168,14 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     @Override public Optional<SessionSnapshot> session(UUID sessionId) {
         synchronized (monitor) { return Optional.ofNullable(sessions.get(sessionId)).map(ManagedSession::snapshot); }
     }
+    @Override public Optional<FlowSnapshot> flow(String flowId) {
+        synchronized (monitor) {
+            RegisteredFlow flow = flows.get(flowId);
+            if (flow == null) return Optional.empty();
+            int active = (int) sessions.values().stream().filter(s -> s.isActive() && s.flow.id().equals(flowId)).count();
+            return Optional.of(new FlowSnapshot(flowId, flow.status, active, flow.deferred.size()));
+        }
+    }
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
         synchronized (monitor) {
@@ -181,7 +223,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             if (!output.selector().test(raw)) continue;
             RegisteredFlow flow;
             synchronized (monitor) { flow = requireFlow(output.flowId()); }
-            if (!flow.active) continue;
+            if (flow.status != FlowStatus.ACTIVE) continue;
             List<RootSignal> roots = flow.flow.sessionProcessor().process(raw, new SessionProcessorContext(flow.flow.id(), this));
             roots.forEach(this::publishRoot);
         }
@@ -191,7 +233,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         ManagedSession created = null;
         synchronized (monitor) {
             RegisteredFlow registration = requireFlow(root.flowId());
-            if (!registration.active) { event("root.rejected.inactiveFlow", Map.of("flowId", root.flowId())); return; }
+            if (registration.status != FlowStatus.ACTIVE) { event("root.rejected.inactiveFlow", Map.of("flowId", root.flowId())); return; }
             GroupKey key = new GroupKey(root.flowId(), root.sessionSpec().name(), root.sessionSpec().admissionKey());
             boolean active = sessions.values().stream().anyMatch(s -> s.isActive() && s.group.equals(key));
             switch (root.sessionSpec().policy()) {
@@ -229,13 +271,25 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             fail(session, new IllegalArgumentException("a Flow node cannot emit a signal for another Flow/session")); return;
         }
         session.work.incrementAndGet();
-        if (!offer(new RuntimeTask.SignalTask(session.id, nodeId, signal))) release(session, null);
+        RuntimeTask.SignalTask task = new RuntimeTask.SignalTask(session.id, nodeId, signal);
+        synchronized (monitor) {
+            RegisteredFlow flow = requireFlow(session.flow.id());
+            if (flow.status == FlowStatus.PAUSED) {
+                flow.deferred.add(task);
+                return;
+            }
+        }
+        if (!offer(task)) release(session, null);
     }
 
     private void dispatchSignal(RuntimeTask.SignalTask task) {
         ManagedSession session;
         synchronized (monitor) { session = sessions.get(task.sessionId()); }
         if (session == null || !session.isActive()) return;
+        synchronized (monitor) {
+            RegisteredFlow flow = requireFlow(session.flow.id());
+            if (flow.status == FlowStatus.PAUSED) { flow.deferred.add(task); return; }
+        }
         session.submit(() -> {
             CompletableFuture<Void> completion = new CompletableFuture<>();
             FlowNode node = session.flow.nodes().get(task.nodeId());
@@ -269,6 +323,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         synchronized (monitor) { session.status = SessionStatus.FAILED; session.work.set(0); monitor.notifyAll(); }
         event("session.failed", Map.of("sessionId", session.id.toString(), "error", error.toString()));
         admitNext(session.group);
+        markStoppedIfDrained(session.flow.id());
     }
 
     private void complete(ManagedSession session) {
@@ -279,6 +334,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         }
         event("session." + session.status.name().toLowerCase(), Map.of("sessionId", session.id.toString()));
         admitNext(session.group);
+        markStoppedIfDrained(session.flow.id());
     }
 
     private void admitNext(GroupKey group) {
@@ -291,6 +347,18 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             }
         }
         if (next != null) publishRoot(next);
+    }
+
+    private void markStoppedIfDrained(String flowId) {
+        boolean stopped = false;
+        synchronized (monitor) {
+            RegisteredFlow flow = requireFlow(flowId);
+            if (flow.status == FlowStatus.STOPPING && sessions.values().stream().noneMatch(s -> s.isActive() && s.flow.id().equals(flowId)) && flow.deferred.isEmpty()) {
+                flow.status = FlowStatus.STOPPED;
+                stopped = true;
+            }
+        }
+        if (stopped) event("flow.stopped", Map.of("flowId", flowId));
     }
 
     private RegisteredFlow requireFlow(String id) {
@@ -310,7 +378,8 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private record GroupKey(String flowId, String name, String admissionKey) { }
     private static final class RegisteredFlow {
         private final KuudraFlow flow;
-        private boolean active = true;
+        private FlowStatus status = FlowStatus.ACTIVE;
+        private final List<RuntimeTask.SignalTask> deferred = new ArrayList<>();
         private RegisteredFlow(KuudraFlow flow) { this.flow = flow; }
     }
 
