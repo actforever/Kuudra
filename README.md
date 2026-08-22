@@ -1,4 +1,8 @@
-# GTAV Ops
+# Kuudra
+
+本分支 `refactor/kuudra-kernel` 是对旧 GTAV Ops/Orcana 代码的底层重构。当前 Maven 构建只包含 `kuudra-*` 模块；下方内容仅是旧项目历史笔记，不参与构建或当前架构设计。最新设计见 [Kuudra 架构文档](docs/kuudra-architecture.md)，最小可运行内核见 `kuudra-app`。
+
+# 历史：GTAV Ops
 
 对GTAV的一些技巧提供了更为宏实现，待办列表:
 

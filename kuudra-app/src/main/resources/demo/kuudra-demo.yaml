@@ -1,0 +1,15 @@
+runtime:
+  queueCapacity: 128
+  actorThreads: 2
+flow:
+  id: double-a-to-c
+  sessionName: double-a-action
+  policy: PARALLEL
+  acceptType: gesture.a.doublePressed
+action:
+  simulateKey: C
+ingress:
+  id: demo-keyboard
+  inputType: input.key.pressed
+  key: A
+  doublePressWindowMs: 500
