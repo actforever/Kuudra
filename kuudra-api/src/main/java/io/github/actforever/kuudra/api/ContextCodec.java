@@ -6,4 +6,6 @@ import java.lang.reflect.Type;
 public interface ContextCodec {
     Object encode(Object value);
     <T> T decode(Object value, Type targetType);
+    /** Parses a serialized literal; codecs that do not support text formats may preserve the input string. */
+    default Object parseLiteral(String value) { return value; }
 }

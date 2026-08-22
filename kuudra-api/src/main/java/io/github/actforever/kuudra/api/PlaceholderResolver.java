@@ -50,8 +50,12 @@ public final class PlaceholderResolver {
     }
 
     private static Template compileString(String value) {
+        boolean structuredLiteral = structuredLiteral(value);
         Matcher matcher = PLACEHOLDER.matcher(value);
-        if (!matcher.find()) return (event, context) -> value;
+        if (!matcher.find()) {
+            Object literal = structuredLiteral ? ContextCodecs.defaultCodec().parseLiteral(value.trim()) : value;
+            return (event, context) -> literal;
+        }
         if (matcher.start() == 0 && matcher.end() == value.length()) {
             String[] expression = expression(matcher.group(1));
             return (event, context) -> lookup(expression, event, context);
@@ -68,8 +72,15 @@ public final class PlaceholderResolver {
         return (event, context) -> {
             StringBuilder result = new StringBuilder();
             for (Segment segment : immutable) result.append(segment.resolve(event, context));
-            return result.toString();
+            String resolved = result.toString();
+            return structuredLiteral ? ContextCodecs.defaultCodec().parseLiteral(resolved.trim()) : resolved;
         };
+    }
+
+    private static boolean structuredLiteral(String value) {
+        String trimmed = value.trim();
+        return trimmed.length() >= 2 && ((trimmed.startsWith("{") && trimmed.endsWith("}"))
+                || (trimmed.startsWith("[") && trimmed.endsWith("]")));
     }
 
     private static String[] expression(String expression) {

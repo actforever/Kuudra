@@ -104,6 +104,22 @@ EventData 保留 namespace 隔离。`${input.key}` 明确读取 `input` namespac
 
 若整个字符串只有一个占位符，解析器保留原值类型，例如数字、布尔值、Map 或 List；若占位符嵌在较长字符串中，则通过 `String.valueOf` 转为文本。普通非字符串标量保持不变。表达式不存在会使当前节点执行失败，不会静默生成空值；无 Session 的节点显式引用 Session 会抛出明确错误。
 
+节点 options 同时支持以下字面量：
+
+```yaml
+options:
+  count: 2                              # YAML 数值，保持 Integer
+  enabled: true                         # YAML 布尔，保持 Boolean
+  native-list: [1, 2, 3]                # YAML 原生 List
+  native-map: {key: A, pressed: true}   # YAML 原生 Map
+  json-list: '[1, true, {"key":"A"}]' # JSON 文本，解析成不可变 List
+  json-map: '{"key":"A","count":2}' # JSON 文本，解析成不可变 Map
+  dynamic-json: '{"key":"${event#input.key}"}'
+  numeric-text: '42'                    # 仍是 String，不隐式转为数值
+```
+
+只有去除首尾空白后以 `{...}` 或 `[...]` 包围的字符串才作为结构化 JSON 字面量处理；JSON 语法错误会在模板编译或节点解析时明确失败。带占位符的 JSON 会先完成插值再解析。JSON 数字/布尔标量字符串不会自动转换，避免普通文本发生意外改型。
+
 ### 上下文值与类型转换
 
 Event、Session、Flow、Global 的业务值使用统一 `ContextCodec`。默认 `JsonContextCodec` 在写入边界把 POJO 编码一次，存储为不持有插件对象引用的不可变 JSON 兼容树；普通读取和占位符遍历不做反复 JSON 字符串序列化。组件需要强类型时调用 `context.sessionContext().get("key", Type.class)`、`flowContext().get(...)`、`globalContext().get(...)` 或 `event.data().get(namespace, key, Type.class)`；占位符已经注入节点 options 后，也可调用 `context.configuration("key", Type.class)`，Action 参数可调用 `call.argument("key", Type.class)`。只有这些强类型读取才执行反序列化。`ContextCodecs` 保留替换默认 codec 的扩展点。
@@ -112,6 +128,6 @@ Event、Session、Flow、Global 的业务值使用统一 `ContextCodec`。默认
 
 ### 执行成本
 
-优化前，每次节点执行都要对完整 options 树重新遍历并对每个字符串执行正则匹配和 `split(".")`；成本随 `事件数 × 节点执行数 × 模板大小` 增长。优化后，正则与表达式语法解析成本只在 Flow 注册时支付一次。Event 热路径仍必须完成动态作用域查找、结果 Map/List 分配和插值字符串拼接，因为这些值会随 Event 与 Session 改变；其成本与本次真正需要解析的模板节点和表达式路径深度线性相关。
+优化前，每次节点执行都要对完整 options 树重新遍历并对每个字符串执行正则匹配和 `split(".")`；成本随 `事件数 × 节点执行数 × 模板大小` 增长。优化后，正则与表达式语法解析成本只在 Flow 注册时支付一次。不含占位符的 JSON 文本也只在该阶段解析一次；含动态占位符的 JSON 必须在每次插值后解析。Event 热路径仍必须完成动态作用域查找、结果 Map/List 分配和插值字符串拼接，因为这些值会随 Event 与 Session 改变；其成本与本次真正需要解析的模板节点和表达式路径深度线性相关。
 
 `PlaceholderResolver.resolve/resolveMap` 公共便捷方法为保持独立调用语义，单次调用仍会即时编译再解析；Runtime 的高频路径固定使用可复用的 `CompiledMap`，不会走该便捷路径。

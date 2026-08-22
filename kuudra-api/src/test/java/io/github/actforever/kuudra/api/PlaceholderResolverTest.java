@@ -56,4 +56,34 @@ class PlaceholderResolverTest {
         assertEquals(Map.of("key", "A", "pressed", true), data.require("keyboard", "stroke"));
         assertEquals(new KeyStroke("A", true), data.get("keyboard", "stroke", KeyStroke.class));
     }
+
+    @Test
+    void preservesNativeLiteralsAndParsesJsonObjectAndArrayStrings() {
+        Event event = Event.of("input", EventData.of("input", Map.of("key", "A")));
+        EventContext context = new EventContext("flow", null, Map.of(), null, () -> false);
+
+        Map<String, Object> values = PlaceholderResolver.resolveMap(Map.of(
+                "number", 42,
+                "flag", true,
+                "numeric-text", "42",
+                "boolean-text", "true",
+                "object", "{\"key\":\"A\",\"count\":2}",
+                "array", "[1,true,{\"key\":\"B\"}]",
+                "dynamic", "{\"key\":\"${event#input.key}\"}"), event, context);
+
+        assertEquals(42, values.get("number"));
+        assertEquals(true, values.get("flag"));
+        assertEquals("42", values.get("numeric-text"));
+        assertEquals("true", values.get("boolean-text"));
+        assertEquals(Map.of("key", "A", "count", 2), values.get("object"));
+        assertEquals(List.of(1, true, Map.of("key", "B")), values.get("array"));
+        assertEquals(Map.of("key", "A"), values.get("dynamic"));
+    }
+
+    @Test
+    void rejectsMalformedStructuredJsonLiteral() {
+        EventContext context = new EventContext("flow", null, Map.of(), null, () -> false);
+        assertThrows(IllegalArgumentException.class,
+                () -> PlaceholderResolver.resolve("{not-json}", Event.of("input", Map.of()), context));
+    }
 }

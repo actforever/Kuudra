@@ -29,6 +29,14 @@ public final class JsonContextCodec implements ContextCodec {
         return mapper.convertValue(value, type);
     }
 
+    @Override public Object parseLiteral(String value) {
+        try {
+            return freeze(mapper.readValue(Objects.requireNonNull(value, "value"), Object.class));
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("Invalid JSON literal", error);
+        }
+    }
+
     private static Object freeze(Object value) {
         if (value == null || value instanceof String || value instanceof Number || value instanceof Boolean) return value;
         if (value instanceof Map<?, ?> source) {
