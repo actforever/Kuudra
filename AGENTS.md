@@ -71,8 +71,10 @@ Current scope is a usable minimal kernel, not the complete long-term design. JSO
 Core reactor:
 
 ```powershell
-mvn test
+mvn test -DskipTests=false
 ```
+
+Surefire skips test execution by default while still compiling test sources. Use `-DskipTests=false` whenever tests must run.
 
 Local plugin aggregator (after core artifacts are installed):
 
