@@ -9,6 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.Consumer;
+import io.github.actforever.kuudra.api.SystemEvent;
+import io.github.actforever.kuudra.api.SystemEventBus;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,6 +60,24 @@ class DefaultPluginManagerTest {
         });
         assertThrows(Exception.class, () -> brokenManager.startAll().toCompletableFuture().join());
         assertEquals(PluginState.FAILED, brokenManager.state("broken"));
+    }
+
+    @Test
+    void publishesPluginLifecycleEventsWithoutDependingOnLogging() {
+        List<String> eventTypes = new ArrayList<>();
+        SystemEventBus bus = new SystemEventBus() {
+            @Override public AutoCloseable subscribe(Consumer<SystemEvent> listener) { return () -> { }; }
+            @Override public void publish(SystemEvent event) { eventTypes.add(event.type()); }
+        };
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("events"),
+                PluginRuntimeServices.unavailable(), bus);
+        manager.register(new RecordingPlugin("observed", List.of(), new ArrayList<>()));
+
+        manager.startAll().toCompletableFuture().join();
+        manager.stopAll().toCompletableFuture().join();
+
+        assertTrue(eventTypes.containsAll(List.of("plugin.registered", "plugin.initializing", "plugin.initialized",
+                "plugin.starting", "plugin.active", "plugin.stopping", "plugin.stopped")));
     }
 
     @Test

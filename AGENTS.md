@@ -23,7 +23,7 @@ The tracked Maven reactor is:
 | `kuudra-runtime` | Event task queue, Flow graph, session allocation/lifecycle, asynchronous Actor scheduling. |
 | `kuudra-app` | Framework-independent façade that owns a Runtime and applies external configuration. |
 | `kuudra-web` | The sole HTTP REST/SSE adapter. It exposes **App**, never Runtime. |
-| `kuudra-logging` | Logging support. |
+| `kuudra-logging` | Spring-independent colored console logging, SystemEvent projection, and per-run file archival. |
 
 `plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations, currently containing `kuudra-hello-world-plugin`. It is not part of the Kuudra core reactor. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts to be available in the local Maven repository.
 
@@ -44,6 +44,7 @@ For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins
 - Flow registration precompiles node option placeholder syntax into immutable `PlaceholderResolver.CompiledMap` instances. Event execution performs only dynamic four-scope lookup and result assembly. Keep regex scanning and expression path splitting out of the Runtime event hot path.
 - Node options preserve native YAML numbers, booleans, maps and lists. Quoted strings shaped as JSON objects/arrays are parsed through the active `ContextCodec`; static JSON is parsed at Flow registration, while JSON containing placeholders is parsed after event-time interpolation. Numeric/boolean strings remain strings.
 - `kuudra-web` is an adapter only. Its lifecycle is conceptually independent from App lifecycle: stopping App closes Runtime/plugins but must not make HTTP lifecycle endpoints disappear.
+- Runtime, plugin and App lifecycle observability is expressed as `SystemEvent`; do not inject concrete loggers into those modules for ordinary lifecycle messages. `kuudra-logging` owns a private Logback context, renders bold colored `[KUUDRA]` console lines, writes `<home-directory>/logs/latest.log`, and archives it as `yyyy-MM-dd-N.log.gz` on normal kernel stop. Home initialization must ensure `logs/` exists.
 
 See `docs/kuudra-event-architecture.md`, `docs/kuudra-architecture.md`, and `docs/kuudra-app-management.md` before changing these boundaries.
 
@@ -67,6 +68,7 @@ kuudra-web
 - Flow is a scope for component names, routing and sessions; starting, pausing or stopping a Flow changes its routing/session gate and does not implicitly start or stop its resources. Event sources are queried and controlled through App resource APIs and `/api/v1/app/flows/{flowId}/resources/event-sources/...`.
 - Flow files live under fixed `<home-directory>/flows`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
+- Logging event coverage, isolation and file rotation are documented in `docs/kuudra-logging.md`.
 
 Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, `kuudra.system.*` Event handling, and cross-language bridges remain future work. All Flows are peers; do not reintroduce a control-plane Flow without an explicit architecture decision. YAML preserves placeholder templates; Runtime compiles their syntax at Flow registration and resolves values against Event, Session, global and Flow scopes for each execution. Supported syntax, performance model and limitations are documented in `docs/kuudra-bootstrap.md`; do not change them without matching tests.
 

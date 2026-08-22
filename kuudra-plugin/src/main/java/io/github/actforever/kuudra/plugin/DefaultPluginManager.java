@@ -15,6 +15,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
+import io.github.actforever.kuudra.api.SystemEvent;
+import io.github.actforever.kuudra.api.SystemEventBus;
 
 /**
  * Dependency-aware lifecycle manager for already loaded plugins.
@@ -26,6 +28,7 @@ import java.util.function.Function;
 public final class DefaultPluginManager implements AutoCloseable {
     private final Path pluginsHome;
     private final PluginRuntimeServices runtimeServices;
+    private final SystemEventBus events;
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
     private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
@@ -37,12 +40,17 @@ public final class DefaultPluginManager implements AutoCloseable {
     private List<String> startedOrder = List.of();
 
     public DefaultPluginManager(Path pluginsHome) {
-        this(pluginsHome, PluginRuntimeServices.unavailable());
+        this(pluginsHome, PluginRuntimeServices.unavailable(), noEvents());
     }
 
     public DefaultPluginManager(Path pluginsHome, PluginRuntimeServices runtimeServices) {
+        this(pluginsHome, runtimeServices, noEvents());
+    }
+
+    public DefaultPluginManager(Path pluginsHome, PluginRuntimeServices runtimeServices, SystemEventBus events) {
         this.pluginsHome = Objects.requireNonNull(pluginsHome, "pluginsHome").toAbsolutePath().normalize();
         this.runtimeServices = Objects.requireNonNull(runtimeServices, "runtimeServices");
+        this.events = Objects.requireNonNull(events, "events");
     }
 
     public synchronized void register(KuudraPlugin plugin) {
@@ -71,6 +79,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         states.put(plugin.id(), PluginState.REGISTERED);
         resources.put(plugin.id(), new ManagedResources());
         components.forEach(componentRegistry::register);
+        event("plugin.registered", Map.of("pluginId", plugin.id(), "namespace", namespace, "dependencies", List.copyOf(required), "components", components.size()));
     }
 
     public synchronized PluginState state(String pluginId) {
@@ -98,11 +107,15 @@ public final class DefaultPluginManager implements AutoCloseable {
             context = contexts.get(definition.pluginId());
         }
         T instance = componentRegistry.create(reference, expectedType);
+        event("plugin.component.created", Map.of("pluginId", definition.pluginId(), "component", reference));
         if (instance instanceof PluginComponentLifecycle lifecycle) {
             try {
+                event("plugin.component.initializing", Map.of("pluginId", definition.pluginId(), "component", reference));
                 lifecycle.initialize(new PluginComponentContext(reference, context)).toCompletableFuture().join();
                 synchronized (this) { managedComponents.add(lifecycle); }
+                event("plugin.component.initialized", Map.of("pluginId", definition.pluginId(), "component", reference));
             } catch (RuntimeException error) {
+                event("plugin.component.failed", Map.of("pluginId", definition.pluginId(), "component", reference, "error", error.toString()));
                 throw new IllegalStateException("Failed to initialize component " + reference, error);
             }
         }
@@ -159,11 +172,13 @@ public final class DefaultPluginManager implements AutoCloseable {
             return CompletableFuture.failedFuture(exception);
         }
         PluginContext context = new PluginContext(pluginId, home, resources.get(pluginId), runtimeServices);
+        event("plugin.initializing", Map.of("pluginId", pluginId, "home", home.toString()));
         return invoke(plugin, current -> current.initialize(context))
                 .thenRun(() -> { synchronized (this) { contexts.put(pluginId, context); } })
-                .thenRun(() -> mark(pluginId, PluginState.INITIALIZED))
+                .thenRun(() -> { mark(pluginId, PluginState.INITIALIZED); event("plugin.initialized", Map.of("pluginId", pluginId)); })
+                .thenRun(() -> event("plugin.starting", Map.of("pluginId", pluginId)))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
-                .thenRun(() -> mark(pluginId, PluginState.ACTIVE))
+                .thenRun(() -> { mark(pluginId, PluginState.ACTIVE); event("plugin.active", Map.of("pluginId", pluginId)); })
                 .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }
 
@@ -175,10 +190,11 @@ public final class DefaultPluginManager implements AutoCloseable {
                 return CompletableFuture.completedFuture(null);
             }
         }
+        event("plugin.stopping", Map.of("pluginId", pluginId));
         return invoke(plugin, KuudraPlugin::stop)
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::destroy))
                 .thenRun(() -> closeResources(pluginId))
-                .thenRun(() -> mark(pluginId, PluginState.STOPPED))
+                .thenRun(() -> { mark(pluginId, PluginState.STOPPED); event("plugin.stopped", Map.of("pluginId", pluginId)); })
                 .exceptionallyCompose(error -> failed(pluginId, error));
     }
 
@@ -203,6 +219,7 @@ public final class DefaultPluginManager implements AutoCloseable {
 
     private CompletionStage<Void> failed(String pluginId, Throwable error) {
         markFailed(pluginId);
+        event("plugin.failed", Map.of("pluginId", pluginId, "error", error.toString()));
         return CompletableFuture.failedFuture(error);
     }
 
@@ -212,6 +229,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             try { closeResources(pluginId); }
             catch (RuntimeException resourceError) { failure.addSuppressed(resourceError); }
             markFailed(pluginId);
+            event("plugin.failed", Map.of("pluginId", pluginId, "error", failure.toString()));
             return null;
         }).thenCompose(ignored -> CompletableFuture.failedFuture(failure));
     }
@@ -271,11 +289,22 @@ public final class DefaultPluginManager implements AutoCloseable {
         CompletionStage<Void> chain = CompletableFuture.completedFuture(null);
         for (PluginComponentLifecycle component : reverse) {
             chain = chain.thenCompose(ignored -> {
-                try { return component.destroy(); }
+                try {
+                    event("plugin.component.destroying", Map.of("componentClass", component.getClass().getName()));
+                    return component.destroy().thenRun(() -> event("plugin.component.destroyed", Map.of("componentClass", component.getClass().getName())));
+                }
                 catch (RuntimeException error) { return CompletableFuture.failedFuture(error); }
             });
         }
         return chain;
+    }
+
+    private void event(String type, Map<String, Object> data) { events.publish(SystemEvent.of(type, data)); }
+    private static SystemEventBus noEvents() {
+        return new SystemEventBus() {
+            @Override public AutoCloseable subscribe(java.util.function.Consumer<SystemEvent> listener) { return () -> { }; }
+            @Override public void publish(SystemEvent event) { }
+        };
     }
 
     private static final class ManagedResources implements PluginResourceRegistry {

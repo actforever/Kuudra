@@ -20,7 +20,6 @@ import io.github.actforever.kuudra.api.SessionStatus;
 import io.github.actforever.kuudra.api.SourceRegistration;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
-import io.github.actforever.kuudra.logging.KuudraLog;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -46,7 +45,6 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Single-queue Event runtime. Routing into an Allocator or Processor detaches a current Session. */
 public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private static final int MAX_HOPS = 1_024;
-    private static final org.slf4j.Logger LOG = KuudraLog.getLogger(KuudraRuntime.class);
     private final Object monitor = new Object();
     private final Map<String, RegisteredFlow> flows = new HashMap<>();
     private final Map<UUID, ManagedSession> sessions = new HashMap<>();
@@ -67,7 +65,6 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         if (workerThreads < 1) throw new IllegalArgumentException("workerThreads must be positive");
         this.queue = queue; this.globalContext = new AtomicGlobalContext(globalContext); dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
         workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker")); dispatcher.execute(this::dispatchLoop);
-        LOG.info("KuudraRuntime started with {} worker(s)", workerThreads);
     }
 
     public SystemEventBus systemEvents() { return events; }
@@ -352,9 +349,10 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     @Override public void close() {
         if (!running.compareAndSet(true, false)) return;
+        event("runtime.stopping", Map.of());
         for (SourceRegistration registration : sourceRegistrations) try { registration.unregister().toCompletableFuture().join(); } catch (RuntimeException ignored) { }
         synchronized (monitor) { sessions.values().stream().filter(ManagedSession::isActive).forEach(s -> s.cancelled.set(true)); }
-        queue.close(); dispatcher.shutdownNow(); workers.shutdownNow(); LOG.info("KuudraRuntime stopped");
+        queue.close(); dispatcher.shutdownNow(); workers.shutdownNow(); event("runtime.stopped", Map.of());
     }
 
     private record GroupKey(String flowId, String allocatorId, String name, String admissionKey) { }

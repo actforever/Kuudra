@@ -9,6 +9,11 @@
     <artifactId>kuudra-logging</artifactId>
     <dependencies>
         <dependency>
+            <groupId>io.github.actforever</groupId>
+            <artifactId>kuudra-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
         </dependency>

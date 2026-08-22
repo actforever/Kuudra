@@ -26,6 +26,8 @@ import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
 import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
+import io.github.actforever.kuudra.logging.KuudraLog;
+import io.github.actforever.kuudra.logging.KuudraLogSession;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -52,6 +54,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
     private AutoCloseable runtimeEvents;
+    private KuudraLogSession logSession;
     private AppStatus status = AppStatus.NEW;
     private String detail = "not started";
 
@@ -107,6 +110,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Files.createDirectories(homeDirectory);
         Files.createDirectories(homeDirectory.resolve("plugins"));
         Files.createDirectories(homeDirectory.resolve("flows"));
+        Files.createDirectories(homeDirectory.resolve("logs"));
         Path homeConfigFile = homeDirectory.resolve("config.yaml");
         if (Files.exists(homeConfigFile) && !Files.isRegularFile(homeConfigFile)) {
             throw new IOException("Kuudra home configuration is not a regular file: " + homeConfigFile);
@@ -124,20 +128,25 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     @Override public synchronized void start() {
         if (status == AppStatus.RUNNING || status == AppStatus.STARTING) return;
-        status = AppStatus.STARTING; publish("app.starting");
         try {
+            Path home = bootstrapConfig == null ? Path.of(".kuudra") : bootstrapConfig.homeDirectory();
+            logSession = KuudraLog.openSession(home.resolve("logs"), events);
+            status = AppStatus.STARTING; publish("app.starting");
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
+            events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads)));
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
-            plugins = new DefaultPluginManager(homes, runtime::registerSource);
+            plugins = new DefaultPluginManager(homes, runtime::registerSource, events);
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) applyConfiguration(bootstrapConfig);
             detail = ""; publish("app.running");
         } catch (RuntimeException failure) {
             releaseResources();
-            status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
+            status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); closeLogSession(); throw failure;
+        } catch (IOException failure) {
+            status = AppStatus.FAILED; detail = failure.toString(); closeLogSession(); throw new IllegalStateException("Failed to initialize Kuudra logging", failure);
         }
     }
 
@@ -147,6 +156,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         try {
             releaseResources();
             status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
+            closeLogSession();
         } catch (RuntimeException failure) {
             status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
         }
@@ -191,12 +201,16 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (managed.registration == null) {
             if (managed.source == null) managed.source = requirePlugins().createComponent(componentReference("event-source", managed.componentReference), EventSource.class);
             managed.registration = requireRuntime().registerSource(flowId, managed.targetNodeId, managed.source).toCompletableFuture().join();
+            events.publish(SystemEvent.of("resource.event-source.started", Map.of("flowId", flowId, "resourceId", resourceId, "target", managed.targetNodeId)));
         }
         return managed.snapshot();
     }
     public synchronized Resource stopEventSource(String flowId, String resourceId) {
         ManagedEventSource managed = requireEventSource(flowId, resourceId);
-        if (managed.registration != null) { managed.registration.unregister().toCompletableFuture().join(); managed.registration = null; }
+        if (managed.registration != null) {
+            managed.registration.unregister().toCompletableFuture().join(); managed.registration = null;
+            events.publish(SystemEvent.of("resource.event-source.stopped", Map.of("flowId", flowId, "resourceId", resourceId)));
+        }
         return managed.snapshot();
     }
     public Optional<Session> session(UUID sessionId) { return requireRuntime().session(sessionId).map(KuudraApp::session); }
@@ -206,8 +220,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException { return requireRuntime().awaitNoActiveSessions(timeout); }
 
     public synchronized void loadPlugin(Path archive) throws IOException {
+        events.publish(SystemEvent.of("plugin.archive.loading", Map.of("archive", archive.toAbsolutePath().normalize().toString())));
         PluginArchiveLoader.LoadedArchive loaded = new PluginArchiveLoader().load(archive, KuudraApp.class.getClassLoader());
-        try { requirePlugins().register(loaded.plugin()); archives.add(loaded); }
+        try {
+            requirePlugins().register(loaded.plugin()); archives.add(loaded);
+            events.publish(SystemEvent.of("plugin.archive.loaded", Map.of("archive", archive.toAbsolutePath().normalize().toString(), "pluginId", loaded.plugin().metadata().id())));
+        }
         catch (RuntimeException error) { try { loaded.close(); } catch (IOException closeError) { error.addSuppressed(closeError); } throw error; }
     }
     public java.util.concurrent.CompletionStage<Void> startPlugins() { return requirePlugins().startAll(); }
@@ -243,12 +261,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         try {
             Path pluginDirectory = config.homeDirectory().resolve("plugins");
             Files.createDirectories(pluginDirectory);
+            events.publish(SystemEvent.of("plugin.scan.started", Map.of("directory", pluginDirectory.toString())));
             List<Path> pluginArchives;
             try (var files = Files.list(pluginDirectory)) {
                 pluginArchives = files.filter(Files::isRegularFile)
                         .filter(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
                         .sorted().toList();
             }
+            events.publish(SystemEvent.of("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size())));
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
             for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
@@ -275,6 +295,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         plugins = null;
         runtimeEvents = null;
         globalContext = Map.of();
+    }
+
+    private void closeLogSession() {
+        if (logSession == null) return;
+        try { logSession.close(); } finally { logSession = null; }
     }
 
     private KuudraFlow compile(KuudraConfig.FlowConfig definition) {

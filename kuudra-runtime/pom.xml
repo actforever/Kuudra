@@ -14,11 +14,6 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.github.actforever</groupId>
-            <artifactId>kuudra-logging</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>

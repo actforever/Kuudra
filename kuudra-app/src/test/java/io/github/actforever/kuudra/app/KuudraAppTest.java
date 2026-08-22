@@ -68,6 +68,18 @@ class KuudraAppTest {
         assertEquals(userConfiguration, Files.readString(home.resolve("config.yaml")));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
         assertTrue(Files.isDirectory(home.resolve("flows")));
+        assertTrue(Files.isDirectory(home.resolve("logs")));
+        assertTrue(Files.notExists(home.resolve("logs/latest.log")));
+        Path archive;
+        try (var files = Files.list(home.resolve("logs"))) {
+            archive = files.filter(path -> path.getFileName().toString().endsWith(".log.gz")).findFirst().orElseThrow();
+        }
+        try (var input = new java.util.zip.GZIPInputStream(Files.newInputStream(archive))) {
+            String log = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(log.contains("app.running"));
+            assertTrue(log.contains("plugin.scan.completed"));
+            assertTrue(log.contains("app.stopped"));
+        }
     }
 
     @Test
@@ -81,6 +93,7 @@ class KuudraAppTest {
         assertTrue(Files.readString(home.resolve("config.yaml")).contains("home-directory: .kuudra"));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
         assertTrue(Files.isDirectory(home.resolve("flows")));
+        assertTrue(Files.isDirectory(home.resolve("logs")));
     }
 
     @Test
