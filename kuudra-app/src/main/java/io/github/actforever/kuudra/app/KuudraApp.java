@@ -66,7 +66,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             KuudraBanner.print();
             runtime = new KuudraRuntime(queueCapacity, workerThreads);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
-            plugins = new DefaultPluginManager(Path.of("plugins", "homes"), runtime::registerSource);
+            plugins = new DefaultPluginManager(Path.of(".kuudra", "plugin-homes"), runtime::registerSource);
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) applyConfiguration(bootstrapConfig);
             detail = ""; publish("app.running");
