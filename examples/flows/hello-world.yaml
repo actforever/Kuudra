@@ -1,6 +1,11 @@
 id: hello-world
 
-nodes:
+components:
+  loop-emitter:
+    type: event-source
+    component: event-source/hello-world/loop-emitter
+    target: session
+    enabled: true
   session:
     type: session-allocator
     options:
@@ -11,10 +16,6 @@ nodes:
     type: actor
     component: actor/hello-world/console-printer
 
-edges:
+routes:
   - from: session
     to: print
-
-sources:
-  - component: event-source/hello-world/loop-emitter
-    targetNodeId: session

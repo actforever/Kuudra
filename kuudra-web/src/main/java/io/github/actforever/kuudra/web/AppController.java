@@ -30,13 +30,18 @@ class AppController {
     @PostMapping("/stop") AppSnapshot stop() { app.stop(); return app.snapshot(); }
     @PostMapping("/restart") AppSnapshot restart() { app.restart(); return app.snapshot(); }
     @GetMapping("/flows") List<KuudraApp.Flow> flows() { return app.flows(); }
-    @GetMapping("/flows/{flowId}") KuudraApp.Flow flow(@PathVariable String flowId) { return app.flow(flowId).orElseThrow(() -> notFound("Flow", flowId)); }
-    @PostMapping("/flows/{flowId}/start") KuudraApp.Flow startFlow(@PathVariable String flowId) { app.activateFlow(flowId); return flow(flowId); }
-    @PostMapping("/flows/{flowId}/pause") KuudraApp.Flow pauseFlow(@PathVariable String flowId) { app.pauseFlow(flowId); return flow(flowId); }
-    @PostMapping("/flows/{flowId}/resume") KuudraApp.Flow resumeFlow(@PathVariable String flowId) { app.resumeFlow(flowId); return flow(flowId); }
-    @PostMapping("/flows/{flowId}/stop") KuudraApp.Flow stopFlow(@PathVariable String flowId) { app.stopFlow(flowId); return flow(flowId); }
-    @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
-    @PostMapping("/sessions/{sessionId}/cancel") Map<String, Object> cancel(@PathVariable UUID sessionId) { if (!app.cancelSession(sessionId)) throw notFound("active session", sessionId.toString()); return Map.of("sessionId", sessionId.toString(), "cancellationRequested", true); }
+    @GetMapping("/flows/{flowId}") KuudraApp.Flow flow(@PathVariable("flowId") String flowId) { return app.flow(flowId).orElseThrow(() -> notFound("Flow", flowId)); }
+    @PostMapping("/flows/{flowId}/start") KuudraApp.Flow startFlow(@PathVariable("flowId") String flowId) { app.activateFlow(flowId); return flow(flowId); }
+    @PostMapping("/flows/{flowId}/pause") KuudraApp.Flow pauseFlow(@PathVariable("flowId") String flowId) { app.pauseFlow(flowId); return flow(flowId); }
+    @PostMapping("/flows/{flowId}/resume") KuudraApp.Flow resumeFlow(@PathVariable("flowId") String flowId) { app.resumeFlow(flowId); return flow(flowId); }
+    @PostMapping("/flows/{flowId}/stop") KuudraApp.Flow stopFlow(@PathVariable("flowId") String flowId) { app.stopFlow(flowId); return flow(flowId); }
+    @GetMapping("/resources/event-sources") List<KuudraApp.Resource> eventSources() { return app.eventSources(); }
+    @GetMapping("/flows/{flowId}/resources/event-sources") List<KuudraApp.Resource> flowEventSources(@PathVariable("flowId") String flowId) { return call(() -> app.eventSources(flowId), "Flow", flowId); }
+    @GetMapping("/flows/{flowId}/resources/event-sources/{resourceId}") KuudraApp.Resource eventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.eventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/start") KuudraApp.Resource startEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.startEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/stop") KuudraApp.Resource stopEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.stopEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
+    @PostMapping("/sessions/{sessionId}/cancel") Map<String, Object> cancel(@PathVariable("sessionId") UUID sessionId) { if (!app.cancelSession(sessionId)) throw notFound("active session", sessionId.toString()); return Map.of("sessionId", sessionId.toString(), "cancellationRequested", true); }
     @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events() {
         SseEmitter emitter = new SseEmitter(0L);
@@ -45,5 +50,6 @@ class AppController {
         emitter.onCompletion(cleanup); emitter.onTimeout(cleanup); emitter.onError(error -> cleanup.run()); return emitter;
     }
     private static void send(SseEmitter emitter, SystemEvent event) { try { emitter.send(SseEmitter.event().id(event.id().toString()).name(event.type()).data(event)); } catch (IOException failure) { emitter.completeWithError(failure); } }
+    private static <T> T call(java.util.concurrent.Callable<T> call, String type, String id) { try { return call.call(); } catch (IllegalArgumentException error) { throw notFound(type, id); } catch (Exception error) { throw new IllegalStateException(error); } }
     private static ResponseStatusException notFound(String type, String id) { return new ResponseStatusException(HttpStatus.NOT_FOUND, type + " not found: " + id); }
 }

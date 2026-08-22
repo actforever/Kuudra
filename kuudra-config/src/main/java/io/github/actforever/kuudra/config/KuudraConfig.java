@@ -19,7 +19,7 @@ public final class KuudraConfig {
         public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }
     }
 
-    /** Declarative Event graph. Component references use type/namespace/name. */
+    /** Compose-style Flow scope: named components plus their routing graph. */
     public record FlowConfig(String id, Map<String, NodeConfig> nodes, List<EdgeConfig> edges, List<SourceBinding> sources) {
         public FlowConfig {
             if (id == null || id.isBlank()) throw new IllegalArgumentException("flow id must not be blank");
@@ -39,10 +39,11 @@ public final class KuudraConfig {
     public record EdgeConfig(String from, String to) {
         public EdgeConfig { if (from == null || from.isBlank() || to == null || to.isBlank()) throw new IllegalArgumentException("edge endpoints must not be blank"); }
     }
-    /** Associates an EventSource component reference with a first Flow node. */
-    public record SourceBinding(String component, String targetNodeId) {
+    /** A named EventSource resource in a Flow scope. */
+    public record SourceBinding(String id, String component, String targetNodeId, boolean enabled) {
         public SourceBinding {
-            if (component == null || component.isBlank() || targetNodeId == null || targetNodeId.isBlank()) throw new IllegalArgumentException("source binding values must not be blank");
+            if (id == null || id.isBlank() || component == null || component.isBlank() || targetNodeId == null || targetNodeId.isBlank()) throw new IllegalArgumentException("source binding values must not be blank");
         }
+        public SourceBinding(String component, String targetNodeId) { this(component, component, targetNodeId, true); }
     }
 }

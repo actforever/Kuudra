@@ -47,6 +47,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private Map<String, Object> globalContext = Map.of();
     private final SystemEventBus events = new SimpleSystemEventBus();
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
+    private final Map<ResourceKey, ManagedEventSource> eventSources = new LinkedHashMap<>();
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
     private AutoCloseable runtimeEvents;
@@ -66,6 +67,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (resource == null || !resource.getProtocol().equals("file")) return createDefault();
         try { return createConfigured(Path.of(resource.toURI())); }
         catch (URISyntaxException error) { throw new IOException("Invalid classpath kuudra.yaml location", error); }
+    }
+    /** App-owned configuration precedence: explicit environment, JVM property, then classpath development defaults. */
+    public static KuudraApp createFromDefaultLocations() throws IOException {
+        String environment = System.getenv("KUUDRA_CONFIG_PATH");
+        if (environment != null && !environment.isBlank()) return createConfigured(Path.of(environment));
+        String property = System.getProperty("kuudra.config.path");
+        if (property != null && !property.isBlank()) return createConfigured(Path.of(property));
+        return createDefaultOrClasspathConfigured();
     }
 
     @Override public synchronized void start() {
@@ -118,6 +127,33 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public void pauseFlow(String flowId) { requireRuntime().pauseFlow(flowId); }
     public void resumeFlow(String flowId) { requireRuntime().resumeFlow(flowId); }
     public void stopFlow(String flowId) { requireRuntime().stopFlow(flowId); }
+    /** Event sources are independently controllable resources; a Flow groups them but does not start/stop them implicitly. */
+    public synchronized List<Resource> eventSources() { return eventSources.values().stream().map(ManagedEventSource::snapshot).toList(); }
+    public synchronized List<Resource> eventSources(String flowId) {
+        requireRuntime().flow(flowId).orElseThrow(() -> new IllegalArgumentException("Unknown Flow: " + flowId));
+        return eventSources.values().stream().filter(source -> source.key.flowId.equals(flowId)).map(ManagedEventSource::snapshot).toList();
+    }
+    public synchronized Resource eventSource(String flowId, String resourceId) { return requireEventSource(flowId, resourceId).snapshot(); }
+    /** Programmatic counterpart of a compose-style event-source component declaration. */
+    public synchronized Resource declareEventSource(String flowId, String resourceId, EventSource source, String targetNodeId) {
+        requireRuntime().flow(flowId).orElseThrow(() -> new IllegalArgumentException("Unknown Flow: " + flowId));
+        ResourceKey key = new ResourceKey(flowId, resourceId);
+        if (eventSources.putIfAbsent(key, new ManagedEventSource(key, null, targetNodeId, source)) != null) throw new IllegalArgumentException("Duplicate EventSource resource: " + flowId + "/" + resourceId);
+        return requireEventSource(flowId, resourceId).snapshot();
+    }
+    public synchronized Resource startEventSource(String flowId, String resourceId) {
+        ManagedEventSource managed = requireEventSource(flowId, resourceId);
+        if (managed.registration == null) {
+            if (managed.source == null) managed.source = requirePlugins().createComponent(managed.componentReference, EventSource.class);
+            managed.registration = requireRuntime().registerSource(flowId, managed.targetNodeId, managed.source).toCompletableFuture().join();
+        }
+        return managed.snapshot();
+    }
+    public synchronized Resource stopEventSource(String flowId, String resourceId) {
+        ManagedEventSource managed = requireEventSource(flowId, resourceId);
+        if (managed.registration != null) { managed.registration.unregister().toCompletableFuture().join(); managed.registration = null; }
+        return managed.snapshot();
+    }
     public Optional<Session> session(UUID sessionId) { return requireRuntime().session(sessionId).map(KuudraApp::session); }
     public boolean cancelSession(UUID sessionId) { return requireRuntime().cancel(sessionId); }
     public void registerFlow(KuudraFlow flow) { requireRuntime().registerFlow(flow); }
@@ -171,7 +207,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             startPlugins().toCompletableFuture().join();
             for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
             for (KuudraConfig.FlowConfig flow : config.flows().values()) {
-                for (KuudraConfig.SourceBinding source : flow.sources()) installEventSource(source.component(), flow.id(), source.targetNodeId()).toCompletableFuture().join();
+                for (KuudraConfig.SourceBinding source : flow.sources()) {
+                    ResourceKey key = new ResourceKey(flow.id(), source.id());
+                    if (eventSources.putIfAbsent(key, new ManagedEventSource(key, source.component(), source.targetNodeId(), null)) != null) throw new IllegalArgumentException("Duplicate EventSource resource: " + flow.id() + "/" + source.id());
+                    if (source.enabled()) startEventSource(flow.id(), source.id());
+                }
             }
         } catch (IOException | RuntimeException error) {
             throw new IllegalStateException("Failed to apply Kuudra configuration", error);
@@ -183,6 +223,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (plugins != null) try { plugins.close(); } catch (RuntimeException ignored) { }
         for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
         archives.clear();
+        eventSources.clear();
         if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
         runtime = null;
         plugins = null;
@@ -217,4 +258,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, String name, String admissionKey, String status, boolean cancellationRequested, java.util.Set<UUID> parentSessionIds) { }
+    public record Resource(String flowId, String id, String type, String component, String target, String status) { }
+    private ManagedEventSource requireEventSource(String flowId, String resourceId) {
+        ManagedEventSource source = eventSources.get(new ResourceKey(flowId, resourceId));
+        if (source == null) throw new IllegalArgumentException("Unknown EventSource resource: " + flowId + "/" + resourceId);
+        return source;
+    }
+    private record ResourceKey(String flowId, String id) { }
+    private static final class ManagedEventSource {
+        private final ResourceKey key; private final String componentReference; private final String targetNodeId;
+        private EventSource source; private SourceRegistration registration;
+        private ManagedEventSource(ResourceKey key, String componentReference, String targetNodeId, EventSource source) { this.key = key; this.componentReference = componentReference; this.targetNodeId = targetNodeId; this.source = source; }
+        private Resource snapshot() { return new Resource(key.flowId, key.id, "event-source", componentReference == null ? "<programmatic>" : componentReference, targetNodeId, registration == null ? "STOPPED" : "RUNNING"); }
+    }
 }

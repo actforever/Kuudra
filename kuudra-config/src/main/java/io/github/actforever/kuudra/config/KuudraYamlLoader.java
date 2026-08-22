@@ -35,7 +35,8 @@ public final class KuudraYamlLoader {
     }
 
     private static Map<String, KuudraConfig.FlowConfig> loadFlows(Path directory) throws IOException {
-        if (!Files.isDirectory(directory)) throw new IOException("Flow directory does not exist: " + directory);
+        if (!Files.exists(directory)) return Map.of();
+        if (!Files.isDirectory(directory)) throw new IOException("Flow directory is not a directory: " + directory);
         Map<String, KuudraConfig.FlowConfig> result = new LinkedHashMap<>();
         try (Stream<Path> files = Files.list(directory)) {
             for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".yaml") || path.getFileName().toString().endsWith(".yml")).sorted().toList()) {
@@ -48,15 +49,27 @@ public final class KuudraYamlLoader {
     private static KuudraConfig.FlowConfig flow(Map<String, Object> map) throws IOException {
         String id = string(required(map, "id"), "id");
         Map<String, KuudraConfig.NodeConfig> nodes = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> entry : optionalMapping(map, "nodes").entrySet()) {
+        Map<String, Object> componentDefinitions = map.containsKey("components") ? optionalMapping(map, "components") : optionalMapping(map, "nodes");
+        for (Map.Entry<String, Object> entry : componentDefinitions.entrySet()) {
             Map<String, Object> node = mapping(entry.getValue(), "node " + entry.getKey());
+            if ("event-source".equals(node.get("type"))) continue;
             nodes.put(entry.getKey(), new KuudraConfig.NodeConfig(entry.getKey(), string(required(node, "type"), "node.type"),
                     node.containsKey("component") ? string(node.get("component"), "node.component") : null, optionalMapping(node, "options")));
         }
         List<KuudraConfig.EdgeConfig> edges = new ArrayList<>();
-        for (Object item : list(map.get("edges"))) { Map<String, Object> edge = mapping(item, "edge"); edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to"))); }
+        for (Object item : list(map.containsKey("routes") ? map.get("routes") : map.get("edges"))) { Map<String, Object> edge = mapping(item, "edge"); edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to"))); }
         List<KuudraConfig.SourceBinding> sources = new ArrayList<>();
-        for (Object item : list(map.get("sources"))) { Map<String, Object> source = mapping(item, "source"); sources.add(new KuudraConfig.SourceBinding(string(required(source, "component"), "source.component"), string(required(source, "targetNodeId"), "source.targetNodeId"))); }
+        if (map.containsKey("components")) {
+            for (Map.Entry<String, Object> entry : componentDefinitions.entrySet()) {
+                Map<String, Object> component = mapping(entry.getValue(), "component " + entry.getKey());
+                if ("event-source".equals(component.get("type"))) {
+                    sources.add(new KuudraConfig.SourceBinding(entry.getKey(), string(required(component, "component"), "component.component"),
+                            string(required(component, "target"), "component.target"), bool(component.get("enabled"), true)));
+                }
+            }
+        } else {
+            for (Object item : list(map.get("sources"))) { Map<String, Object> source = mapping(item, "source"); String component = string(required(source, "component"), "source.component"); sources.add(new KuudraConfig.SourceBinding(string(source.getOrDefault("id", component), "source.id"), component, string(required(source, "targetNodeId"), "source.targetNodeId"), bool(source.get("enabled"), true))); }
+        }
         return new KuudraConfig.FlowConfig(id, nodes, edges, sources);
     }
     private static Object read(Path file) throws IOException { try (Reader reader = Files.newBufferedReader(file)) { return new Yaml().load(reader); } }
@@ -72,4 +85,5 @@ public final class KuudraYamlLoader {
     private static Object required(Map<String, Object> map, String key) throws IOException { Object value = map.get(key); if (value == null) throw new IOException("Missing required value: " + key); return value; }
     private static String string(Object value, String location) throws IOException { if (!(value instanceof String text) || text.isBlank()) throw new IOException("Expected non-blank string at " + location); return text; }
     private static int integer(Map<String, Object> map, String key, int fallback) throws IOException { Object value = map.get(key); if (value == null) return fallback; if (value instanceof Number number) return number.intValue(); try { return Integer.parseInt(string(value, key)); } catch (NumberFormatException error) { throw new IOException("Expected integer at " + key, error); } }
+    private static boolean bool(Object value, boolean fallback) throws IOException { if (value == null) return fallback; if (value instanceof Boolean flag) return flag; if (value instanceof String text) return Boolean.parseBoolean(text); throw new IOException("Expected boolean"); }
 }

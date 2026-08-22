@@ -1,0 +1,11 @@
+# Lowest-priority development configuration. External KUUDRA_CONFIG_PATH overrides this file.
+runtime:
+  queueCapacity: 1024
+  workerThreads: 2
+
+plugins:
+  directories: []
+  homeDirectory: .kuudra/plugin-homes
+
+flowsDirectory: flows
+globalContext: {}

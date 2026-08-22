@@ -28,7 +28,12 @@ class KuudraConfigTest {
                 """);
         Files.writeString(flows.resolve("demo.yaml"), """
                 id: demo
-                nodes:
+                components:
+                  source:
+                    type: event-source
+                    component: event-source/demo/source
+                    target: allocate
+                    enabled: false
                   allocate:
                     type: session-allocator
                     options:
@@ -37,18 +42,17 @@ class KuudraConfigTest {
                   actor:
                     type: actor
                     component: actor/demo/print
-                edges:
+                routes:
                   - from: allocate
                     to: actor
-                sources:
-                  - component: event-source/demo/source
-                    targetNodeId: allocate
                 """);
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("kuudra.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
         assertEquals(directory.resolve(".kuudra/plugin-homes").toAbsolutePath().normalize(), config.pluginHomeDirectory());
         assertEquals("demo", config.flows().get("demo").id());
         assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
+        assertEquals("source", config.flows().get("demo").sources().get(0).id());
+        assertEquals(false, config.flows().get("demo").sources().get(0).enabled());
     }
     @Test
     void rejectsPluginComponentOmissionForNonCoreNodes() {

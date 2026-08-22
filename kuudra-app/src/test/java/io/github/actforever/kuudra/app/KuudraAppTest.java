@@ -2,6 +2,15 @@ package io.github.actforever.kuudra.app;
 
 import org.junit.jupiter.api.Test;
 
+import io.github.actforever.kuudra.api.EventEmitter;
+import io.github.actforever.kuudra.api.EventSource;
+import io.github.actforever.kuudra.runtime.FlowNode;
+import io.github.actforever.kuudra.runtime.KuudraFlow;
+
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class KuudraAppTest {
@@ -14,6 +23,25 @@ class KuudraAppTest {
             assertEquals("STOPPED", app.snapshot().status().name());
             app.start();
             assertEquals("RUNNING", app.snapshot().status().name());
+        }
+    }
+
+    @Test
+    void eventSourceIsAnIndependentlyControllableFlowResource() {
+        AtomicInteger starts = new AtomicInteger();
+        AtomicInteger stops = new AtomicInteger();
+        EventSource source = new EventSource() {
+            @Override public void setEmitter(EventEmitter emitter) { }
+            @Override public java.util.concurrent.CompletionStage<Void> start() { starts.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+            @Override public java.util.concurrent.CompletionStage<Void> stop() { stops.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+        };
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            app.registerFlow(new KuudraFlow("flow", Map.of("sink", new FlowNode.AdapterNode("sink", (event, context) -> java.util.List.of(event))), Map.of()));
+            assertEquals("STOPPED", app.declareEventSource("flow", "input", source, "sink").status());
+            assertEquals("RUNNING", app.startEventSource("flow", "input").status());
+            assertEquals("STOPPED", app.stopEventSource("flow", "input").status());
+            assertEquals(1, starts.get());
+            assertEquals(1, stops.get());
         }
     }
 }
