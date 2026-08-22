@@ -1,0 +1,20 @@
+id: hello-world
+
+nodes:
+  session:
+    type: session-allocator
+    options:
+      name: hello-world-loop
+      admissionKey: hello-world-loop
+      policy: IGNORE
+  print:
+    type: actor
+    component: actor/hello-world/console-printer
+
+edges:
+  - from: session
+    to: print
+
+sources:
+  - component: event-source/hello-world/loop-emitter
+    targetNodeId: session

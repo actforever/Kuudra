@@ -1,5 +1,0 @@
-id = "hello-world-source"
-namespace = "hello-world"
-version = "0.1.0"
-entrypoint = "io.github.actforever.kuudra.demo.hello.HelloWorldPlugin"
-dependencies = []

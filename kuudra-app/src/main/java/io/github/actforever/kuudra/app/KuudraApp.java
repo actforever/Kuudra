@@ -3,16 +3,25 @@ package io.github.actforever.kuudra.app;
 import io.github.actforever.kuudra.api.AppLifecycle;
 import io.github.actforever.kuudra.api.AppSnapshot;
 import io.github.actforever.kuudra.api.AppStatus;
+import io.github.actforever.kuudra.api.Actor;
 import io.github.actforever.kuudra.api.Event;
+import io.github.actforever.kuudra.api.EventAdapter;
+import io.github.actforever.kuudra.api.EventProcessor;
 import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.SessionSnapshot;
 import io.github.actforever.kuudra.api.SourceRegistration;
+import io.github.actforever.kuudra.api.SessionPolicy;
+import io.github.actforever.kuudra.api.SessionSpec;
+import io.github.actforever.kuudra.api.ParentTerminationPolicy;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
 import io.github.actforever.kuudra.plugin.DefaultPluginManager;
 import io.github.actforever.kuudra.plugin.PluginArchiveLoader;
 import io.github.actforever.kuudra.plugin.PluginComponentRegistry;
+import io.github.actforever.kuudra.config.KuudraConfig;
+import io.github.actforever.kuudra.config.KuudraYamlLoader;
+import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
 import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
@@ -22,13 +31,18 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.file.Files;
+import java.util.LinkedHashMap;
 
 /** Framework-independent App facade. Its lifecycle owns a Runtime but not any HTTP/Web/TUI adapter. */
 public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final int queueCapacity;
     private final int workerThreads;
+    private final KuudraConfig.RuntimeConfig bootstrapConfig;
+    private Map<String, Object> globalContext = Map.of();
     private final SystemEventBus events = new SimpleSystemEventBus();
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
     private KuudraRuntime runtime;
@@ -37,8 +51,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private AppStatus status = AppStatus.NEW;
     private String detail = "not started";
 
-    public KuudraApp(int queueCapacity, int workerThreads) { this.queueCapacity = queueCapacity; this.workerThreads = workerThreads; start(); }
+    public KuudraApp(int queueCapacity, int workerThreads) { this(queueCapacity, workerThreads, null); }
+    private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig) { this.queueCapacity = queueCapacity; this.workerThreads = workerThreads; this.bootstrapConfig = bootstrapConfig; start(); }
     public static KuudraApp createDefault() { return new KuudraApp(1_024, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)); }
+    public static KuudraApp createConfigured(Path configFile) throws IOException {
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(configFile);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+    }
 
     @Override public synchronized void start() {
         if (status == AppStatus.RUNNING || status == AppStatus.STARTING) return;
@@ -48,8 +67,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             runtime = new KuudraRuntime(queueCapacity, workerThreads);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
             plugins = new DefaultPluginManager(Path.of("plugins", "homes"), runtime::registerSource);
-            status = AppStatus.RUNNING; detail = ""; publish("app.running");
+            status = AppStatus.RUNNING;
+            if (bootstrapConfig != null) applyConfiguration(bootstrapConfig);
+            detail = ""; publish("app.running");
         } catch (RuntimeException failure) {
+            releaseResources();
             status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
         }
     }
@@ -58,12 +80,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (status == AppStatus.STOPPED || status == AppStatus.NEW) return;
         status = AppStatus.STOPPING; publish("app.stopping");
         try {
-            if (plugins != null) plugins.close();
-            for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
-            archives.clear();
-            if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
-            if (runtime != null) runtime.close();
-            runtime = null; plugins = null; runtimeEvents = null; status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
+            releaseResources();
+            status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
         } catch (RuntimeException failure) {
             status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
         }
@@ -81,6 +99,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     public SystemEventBus systemEvents() { return events; }
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
+    public synchronized Map<String, Object> globalContext() { return globalContext; }
 
     public List<Flow> flows() { return requireRuntime().flows().stream().map(KuudraApp::flow).toList(); }
     public Optional<Flow> flow(String flowId) { return requireRuntime().flow(flowId).map(KuudraApp::flow); }
@@ -116,6 +135,64 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Status(AppSnapshot app, List<Flow> flows, int activeSessions) {
         public Status { flows = List.copyOf(flows); }
     }
+
+    /** Loads plugin archives, resolves their metadata dependencies, and assembles every configured Event Flow. */
+    private void applyConfiguration(KuudraConfig.RuntimeConfig config) {
+        try {
+            globalContext = Map.copyOf(config.globalContext());
+            for (Path directory : config.pluginDirectories()) {
+                Files.createDirectories(directory);
+                try (var files = Files.list(directory)) {
+                    for (Path archive : files.filter(path -> path.getFileName().toString().endsWith(".jar")).sorted().toList()) loadPlugin(archive);
+                }
+            }
+            startPlugins().toCompletableFuture().join();
+            for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
+            for (KuudraConfig.FlowConfig flow : config.flows().values()) {
+                for (KuudraConfig.SourceBinding source : flow.sources()) installEventSource(source.component(), flow.id(), source.targetNodeId()).toCompletableFuture().join();
+            }
+        } catch (IOException | RuntimeException error) {
+            throw new IllegalStateException("Failed to apply Kuudra configuration", error);
+        }
+    }
+
+    private void releaseResources() {
+        if (plugins != null) try { plugins.close(); } catch (RuntimeException ignored) { }
+        for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
+        archives.clear();
+        if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
+        if (runtime != null) try { runtime.close(); } catch (RuntimeException ignored) { }
+        runtime = null;
+        plugins = null;
+        runtimeEvents = null;
+        globalContext = Map.of();
+    }
+
+    private KuudraFlow compile(KuudraConfig.FlowConfig definition) {
+        Map<String, FlowNode> nodes = new LinkedHashMap<>();
+        for (KuudraConfig.NodeConfig node : definition.nodes().values()) {
+            FlowNode compiled = switch (node.type()) {
+                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), pluginComponents().create(node.component(), EventAdapter.class));
+                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), pluginComponents().create(node.component(), EventProcessor.class));
+                case "actor" -> new FlowNode.ActorNode(node.id(), pluginComponents().create(node.component(), Actor.class));
+                case "session-allocator" -> new FlowNode.AllocatorNode(node.id(), sessionSpec(node));
+                default -> throw new IllegalArgumentException("Unsupported Flow node type: " + node.type());
+            };
+            nodes.put(node.id(), compiled);
+        }
+        Map<String, List<String>> edges = new LinkedHashMap<>();
+        for (KuudraConfig.EdgeConfig edge : definition.edges()) edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
+        return new KuudraFlow(definition.id(), nodes, edges);
+    }
+    private static SessionSpec sessionSpec(KuudraConfig.NodeConfig node) {
+        Map<String, Object> options = node.options();
+        String name = text(options.getOrDefault("name", node.id()));
+        String admissionKey = text(options.getOrDefault("admissionKey", "default"));
+        SessionPolicy policy = SessionPolicy.valueOf(text(options.getOrDefault("policy", SessionPolicy.PARALLEL.name())));
+        ParentTerminationPolicy parent = ParentTerminationPolicy.valueOf(text(options.getOrDefault("parentTerminationPolicy", ParentTerminationPolicy.NONE.name())));
+        return new SessionSpec(name, admissionKey, policy, parent);
+    }
+    private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, String name, String admissionKey, String status, boolean cancellationRequested, java.util.Set<UUID> parentSessionIds) { }
 }

@@ -1,0 +1,12 @@
+runtime:
+  queueCapacity: 1024
+  workerThreads: 2
+
+plugins:
+  directories:
+    - plugins
+
+flowsDirectory: flows
+
+globalContext:
+  profile: hello-world

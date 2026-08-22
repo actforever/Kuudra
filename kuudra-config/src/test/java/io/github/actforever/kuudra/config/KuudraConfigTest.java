@@ -1,21 +1,53 @@
 package io.github.actforever.kuudra.config;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KuudraConfigTest {
+    @TempDir Path directory;
+
     @Test
-    void modelsAnEventGraphWithoutChoosingASerializationFormat() {
-        KuudraConfig.FlowConfig flow = new KuudraConfig.FlowConfig("demo", Map.of(
-                "normalize", new KuudraConfig.NodeConfig("normalize", "event-adapter", "event-adapter/input/normalize", Map.of()),
-                "allocate", new KuudraConfig.NodeConfig("allocate", "session-allocator", null, Map.of("policy", "PARALLEL"))
-        ), List.of(new KuudraConfig.EdgeConfig("normalize", "allocate")), List.of(new KuudraConfig.SourceBinding("event-source/input/keyboard", "normalize")));
-        assertEquals("demo", flow.id()); assertEquals("session-allocator", flow.nodes().get("allocate").type());
+    void loadsRuntimeAndFlowYamlFiles() throws Exception {
+        Path flows = Files.createDirectory(directory.resolve("flows"));
+        Files.writeString(directory.resolve("kuudra.yaml"), """
+                runtime:
+                  queueCapacity: 32
+                  workerThreads: 2
+                plugins:
+                  directories: [plugins]
+                flowsDirectory: flows
+                globalContext:
+                  profile: demo
+                """);
+        Files.writeString(flows.resolve("demo.yaml"), """
+                id: demo
+                nodes:
+                  allocate:
+                    type: session-allocator
+                    options:
+                      name: demo
+                      policy: PARALLEL
+                  actor:
+                    type: actor
+                    component: actor/demo/print
+                edges:
+                  - from: allocate
+                    to: actor
+                sources:
+                  - component: event-source/demo/source
+                    targetNodeId: allocate
+                """);
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("kuudra.yaml"));
+        assertEquals(32, config.runtime().queueCapacity());
+        assertEquals("demo", config.flows().get("demo").id());
+        assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
     }
     @Test
     void rejectsPluginComponentOmissionForNonCoreNodes() {

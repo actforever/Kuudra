@@ -3,6 +3,9 @@ spring:
     name: kuudra-web
 server:
   port: 8080
+kuudra:
+  config:
+    path: ${KUUDRA_CONFIG_PATH:}
 knife4j:
   enable: true
 springdoc:

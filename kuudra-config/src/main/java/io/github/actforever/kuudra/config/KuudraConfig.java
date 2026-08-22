@@ -1,5 +1,6 @@
 package io.github.actforever.kuudra.config;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -11,8 +12,11 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from kuudra.yaml and the definitions in flows/. */
-    public record RuntimeConfig(Map<String, String> plugins, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
-        public RuntimeConfig { plugins = Map.copyOf(plugins); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
+    public record RuntimeConfig(RuntimeSettings runtime, List<Path> pluginDirectories, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+        public RuntimeConfig { pluginDirectories = List.copyOf(pluginDirectories); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
+    }
+    public record RuntimeSettings(int queueCapacity, int workerThreads) {
+        public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }
     }
 
     /** Declarative Event graph. Component references use type/namespace/name. */
