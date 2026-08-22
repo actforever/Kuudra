@@ -75,4 +75,29 @@ class KuudraRuntimeTest {
             assertTrue(stopped.get());
         }
     }
+
+    @Test
+    void resolvesNodeConfigurationAgainstEventSessionAndGlobalContexts() throws Exception {
+        CountDownLatch observed = new CountDownLatch(1);
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1, Map.of("profile", "demo"))) {
+            runtime.registerFlow(new KuudraFlow("flow", Map.of(
+                    "allocate", new FlowNode.AllocatorNode("allocate", new SessionSpec("session", "key", SessionPolicy.PARALLEL)),
+                    "set", new FlowNode.ActorNode("set", (event, context) -> {
+                        context.sessionContext().update(values -> Map.of("mode", "hold"));
+                        context.emit(Event.of("derived", EventData.of("input", Map.of("key", "A"))));
+                        return CompletableFuture.completedFuture(null);
+                    }),
+                    "inspect", new FlowNode.ActorNode("inspect", (event, context) -> {
+                        assertEquals("A", context.configuration().get("key"));
+                        assertEquals("hold", context.configuration().get("mode"));
+                        assertEquals("demo", context.configuration().get("profile"));
+                        assertEquals("flow:derived", context.configuration().get("label"));
+                        observed.countDown();
+                        return CompletableFuture.completedFuture(null);
+                    }, Map.of("key", "${event.data.input.key}", "mode", "${session.values.mode}", "profile", "${global.profile}", "label", "${flow.id}:${event.type}"))
+            ), Map.of("allocate", List.of("set"), "set", List.of("inspect"))));
+            assertTrue(runtime.publish("flow", "allocate", Event.of("root", EventData.empty())));
+            assertTrue(observed.await(1, TimeUnit.SECONDS));
+        }
+    }
 }

@@ -8,4 +8,6 @@ public record PluginComponentContext(String componentReference, PluginContext pl
         if (componentReference == null || componentReference.isBlank()) throw new IllegalArgumentException("componentReference must not be blank");
         Objects.requireNonNull(plugin, "plugin");
     }
+
+    public java.nio.file.Path pluginHome() { return plugin.pluginHome(); }
 }

@@ -6,6 +6,7 @@ import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.FlowStatus;
 import io.github.actforever.kuudra.api.ParentTerminationPolicy;
+import io.github.actforever.kuudra.api.PlaceholderResolver;
 import io.github.actforever.kuudra.api.RuntimeStateView;
 import io.github.actforever.kuudra.api.SessionContext;
 import io.github.actforever.kuudra.api.SessionReference;
@@ -51,12 +52,15 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private final ExecutorService dispatcher;
     private final ExecutorService workers;
     private final SimpleSystemEventBus events = new SimpleSystemEventBus();
+    private final Map<String, Object> globalContext;
     private final AtomicBoolean running = new AtomicBoolean(true);
 
-    public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads); }
-    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) {
+    public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of()); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String, Object> globalContext) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globalContext); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) { this(queue, workerThreads, Map.of()); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String, Object> globalContext) {
         if (workerThreads < 1) throw new IllegalArgumentException("workerThreads must be positive");
-        this.queue = queue; dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
+        this.queue = queue; this.globalContext = Map.copyOf(globalContext); dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
         workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker")); dispatcher.execute(this::dispatchLoop);
         LOG.info("KuudraRuntime started with {} worker(s)", workerThreads);
     }
@@ -193,9 +197,11 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         if (node instanceof FlowNode.AllocatorNode allocator) {
             allocate(flow, allocator, task.event()); finishTask(owner, null); return CompletableFuture.completedFuture(null);
         }
-        EventContext context = owner == null
-                ? new EventContext(flow.id(), null, Map.of(), null, () -> false)
-                : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get);
+        EventContext baseContext = owner == null
+                ? new EventContext(flow.id(), null, Map.of(), null, () -> false, globalContext, Map.of())
+                : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get, globalContext, Map.of());
+        EventContext context = new EventContext(baseContext.flowId(), baseContext.session(), baseContext.sessionValues(), baseContext.sessionContext(),
+                baseContext.cancellationToken(), globalContext, PlaceholderResolver.resolveMap(configurationOf(node), task.event(), baseContext));
         if (node instanceof FlowNode.ActorNode actor) {
             return actor.apply(task.event(), context, output -> emitFromActor(flow, actor, task.event(), output)).handle((ignored, error) -> {
                 finishTask(owner, error); return null;
@@ -212,6 +218,13 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             } catch (RuntimeException failure) { finishTask(owner, failure); throw failure; }
             return null;
         });
+    }
+
+    private static Map<String, Object> configurationOf(FlowNode node) {
+        if (node instanceof FlowNode.AdapterNode adapter) return adapter.configuration();
+        if (node instanceof FlowNode.ProcessorNode processor) return processor.configuration();
+        if (node instanceof FlowNode.ActorNode actor) return actor.configuration();
+        return Map.of();
     }
 
     /** Actor emissions may occur before its CompletionStage completes; delivery keeps the Session alive. */

@@ -64,7 +64,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         status = AppStatus.STARTING; publish("app.starting");
         try {
             KuudraBanner.print();
-            runtime = new KuudraRuntime(queueCapacity, workerThreads);
+            globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
+            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugin-homes") : bootstrapConfig.pluginHomeDirectory();
             plugins = new DefaultPluginManager(homes, runtime::registerSource);
@@ -140,7 +141,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     /** Loads plugin archives, resolves their metadata dependencies, and assembles every configured Event Flow. */
     private void applyConfiguration(KuudraConfig.RuntimeConfig config) {
         try {
-            globalContext = Map.copyOf(config.globalContext());
             for (Path directory : config.pluginDirectories()) {
                 Files.createDirectories(directory);
                 try (var files = Files.list(directory)) {
@@ -173,9 +173,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Map<String, FlowNode> nodes = new LinkedHashMap<>();
         for (KuudraConfig.NodeConfig node : definition.nodes().values()) {
             FlowNode compiled = switch (node.type()) {
-                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(node.component(), EventAdapter.class));
-                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(node.component(), EventProcessor.class));
-                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(node.component(), Actor.class));
+                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(node.component(), EventAdapter.class), node.options());
+                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(node.component(), EventProcessor.class), node.options());
+                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(node.component(), Actor.class), node.options());
                 case "session-allocator" -> new FlowNode.AllocatorNode(node.id(), sessionSpec(node));
                 default -> throw new IllegalArgumentException("Unsupported Flow node type: " + node.type());
             };

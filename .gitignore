@@ -40,3 +40,5 @@ build/
 kuudra-hello-plugin/
 examples/plugins/
 plugins/
+.kuudra/
+examples/.kuudra/

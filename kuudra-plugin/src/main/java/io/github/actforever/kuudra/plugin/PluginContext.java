@@ -11,4 +11,7 @@ public record PluginContext(String pluginId, Path home, PluginResourceRegistry r
         Objects.requireNonNull(resources, "resources");
         Objects.requireNonNull(runtime, "runtime");
     }
+
+    /** Explicitly named home-directory API for plugin persistence. */
+    public Path pluginHome() { return home; }
 }

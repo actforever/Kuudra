@@ -4,7 +4,7 @@
 
 - This file is a living handoff document, not a static specification. After an Agent makes an important architectural, module, build, configuration, plugin, lifecycle, or deployment change, update the relevant sections here in the same change set.
 - `docs/` is the project's design and operational documentation. Keep it synchronized with implementation changes; do not treat code as the only source of truth.
-- Preserve unrelated user changes. In particular, `docs/session-arch.png` is currently user-owned and untracked; do not add, remove, or overwrite it unless explicitly requested.
+- Preserve unrelated user changes. `docs/session-arch.png` is a tracked architecture asset; do not overwrite it unless explicitly requested.
 - Use Chinese commit messages. Create a commit at meaningful implementation milestones, after verification.
 
 ## Repository identity and layout
@@ -63,7 +63,7 @@ kuudra-web
 - Examples live in `examples/kuudra.yaml` and `examples/flows/hello-world.yaml`. JARs in `examples/plugins/` are ignored and must be built/copied locally.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 
-Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, placeholder evaluation/injection, reload/migration, richer control-plane Flow behavior, and cross-language bridges remain future work. YAML must preserve `${...}` literals until a future runtime-scoped resolver can evaluate Event, Session, and global context safely. Do not claim them as implemented without adding code, tests, and documentation.
+Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, richer control-plane Flow behavior, and cross-language bridges remain future work. YAML preserves placeholder templates until Runtime resolves them against Event, Session, global and Flow scopes. Supported syntax and limitations are documented in `docs/kuudra-bootstrap.md`; do not change it without matching tests.
 
 ## Build and verification
 

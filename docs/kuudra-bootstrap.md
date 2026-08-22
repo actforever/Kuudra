@@ -19,4 +19,6 @@ KUUDRA_CONFIG_PATH=/absolute/path/kuudra.yaml
 
 任一步失败都会使 App 进入 `FAILED`，并释放已创建的 Runtime、插件与 ClassLoader；不会回退启动旧配置。`POST /api/v1/app/restart` 会使用同一份已读取的配置重新创建内核。
 
-`globalContext` 已由 App 保存为只读上下文。动态占位符解析与向组件注入节点配置仍是后续工作，当前 YAML 加载器不会提前解析 `${...}`，以免在配置加载阶段错误地丢失 Event、Session 等运行时作用域。
+`globalContext` 已由 App 保存为只读上下文。节点 `options` 中的占位符在 Runtime 处理具体 Event 时解析，并通过 `EventContext.configuration()` 或 `ActionContext.configuration()` 注入组件；YAML 加载器只保存模板，绝不提前替换。
+
+支持的作用域为：`${event.id}`、`${event.type}`、`${event.occurredAt}`、`${event.data.<namespace>.<key>}`、`${session.id}`、`${session.flowId}`、`${session.values.<key>}`、`${global.<key>}` 与 `${flow.id}`。完整值 `${...}` 保留原始类型，插入到更长字符串时转换为文本。缺失值或在无 Session 节点中引用 `${session...}` 会使当前事件执行失败并留下明确错误；`session-allocator` 的策略字段在会话创建前就必须确定，因此不支持动态占位符。
