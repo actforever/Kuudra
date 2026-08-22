@@ -3,6 +3,18 @@ spring:
     name: kuudra-web
 server:
   port: 8080
+kuudra:
+  # Spring merges this section with an external application.yaml before Web creates App.
+  # Relative plugin and Flow paths use this directory, normally the directory that launches the JAR.
+  base-directory: .
+  runtime:
+    queueCapacity: 1024
+    workerThreads: 2
+  plugins:
+    directories: []
+    homeDirectory: .kuudra/plugin-homes
+  flowsDirectory: flows
+  globalContext: {}
 knife4j:
   enable: true
 springdoc:

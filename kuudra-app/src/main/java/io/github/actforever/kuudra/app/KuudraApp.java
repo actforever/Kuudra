@@ -20,6 +20,7 @@ import io.github.actforever.kuudra.plugin.DefaultPluginManager;
 import io.github.actforever.kuudra.plugin.PluginArchiveLoader;
 import io.github.actforever.kuudra.plugin.PluginComponentRegistry;
 import io.github.actforever.kuudra.config.KuudraConfig;
+import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.config.KuudraYamlLoader;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
@@ -59,6 +60,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public static KuudraApp createDefault() { return new KuudraApp(1_024, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)); }
     public static KuudraApp createConfigured(Path configFile) throws IOException {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(configFile);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+    }
+    /** Creates App from a host-provided, framework-neutral configuration resource. */
+    public static KuudraApp createConfigured(KuudraConfigResource resource) throws IOException {
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(resource);
         return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
     }
     /** Lowest-priority development configuration: classpath:/kuudra.yaml, when it is backed by a file directory. */

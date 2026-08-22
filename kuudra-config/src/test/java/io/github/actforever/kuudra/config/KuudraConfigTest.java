@@ -58,4 +58,17 @@ class KuudraConfigTest {
     void rejectsPluginComponentOmissionForNonCoreNodes() {
         assertThrows(IllegalArgumentException.class, () -> new KuudraConfig.NodeConfig("actor", "actor", null, Map.of()));
     }
+
+    @Test
+    void loadsFrameworkNeutralConfigurationResource() throws Exception {
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(new KuudraConfigResource(Map.of(
+                "runtime", Map.of("queueCapacity", 48, "workerThreads", 3),
+                "plugins", Map.of("directories", java.util.List.of("plugins")),
+                "globalContext", Map.of("profile", "host")), directory, "host configuration"));
+
+        assertEquals(48, config.runtime().queueCapacity());
+        assertEquals(3, config.runtime().workerThreads());
+        assertEquals(directory.resolve("plugins").toAbsolutePath().normalize(), config.pluginDirectories().get(0));
+        assertEquals("host", config.globalContext().get("profile"));
+    }
 }

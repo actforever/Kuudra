@@ -57,8 +57,8 @@ kuudra-web
   -> Event -> SessionAllocator -> Actor
 ```
 
-- Configuration precedence is owned by `KuudraApp`: `KUUDRA_CONFIG_PATH`, then JVM property `kuudra.config.path`, then the lowest-priority development default `classpath:/kuudra.yaml` when it is filesystem-backed. Web must not implement a parallel resolver.
-- Global YAML contains runtime queue/worker settings, plugin directories, `flowsDirectory`, and `globalContext`. The tracked lowest-priority development configuration is `kuudra-app/src/main/resources/kuudra.yaml`.
+- Standalone App configuration precedence is owned by `KuudraApp`: `KUUDRA_CONFIG_PATH`, then JVM property `kuudra.config.path`, then the lowest-priority development default `classpath:/kuudra.yaml` when it is filesystem-backed. Web is different by design: it injects an `application.yaml` adjacent to its executable JAR as the highest-priority Spring property source, merges `kuudra.*`, then passes a framework-neutral `KuudraConfigResource` to App.
+- Global YAML contains runtime queue/worker settings, plugin directories, `flowsDirectory`, and `globalContext`. `kuudra-app/src/main/resources/kuudra.yaml` is the standalone lowest-priority development configuration; `kuudra-web/src/main/resources/application.yaml` embeds the same App settings under `kuudra:` for Web deployments.
 - Each Flow YAML uses Compose-style `components` and `routes`. An `event-source` component is a separately controlled resource; other node types currently supported by the compiler are `event-adapter`, `event-processor`, `session-allocator`, and `actor`.
 - Flow is a scope for component names, routing and sessions; starting, pausing or stopping a Flow changes its routing/session gate and does not implicitly start or stop its resources. Event sources are queried and controlled through App resource APIs and `/api/v1/app/flows/{flowId}/resources/event-sources/...`.
 - Examples live in `examples/kuudra.yaml` and `examples/flows/hello-world.yaml`. JARs in `examples/plugins/` are ignored and must be built/copied locally.
@@ -95,3 +95,4 @@ For the HelloWorld smoke test: build the plugin, copy its JAR into `examples/plu
 - When changing plugin discovery/metadata/lifecycle, update the plugin module, plugin build instructions, and examples together.
 - HTTP endpoints must be phrased in terms of App. Do not add Runtime-named Web APIs.
 - Resource controls must be modeled as App resources (`type`, Flow scope, resource id, component reference and status). Keep the concrete API resource-oriented so a future `kuudractl get event-source` is a direct adapter rather than a second control model.
+- `KuudraConfigResource` is the framework-neutral App entry point for host-provided, already-merged configuration. Do not add a Spring dependency to `kuudra-app`; any host framework must adapt its configuration environment into this resource.

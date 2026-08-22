@@ -20,8 +20,14 @@ public final class KuudraYamlLoader {
     public static KuudraConfig.RuntimeConfig load(Path file) throws IOException {
         Path configFile = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         if (!Files.isRegularFile(configFile)) throw new IOException("Kuudra configuration does not exist: " + configFile);
-        Path base = configFile.getParent();
-        Map<String, Object> root = mapping(read(configFile), configFile);
+        return load(new KuudraConfigResource(mapping(read(configFile), configFile), configFile.getParent(), configFile.toString()));
+    }
+
+    /** Compiles a framework-neutral configuration resource after its host has merged any overrides. */
+    public static KuudraConfig.RuntimeConfig load(KuudraConfigResource resource) throws IOException {
+        Objects.requireNonNull(resource, "resource");
+        Path base = resource.baseDirectory();
+        Map<String, Object> root = resource.values();
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queueCapacity", 1_024);
         int workerThreads = integer(runtime, "workerThreads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
