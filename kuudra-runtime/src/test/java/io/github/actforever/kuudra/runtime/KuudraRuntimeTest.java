@@ -30,7 +30,7 @@ class KuudraRuntimeTest {
                     "adapter", new FlowNode.AdapterNode("adapter", (event, context) -> List.of(event.retype("input.normalized"))),
                     "processor", new FlowNode.ProcessorNode("processor", (event, context) -> List.of(event.retype("gesture.double"))),
                     "allocate", new FlowNode.AllocatorNode("allocate", new SessionSpec("gesture", "A", SessionPolicy.PARALLEL)),
-                    "actor", new FlowNode.ActorNode("actor", (event, context) -> { type.set(event.type()); assertTrue(event.hasSession()); acted.countDown(); return CompletableFuture.completedFuture(List.of()); })
+                    "actor", new FlowNode.ActorNode("actor", (event, context) -> { type.set(event.type()); assertTrue(event.hasSession()); acted.countDown(); return CompletableFuture.completedFuture(null); })
             ), Map.of("adapter", List.of("processor"), "processor", List.of("allocate"), "allocate", List.of("actor"))));
             assertTrue(runtime.publish("flow", "adapter", Event.of("key.press", EventData.of("input", Map.of("key", "A")))));
             assertTrue(acted.await(1, TimeUnit.SECONDS));
@@ -48,11 +48,11 @@ class KuudraRuntimeTest {
         try (KuudraRuntime runtime = new KuudraRuntime(64, 2)) {
             runtime.registerFlow(new KuudraFlow("flow", Map.of(
                     "allocate", new FlowNode.AllocatorNode("allocate", new SessionSpec("root", "root", SessionPolicy.PARALLEL)),
-                    "first", new FlowNode.ActorNode("first", (event, context) -> { original.set(event.session().id()); return CompletableFuture.completedFuture(List.of(Event.of("actor.output", EventData.empty()))); }),
-                    "same", new FlowNode.ActorNode("same", (event, context) -> { assertEquals(original.get(), event.session().id()); continued.countDown(); return CompletableFuture.completedFuture(List.of(event)); }),
+                    "first", new FlowNode.ActorNode("first", (event, context) -> { original.set(event.session().id()); context.emit(Event.of("actor.output", EventData.empty())); return CompletableFuture.completedFuture(null); }),
+                    "same", new FlowNode.ActorNode("same", (event, context) -> { assertEquals(original.get(), event.session().id()); continued.countDown(); context.emit(event); return CompletableFuture.completedFuture(null); }),
                     "processor", new FlowNode.ProcessorNode("processor", (event, context) -> { assertFalse(event.hasSession()); return List.of(event.retype("derived")); }),
                     "child-allocate", new FlowNode.AllocatorNode("child-allocate", new SessionSpec("child", "child", SessionPolicy.PARALLEL)),
-                    "child", new FlowNode.ActorNode("child", (event, context) -> { childSession.set(event.session().id()); child.countDown(); return CompletableFuture.completedFuture(List.of()); })
+                    "child", new FlowNode.ActorNode("child", (event, context) -> { childSession.set(event.session().id()); child.countDown(); return CompletableFuture.completedFuture(null); })
             ), Map.of("allocate", List.of("first"), "first", List.of("same", "processor"), "processor", List.of("child-allocate"), "child-allocate", List.of("child"))));
             runtime.publish("flow", "allocate", Event.of("root", EventData.empty()));
             assertTrue(continued.await(1, TimeUnit.SECONDS)); assertTrue(child.await(1, TimeUnit.SECONDS));

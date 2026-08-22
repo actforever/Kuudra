@@ -29,6 +29,8 @@ public final class DefaultPluginManager implements AutoCloseable {
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
     private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
+    private final Map<String, PluginContext> contexts = new LinkedHashMap<>();
+    private final List<PluginComponentLifecycle> managedComponents = new ArrayList<>();
     private final Map<String, List<String>> dependencies = new LinkedHashMap<>();
     private final PluginComponentRegistry componentRegistry = new PluginComponentRegistry();
     private List<String> startedOrder = List.of();
@@ -82,6 +84,29 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
     public PluginComponentRegistry components() { return componentRegistry; }
 
+    /** Creates and initializes a Flow-owned component after its plugin is active. */
+    public <T> T createComponent(String reference, Class<T> expectedType) {
+        PluginComponentDefinition definition = componentRegistry.find(reference)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown component: " + reference));
+        final PluginContext context;
+        synchronized (this) {
+            if (states.get(definition.pluginId()) != PluginState.ACTIVE) {
+                throw new IllegalStateException("Plugin is not active for component " + reference);
+            }
+            context = contexts.get(definition.pluginId());
+        }
+        T instance = componentRegistry.create(reference, expectedType);
+        if (instance instanceof PluginComponentLifecycle lifecycle) {
+            try {
+                lifecycle.initialize(new PluginComponentContext(reference, context)).toCompletableFuture().join();
+                synchronized (this) { managedComponents.add(lifecycle); }
+            } catch (RuntimeException error) {
+                throw new IllegalStateException("Failed to initialize component " + reference, error);
+            }
+        }
+        return instance;
+    }
+
     public CompletionStage<Void> startAll() {
         final List<String> order;
         synchronized (this) {
@@ -104,7 +129,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             reverse = new ArrayList<>(startedOrder);
         }
         Collections.reverse(reverse);
-        CompletionStage<Void> chain = CompletableFuture.completedFuture(null);
+        CompletionStage<Void> chain = destroyComponents();
         for (String pluginId : reverse) {
             chain = chain.thenCompose(ignored -> stopAndDestroy(pluginId));
         }
@@ -134,7 +159,9 @@ public final class DefaultPluginManager implements AutoCloseable {
             markFailed(pluginId);
             return CompletableFuture.failedFuture(exception);
         }
-        return invoke(plugin, current -> current.initialize(new PluginContext(pluginId, home, resources.get(pluginId), runtimeServices)))
+        PluginContext context = new PluginContext(pluginId, home, resources.get(pluginId), runtimeServices);
+        return invoke(plugin, current -> current.initialize(context))
+                .thenRun(() -> { synchronized (this) { contexts.put(pluginId, context); } })
                 .thenRun(() -> mark(pluginId, PluginState.INITIALIZED))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> mark(pluginId, PluginState.ACTIVE))
@@ -216,6 +243,23 @@ public final class DefaultPluginManager implements AutoCloseable {
     @Override
     public void close() {
         stopAll().toCompletableFuture().join();
+    }
+
+    private CompletionStage<Void> destroyComponents() {
+        final List<PluginComponentLifecycle> reverse;
+        synchronized (this) {
+            reverse = new ArrayList<>(managedComponents);
+            Collections.reverse(reverse);
+            managedComponents.clear();
+        }
+        CompletionStage<Void> chain = CompletableFuture.completedFuture(null);
+        for (PluginComponentLifecycle component : reverse) {
+            chain = chain.thenCompose(ignored -> {
+                try { return component.destroy(); }
+                catch (RuntimeException error) { return CompletableFuture.failedFuture(error); }
+            });
+        }
+        return chain;
     }
 
     private static final class ManagedResources implements PluginResourceRegistry {

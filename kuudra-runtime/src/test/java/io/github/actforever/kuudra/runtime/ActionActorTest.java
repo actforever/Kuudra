@@ -31,6 +31,6 @@ class ActionActorTest {
             public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) { return data.compareAndSet(expected, replacement); }
             public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> op) { return data.updateAndGet(op); }
         };
-        return new ActionContext(UUID.randomUUID(), "flow", Map.of(), store, () -> false);
+        return new ActionContext(UUID.randomUUID(), "flow", Map.of(), store, () -> false, event -> true);
     }
 }

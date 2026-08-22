@@ -103,6 +103,21 @@ class DefaultPluginManagerTest {
         assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.EventSource.class) instanceof TestSource);
     }
 
+    @Test
+    void componentLifecycleReceivesPluginHomeAndEndsBeforePluginShutdown() {
+        List<String> calls = new ArrayList<>();
+        ManagedTestSource.calls = calls;
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("component-homes"));
+        manager.register(new PluginArchiveLoader.LoadedPlugin(
+                new PluginMetadata("component", "test-plugin", "1.0.0", "example.Plugin", List.of()),
+                new RecordingPlugin("component", List.of(), calls),
+                List.of(new PluginComponentDefinition("component", "test-plugin", PluginComponentKind.EVENT_SOURCE, "managed", ManagedTestSource.class))));
+        manager.startAll().toCompletableFuture().join();
+        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.EventSource.class);
+        manager.close();
+        assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);
+    }
+
     private static class RecordingPlugin implements KuudraPlugin {
         private final String id;
         private final List<String> requires;
@@ -154,5 +169,21 @@ class DefaultPluginManagerTest {
         @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
+    }
+
+    public static final class ManagedTestSource implements io.github.actforever.kuudra.api.EventSource, PluginComponentLifecycle {
+        static List<String> calls;
+        @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter emitter) { }
+        @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
+        @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
+        @Override public CompletionStage<Void> initialize(PluginComponentContext context) {
+            assertTrue(Files.isDirectory(context.plugin().home()));
+            calls.add("component.component.initialize");
+            return CompletableFuture.completedFuture(null);
+        }
+        @Override public CompletionStage<Void> destroy() {
+            calls.add("component.component.destroy");
+            return CompletableFuture.completedFuture(null);
+        }
     }
 }

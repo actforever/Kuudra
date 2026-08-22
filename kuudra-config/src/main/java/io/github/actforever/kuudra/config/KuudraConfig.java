@@ -12,8 +12,8 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from kuudra.yaml and the definitions in flows/. */
-    public record RuntimeConfig(RuntimeSettings runtime, List<Path> pluginDirectories, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
-        public RuntimeConfig { pluginDirectories = List.copyOf(pluginDirectories); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
+    public record RuntimeConfig(RuntimeSettings runtime, List<Path> pluginDirectories, Path pluginHomeDirectory, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+        public RuntimeConfig { pluginDirectories = List.copyOf(pluginDirectories); pluginHomeDirectory = pluginHomeDirectory.toAbsolutePath().normalize(); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads) {
         public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }

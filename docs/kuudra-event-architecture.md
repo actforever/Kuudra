@@ -11,7 +11,7 @@ Kuudra 是单 Runtime、队列驱动的事件编排内核。插件和核心只�
 | `@EventSource` | 无 | 无会话 Event | 从键盘、计时器、网络等外部系统采集事件。 |
 | `@EventAdapter` | Event | Event | 过滤、事件名与属性重映射、占位符解析；可任意串联。 |
 | `@EventProcessor` | 无会话 Event | 无会话 Event | 手势识别、窗口计数、聚合、解释或丢弃。 |
-| `@Actor` | 带会话 Event | Event | 异步执行动作；产生的 Event 默认继承输入会话。 |
+| `@Actor` | 带会话 Event | Event | 异步执行动作；可随时通过 `ActionContext.emit` 产生 Event，默认继承输入会话。 |
 
 `SessionAllocator` 是核心节点而不是插件 SPI。它以 `SessionSpec` 对无会话 Event 执行准入，创建 Session，并输出带会话 Event。
 
@@ -77,6 +77,6 @@ Flow 配置描述节点、边、SessionAllocator 及其策略；Source 绑定描
 
 1. `EventSource` 只能发出无会话 Event。
 2. `EventProcessor` 只观察和产生无会话 Event。
-3. `Actor` 只接收带会话 Event，输出默认继承输入会话。
+3. `Actor` 只接收带会话 Event；它通过 `ActionContext.emit(Event)` 随时输出事件，Runtime 自动附加输入会话与血缘。
 4. 只有 `SessionAllocator` 能创建 Session。
 5. 会话剥离由 Runtime 路由边完成，不由插件决定。

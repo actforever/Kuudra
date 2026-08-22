@@ -66,7 +66,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             KuudraBanner.print();
             runtime = new KuudraRuntime(queueCapacity, workerThreads);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
-            plugins = new DefaultPluginManager(Path.of(".kuudra", "plugin-homes"), runtime::registerSource);
+            Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugin-homes") : bootstrapConfig.pluginHomeDirectory();
+            plugins = new DefaultPluginManager(homes, runtime::registerSource);
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) applyConfiguration(bootstrapConfig);
             detail = ""; publish("app.running");
@@ -121,7 +122,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public java.util.concurrent.CompletionStage<Void> startPlugins() { return requirePlugins().startAll(); }
     public PluginComponentRegistry pluginComponents() { return requirePlugins().components(); }
     public java.util.concurrent.CompletionStage<SourceRegistration> installEventSource(String componentReference, String flowId, String targetNodeId) {
-        EventSource source = requirePlugins().components().create(componentReference, EventSource.class);
+        EventSource source = requirePlugins().createComponent(componentReference, EventSource.class);
         return requireRuntime().registerSource(flowId, targetNodeId, source);
     }
 
@@ -157,11 +158,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private void releaseResources() {
+        if (runtime != null) try { runtime.close(); } catch (RuntimeException ignored) { }
         if (plugins != null) try { plugins.close(); } catch (RuntimeException ignored) { }
         for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
         archives.clear();
         if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
-        if (runtime != null) try { runtime.close(); } catch (RuntimeException ignored) { }
         runtime = null;
         plugins = null;
         runtimeEvents = null;
@@ -172,9 +173,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Map<String, FlowNode> nodes = new LinkedHashMap<>();
         for (KuudraConfig.NodeConfig node : definition.nodes().values()) {
             FlowNode compiled = switch (node.type()) {
-                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), pluginComponents().create(node.component(), EventAdapter.class));
-                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), pluginComponents().create(node.component(), EventProcessor.class));
-                case "actor" -> new FlowNode.ActorNode(node.id(), pluginComponents().create(node.component(), Actor.class));
+                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(node.component(), EventAdapter.class));
+                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(node.component(), EventProcessor.class));
+                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(node.component(), Actor.class));
                 case "session-allocator" -> new FlowNode.AllocatorNode(node.id(), sessionSpec(node));
                 default -> throw new IllegalArgumentException("Unsupported Flow node type: " + node.type());
             };

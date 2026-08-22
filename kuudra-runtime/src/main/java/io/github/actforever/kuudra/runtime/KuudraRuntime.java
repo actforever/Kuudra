@@ -196,9 +196,13 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         EventContext context = owner == null
                 ? new EventContext(flow.id(), null, Map.of(), null, () -> false)
                 : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get);
+        if (node instanceof FlowNode.ActorNode actor) {
+            return actor.apply(task.event(), context, output -> emitFromActor(flow, actor, task.event(), output)).handle((ignored, error) -> {
+                finishTask(owner, error); return null;
+            });
+        }
         CompletionStage<List<Event>> stage = node instanceof FlowNode.AdapterNode adapter ? adapter.apply(task.event(), context)
-                : node instanceof FlowNode.ProcessorNode processor ? processor.apply(task.event(), context)
-                : ((FlowNode.ActorNode) node).apply(task.event(), context);
+                : ((FlowNode.ProcessorNode) node).apply(task.event(), context);
         return stage.handle((emitted, error) -> {
             if (error != null) { finishTask(owner, error); return null; }
             try {
@@ -208,6 +212,19 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             } catch (RuntimeException failure) { finishTask(owner, failure); throw failure; }
             return null;
         });
+    }
+
+    /** Actor emissions may occur before its CompletionStage completes; delivery keeps the Session alive. */
+    private boolean emitFromActor(KuudraFlow flow, FlowNode.ActorNode actor, Event input, Event output) {
+        try {
+            Event normalized = normalize(actor, input, List.of(output)).get(0);
+            boolean accepted = false;
+            for (String next : flow.next(actor.id())) accepted |= enqueue(flow, next, normalized);
+            return accepted;
+        } catch (RuntimeException error) {
+            event("actor.emit.rejected", Map.of("flowId", flow.id(), "actorId", actor.id(), "error", error.toString()));
+            return false;
+        }
     }
 
     private List<Event> normalize(FlowNode node, Event input, List<Event> emitted) {

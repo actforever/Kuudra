@@ -27,7 +27,7 @@ The tracked Maven reactor is:
 
 `plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations, currently containing `kuudra-hello-world-plugin`. It is not part of the Kuudra core reactor. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts to be available in the local Maven repository.
 
-Runtime-created plugin homes live under `.kuudra/plugin-homes`, not under `plugins/`. Do not reintroduce that collision.
+Runtime-created plugin homes default to `.kuudra/plugin-homes`, but can be set by `plugins.homeDirectory`. A plugin home is created only when that plugin enters initialization. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce a collision with the build-only `plugins/` directory.
 
 ## Architecture decisions already made
 
@@ -37,8 +37,8 @@ Runtime-created plugin homes live under `.kuudra/plugin-homes`, not under `plugi
 - Actor-originated Events normally inherit their session when routed directly to another Actor. Routing an event back to an EventProcessor or SessionAllocator detaches its session and records lineage, so a new child session can be allocated.
 - Component references must use `type/namespace/name`, for example `event-source/hello-world/loop-emitter` and `actor/hello-world/console-printer`.
 - A `KuudraFlow` is the runtime scheduling unit. A single `KuudraRuntime` is owned by the active `KuudraApp`.
-- Actors execute asynchronously. Ordering is preserved within one session by default; independent sessions may proceed in parallel.
-- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, isolated ClassLoaders, annotation-discovered components, and declared dependency ordering. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
+- Actors execute asynchronously. `Actor.act` returns `CompletionStage<Void>` and may call `ActionContext.emit(Event)` at any point; Runtime automatically applies the current Session and lineage. Ordering is preserved within one session by default; independent sessions may proceed in parallel.
+- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, isolated ClassLoaders, annotation-discovered components, and declared dependency ordering. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
 - `kuudra-web` is an adapter only. Its lifecycle is conceptually independent from App lifecycle: stopping App closes Runtime/plugins but must not make HTTP lifecycle endpoints disappear.
 
 See `docs/kuudra-event-architecture.md`, `docs/kuudra-architecture.md`, and `docs/kuudra-app-management.md` before changing these boundaries.
@@ -63,7 +63,7 @@ kuudra-web
 - Examples live in `examples/kuudra.yaml` and `examples/flows/hello-world.yaml`. JARs in `examples/plugins/` are ignored and must be built/copied locally.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 
-Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, placeholder evaluation/injection, reload/migration, richer control-plane Flow behavior, and cross-language bridges remain future work. Do not claim them as implemented without adding code, tests, and documentation.
+Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, placeholder evaluation/injection, reload/migration, richer control-plane Flow behavior, and cross-language bridges remain future work. YAML must preserve `${...}` literals until a future runtime-scoped resolver can evaluate Event, Session, and global context safely. Do not claim them as implemented without adding code, tests, and documentation.
 
 ## Build and verification
 

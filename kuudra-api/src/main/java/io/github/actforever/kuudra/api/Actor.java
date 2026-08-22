@@ -1,9 +1,12 @@
 package io.github.actforever.kuudra.api;
 
 import java.util.concurrent.CompletionStage;
-import java.util.List;
 
 @FunctionalInterface
 public interface Actor {
-    CompletionStage<List<Event>> act(Event event, ActionContext context);
+    /**
+     * Handles one session-bound Event. Use {@link ActionContext#emit(Event)} to
+     * publish derived Events at any point during asynchronous execution.
+     */
+    CompletionStage<Void> act(Event event, ActionContext context);
 }

@@ -46,6 +46,7 @@ class KuudraConfigTest {
                 """);
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("kuudra.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
+        assertEquals(directory.resolve(".kuudra/plugin-homes").toAbsolutePath().normalize(), config.pluginHomeDirectory());
         assertEquals("demo", config.flows().get("demo").id());
         assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
     }

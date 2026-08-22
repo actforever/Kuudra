@@ -8,7 +8,7 @@
 KUUDRA_CONFIG_PATH=/absolute/path/kuudra.yaml
 ```
 
-全局配置示例见 [examples/kuudra.yaml](../examples/kuudra.yaml)，Flow 示例见 [examples/flows/hello-world.yaml](../examples/flows/hello-world.yaml)。其中的 `plugins` 路径相对 `kuudra.yaml` 所在目录解析，Flow 目录同理。
+全局配置示例见 [examples/kuudra.yaml](../examples/kuudra.yaml)，Flow 示例见 [examples/flows/hello-world.yaml](../examples/flows/hello-world.yaml)。`plugins.directories` 和 `plugins.homeDirectory` 都相对 `kuudra.yaml` 所在目录解析；前者存放待扫描的 JAR，后者仅在对应插件真正初始化时才创建其 `<plugin-id>/` 家目录。未声明插件目录的空 App 不会创建任何插件目录。
 
 启动顺序如下：
 
@@ -19,4 +19,4 @@ KUUDRA_CONFIG_PATH=/absolute/path/kuudra.yaml
 
 任一步失败都会使 App 进入 `FAILED`，并释放已创建的 Runtime、插件与 ClassLoader；不会回退启动旧配置。`POST /api/v1/app/restart` 会使用同一份已读取的配置重新创建内核。
 
-`globalContext` 已由 App 保存为只读上下文；占位符解析和向插件动作注入仍是后续工作，当前最小内核不把它隐式注入组件。
+`globalContext` 已由 App 保存为只读上下文。动态占位符解析与向组件注入节点配置仍是后续工作，当前 YAML 加载器不会提前解析 `${...}`，以免在配置加载阶段错误地丢失 Event、Session 等运行时作用域。

@@ -27,9 +27,10 @@ public final class KuudraYamlLoader {
         int workerThreads = integer(runtime, "workerThreads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
         Map<String, Object> plugins = optionalMapping(root, "plugins");
         List<Path> pluginDirectories = strings(plugins.get("directories")).stream().map(value -> base.resolve(value).normalize()).toList();
+        Path pluginHomeDirectory = base.resolve(string(plugins.getOrDefault("homeDirectory", ".kuudra/plugin-homes"), "plugins.homeDirectory")).normalize();
         String flowsDirectory = string(root.getOrDefault("flowsDirectory", "flows"), "flowsDirectory");
         Map<String, KuudraConfig.FlowConfig> flows = loadFlows(base.resolve(flowsDirectory).normalize());
-        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), pluginDirectories,
+        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), pluginDirectories, pluginHomeDirectory,
                 optionalMapping(root, "globalContext"), flows);
     }
 

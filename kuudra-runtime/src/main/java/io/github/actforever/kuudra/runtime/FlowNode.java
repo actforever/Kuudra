@@ -9,6 +9,7 @@ import io.github.actforever.kuudra.api.SessionSpec;
 
 import java.util.List;
 import java.util.Objects;
+import io.github.actforever.kuudra.api.EventEmitter;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -29,9 +30,9 @@ public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.Processo
     }
     record ActorNode(String id, Actor actor) implements FlowNode {
         public ActorNode { requireId(id); Objects.requireNonNull(actor, "actor"); }
-        CompletionStage<List<Event>> apply(Event event, EventContext context) {
+        CompletionStage<Void> apply(Event event, EventContext context, EventEmitter emitter) {
             if (!event.hasSession()) return CompletableFuture.failedFuture(new IllegalArgumentException("Actor requires a session-bound Event"));
-            return actor.act(event, new io.github.actforever.kuudra.api.ActionContext(event.session().id(), event.session().flowId(), context.sessionValues(), context.sessionContext(), context.cancellationToken()));
+            return actor.act(event, new io.github.actforever.kuudra.api.ActionContext(event.session().id(), event.session().flowId(), context.sessionValues(), context.sessionContext(), context.cancellationToken(), emitter));
         }
     }
     private static void requireId(String id) { if (id == null || id.isBlank()) throw new IllegalArgumentException("node id must not be blank"); }

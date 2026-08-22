@@ -25,11 +25,11 @@ public final class KuudraPluginDemo {
                     "allocate", new FlowNode.AllocatorNode("allocate", new SessionSpec("hello", "periodic", SessionPolicy.PARALLEL)),
                     "print", new FlowNode.ActorNode("print", (event, context) -> {
                         System.out.println("Plugin event: " + event.data().require("hello-world", "message")); threeSignals.countDown();
-                        return CompletableFuture.completedFuture(List.of()); })
+                        return CompletableFuture.completedFuture(null); })
             ), Map.of("allocate", List.of("print"))));
             app.loadPlugin(archive);
-            app.installEventSource("event-source/hello-world/loop-emitter", "hello-flow", "allocate").toCompletableFuture().join();
             app.startPlugins().toCompletableFuture().join();
+            app.installEventSource("event-source/hello-world/loop-emitter", "hello-flow", "allocate").toCompletableFuture().join();
             if (!threeSignals.await(2, TimeUnit.SECONDS) || !app.awaitNoActiveSessions(Duration.ofSeconds(2))) throw new IllegalStateException("HelloWorld source did not emit three events");
         }
         System.out.println("Kuudra plugin demo completed successfully.");
