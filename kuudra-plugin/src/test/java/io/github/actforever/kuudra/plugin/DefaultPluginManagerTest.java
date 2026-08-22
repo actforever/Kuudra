@@ -81,6 +81,26 @@ class DefaultPluginManagerTest {
                 "resource.second.close", "resource.first.close"), calls);
     }
 
+    @Test
+    void metadataDependenciesAndAnnotatedComponentsBecomeConfigurationResources() throws Exception {
+        PluginMetadata metadata = PluginMetadataToml.read(new java.io.ByteArrayInputStream("""
+                id = "annotated"
+                version = "1.0.0"
+                entrypoint = "example.Plugin"
+                dependencies = ["base"]
+                """.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertEquals(List.of("base"), metadata.dependencies());
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("annotated"));
+        List<String> calls = new ArrayList<>();
+        manager.register(new RecordingPlugin("base", List.of(), calls));
+        manager.register(new PluginArchiveLoader.LoadedPlugin(metadata, new RecordingPlugin("annotated", List.of(), calls),
+                List.of(new PluginComponentDefinition("annotated", PluginComponentKind.SIGNAL_SOURCE, "test-source", TestSource.class))));
+        manager.startAll().toCompletableFuture().join();
+        assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
+        assertEquals("annotated", manager.components().find("signal-source/test-source").orElseThrow().pluginId());
+        assertTrue(manager.components().create("signal-source/test-source", io.github.actforever.kuudra.api.RawSignalSource.class) instanceof TestSource);
+    }
+
     private static class RecordingPlugin implements KuudraPlugin {
         private final String id;
         private final List<String> requires;
@@ -125,5 +145,12 @@ class DefaultPluginManagerTest {
             calls.add(id + ".destroy");
             return CompletableFuture.completedFuture(null);
         }
+    }
+
+    @io.github.actforever.kuudra.plugin.annotation.SignalSource("test-source")
+    public static final class TestSource implements io.github.actforever.kuudra.api.RawSignalSource {
+        @Override public void setEmitter(io.github.actforever.kuudra.api.RawSignalEmitter emitter) { }
+        @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
+        @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
     }
 }

@@ -3,6 +3,7 @@ package io.github.actforever.kuudra.app;
 import io.github.actforever.kuudra.api.ActionResult;
 import io.github.actforever.kuudra.api.RawSignal;
 import io.github.actforever.kuudra.api.SessionSpec;
+import io.github.actforever.kuudra.api.SignalData;
 import io.github.actforever.kuudra.config.KuudraConfig;
 import io.github.actforever.kuudra.runtime.ActionActor;
 import io.github.actforever.kuudra.runtime.FlowNode;
@@ -67,7 +68,7 @@ public final class KuudraDemo {
             this.inputType = inputType; this.key = key; this.window = window; this.outputType = outputType;
         }
         @Override public synchronized List<RawSignal> process(RawSignal raw) {
-            if (!raw.type().equals(inputType) || !key.equals(raw.payload().get("key"))) return List.of(raw);
+            if (!raw.type().equals(inputType) || !key.equals(raw.payload().require(SignalData.CORE_NAMESPACE, "key"))) return List.of(raw);
             if (first != null && !raw.occurredAt().isAfter(first.plus(window))) {
                 first = null;
                 return List.of(new RawSignal(raw.id(), outputType, raw.occurredAt(), raw.payload()));

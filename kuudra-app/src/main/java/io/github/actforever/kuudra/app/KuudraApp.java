@@ -2,11 +2,22 @@ package io.github.actforever.kuudra.app;
 
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.SessionSnapshot;
+import io.github.actforever.kuudra.api.RawSignalSource;
+import io.github.actforever.kuudra.api.SourceRegistration;
+import io.github.actforever.kuudra.plugin.DefaultPluginManager;
+import io.github.actforever.kuudra.plugin.PluginArchiveLoader;
+import io.github.actforever.kuudra.plugin.PluginComponentRegistry;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
+import io.github.actforever.kuudra.runtime.IngressPipeline;
+import io.github.actforever.kuudra.runtime.KuudraFlow;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Duration;
 
 /**
  * Framework-independent application facade that composes the Kuudra core.
@@ -14,10 +25,13 @@ import java.util.UUID;
  */
 public final class KuudraApp implements AutoCloseable {
     private final KuudraRuntime runtime;
+    private final DefaultPluginManager plugins;
+    private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
 
     public KuudraApp(int queueCapacity, int workerThreads) {
         KuudraBanner.print();
         runtime = new KuudraRuntime(queueCapacity, workerThreads);
+        plugins = new DefaultPluginManager(Path.of("plugins", "homes"), runtime::registerSource);
     }
 
     public static KuudraApp createDefault() {
@@ -49,7 +63,45 @@ public final class KuudraApp implements AutoCloseable {
         return runtime.cancel(sessionId);
     }
 
-    @Override public void close() { runtime.close(); }
+    /** Application assembly API used by configuration compilers, not by transport adapters. */
+    public void registerFlow(KuudraFlow flow) { runtime.registerFlow(flow); }
+    public void registerIngress(IngressPipeline pipeline) { runtime.registerIngress(pipeline); }
+    public boolean publishRaw(String ingressPipelineId, io.github.actforever.kuudra.api.RawSignal signal) { return runtime.publishRaw(ingressPipelineId, signal); }
+    public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException { return runtime.awaitNoActiveSessions(timeout); }
+
+    /** Loads and validates plugin metadata, dependencies and annotated component definitions. */
+    public synchronized void loadPlugin(Path archive) throws IOException {
+        PluginArchiveLoader.LoadedArchive loaded = new PluginArchiveLoader().load(archive, KuudraApp.class.getClassLoader());
+        try {
+            plugins.register(loaded.plugin());
+            archives.add(loaded);
+        } catch (RuntimeException error) {
+            try { loaded.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
+            throw error;
+        }
+    }
+
+    public java.util.concurrent.CompletionStage<Void> startPlugins() { return plugins.startAll(); }
+    public PluginComponentRegistry pluginComponents() { return plugins.components(); }
+
+    /**
+     * Configuration assembly hook: resolves a plugin declaration such as
+     * {@code signal-source/hello-world}, constructs it, then attaches it to an ingress pipeline.
+     */
+    public java.util.concurrent.CompletionStage<SourceRegistration> installSignalSource(String componentReference, String ingressPipelineId) {
+        RawSignalSource source = plugins.components().create(componentReference, RawSignalSource.class);
+        return runtime.registerSource(ingressPipelineId, source);
+    }
+
+    @Override
+    public synchronized void close() {
+        try { plugins.close(); }
+        finally {
+            for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
+            archives.clear();
+            runtime.close();
+        }
+    }
 
     private static Flow flow(FlowSnapshot snapshot) {
         return new Flow(snapshot.flowId(), snapshot.status().name(), snapshot.activeSessions(), snapshot.deferredTasks());

@@ -4,6 +4,7 @@ import io.github.actforever.kuudra.api.RawSignal;
 import io.github.actforever.kuudra.api.RawSignalEmitter;
 import io.github.actforever.kuudra.api.RawSignalSource;
 import io.github.actforever.kuudra.api.SourceRegistration;
+import io.github.actforever.kuudra.api.SignalData;
 import io.github.actforever.kuudra.plugin.KuudraPlugin;
 import io.github.actforever.kuudra.plugin.PluginContext;
 import io.github.actforever.kuudra.plugin.PluginDescriptor;
@@ -46,7 +47,8 @@ public final class HelloWorldPlugin implements KuudraPlugin {
         return registration == null ? CompletableFuture.completedFuture(null) : registration.unregister();
     }
 
-    private static final class HelloWorldSource implements RawSignalSource {
+    @io.github.actforever.kuudra.plugin.annotation.SignalSource("hello-world")
+    public static final class HelloWorldSource implements RawSignalSource {
         private final AtomicBoolean started = new AtomicBoolean();
         private ScheduledExecutorService scheduler;
         private RawSignalEmitter emitter;
@@ -58,7 +60,7 @@ public final class HelloWorldPlugin implements KuudraPlugin {
             if (!started.compareAndSet(false, true)) return CompletableFuture.completedFuture(null);
             scheduler = Executors.newSingleThreadScheduledExecutor(r -> new Thread(r, "kuudra-hello-source"));
             scheduler.scheduleAtFixedRate(() -> emitter.emit(new RawSignal(UUID.randomUUID(), SIGNAL_TYPE, Instant.now(),
-                    Map.of("message", "HelloWorld"))), 0, 100, TimeUnit.MILLISECONDS);
+                    SignalData.of("hello-world-source", Map.of("message", "HelloWorld")))), 0, 100, TimeUnit.MILLISECONDS);
             return CompletableFuture.completedFuture(null);
         }
 

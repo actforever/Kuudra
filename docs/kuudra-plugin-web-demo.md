@@ -2,13 +2,18 @@
 
 ## 定时 HelloWorld 插件
 
-`kuudra-hello-plugin` 是一个独立 JAR。它通过 `META-INF/services` 声明 `KuudraPlugin`，由 `PluginArchiveLoader` 的独立 `URLClassLoader` 和 `ServiceLoader` 发现。启动时，插件经受限 `PluginRuntimeServices` 注册一个 `RawSignalSource`；该信号源每 100ms 发送一次：
+`kuudra-hello-plugin` 是一个独立 JAR。它通过 `META-INF/kuudra-plugin/metadata.toml` 声明 `id`、`version`、`entrypoint` 与 `dependencies`，由 `PluginArchiveLoader` 的独立 `URLClassLoader` 加载。元数据依赖决定启动拓扑；缺失依赖与循环依赖都会拒绝激活。
+
+插件资源使用 `@SignalSource`、`@SignalProcessor`、`@SignalAdapter`、`@Actor`、`@Action` 等注解声明。加载器扫描归档并注册配置引用，例如 `signal-source/hello-world`；`KuudraApp.installSignalSource` 是配置编译器把该引用装配到 Runtime ingress 的唯一入口。启动时，HelloWorld 插件经受限 `PluginRuntimeServices` 注册一个 `RawSignalSource`；该信号源每 100ms 发送一次：
 
 ```yaml
 type: demo.hello-world
 payload:
-  message: HelloWorld
+  hello-world-source:
+    message: HelloWorld
 ```
+
+所有 Signal payload 都由不可变 `SignalData` 承载。插件按自身 ID 写入命名空间（例如 `hello-world-source.message`），读取时必须指定命名空间和键，因此链路中的不同插件不能无意覆盖彼此的数据。
 
 插件停止时注销 source 并关闭定时线程。运行端到端 Demo：
 

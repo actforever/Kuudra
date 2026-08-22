@@ -29,6 +29,8 @@ public final class DefaultPluginManager implements AutoCloseable {
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
     private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
+    private final Map<String, List<String>> dependencies = new LinkedHashMap<>();
+    private final PluginComponentRegistry componentRegistry = new PluginComponentRegistry();
     private List<String> startedOrder = List.of();
 
     public DefaultPluginManager(Path pluginsHome) {
@@ -41,6 +43,17 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
 
     public synchronized void register(KuudraPlugin plugin) {
+        register(plugin, plugin.descriptor().requires(), List.of());
+    }
+
+    /** Register a plugin loaded from metadata.toml; metadata dependencies are authoritative. */
+    public synchronized void register(PluginArchiveLoader.LoadedPlugin loaded) {
+        Objects.requireNonNull(loaded, "loaded");
+        if (!loaded.instance().id().equals(loaded.metadata().id())) throw new IllegalArgumentException("Plugin id and metadata id must match");
+        register(loaded.instance(), loaded.metadata().dependencies(), loaded.components());
+    }
+
+    private void register(KuudraPlugin plugin, List<String> required, List<PluginComponentDefinition> components) {
         Objects.requireNonNull(plugin, "plugin");
         PluginDescriptor descriptor = plugin.descriptor();
         if (!descriptor.id().equals(plugin.id())) {
@@ -50,8 +63,10 @@ public final class DefaultPluginManager implements AutoCloseable {
             throw new IllegalArgumentException("Plugin already registered: " + plugin.id());
         }
         plugins.put(plugin.id(), plugin);
+        dependencies.put(plugin.id(), List.copyOf(required));
         states.put(plugin.id(), PluginState.REGISTERED);
         resources.put(plugin.id(), new ManagedResources());
+        components.forEach(componentRegistry::register);
     }
 
     public synchronized PluginState state(String pluginId) {
@@ -65,6 +80,7 @@ public final class DefaultPluginManager implements AutoCloseable {
     public synchronized Map<String, PluginState> states() {
         return Map.copyOf(states);
     }
+    public PluginComponentRegistry components() { return componentRegistry; }
 
     public CompletionStage<Void> startAll() {
         final List<String> order;
@@ -189,7 +205,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         if (plugin == null) {
             throw new IllegalStateException("Required plugin is not registered: " + pluginId);
         }
-        for (String dependency : plugin.descriptor().requires()) {
+        for (String dependency : dependencies.get(pluginId)) {
             visit(dependency, visited, visiting, order);
         }
         visiting.remove(pluginId);
