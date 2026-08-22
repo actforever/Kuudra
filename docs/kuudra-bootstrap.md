@@ -8,6 +8,8 @@
 KUUDRA_CONFIG_PATH=/absolute/path/kuudra.yaml
 ```
 
+未显式提供该环境变量时，App 会检查最低优先级的开发配置 `classpath:/kuudra.yaml`。仅当该资源位于普通文件目录时才加载，以便同时读取相邻的 `flows/`；显式 `KUUDRA_CONFIG_PATH` 始终优先。
+
 全局配置示例见 [examples/kuudra.yaml](../examples/kuudra.yaml)，Flow 示例见 [examples/flows/hello-world.yaml](../examples/flows/hello-world.yaml)。`plugins.directories` 和 `plugins.homeDirectory` 都相对 `kuudra.yaml` 所在目录解析；前者存放待扫描的 JAR，后者仅在对应插件真正初始化时才创建其 `<plugin-id>/` 家目录。未声明插件目录的空 App 不会创建任何插件目录。
 
 启动顺序如下：

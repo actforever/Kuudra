@@ -38,7 +38,7 @@ Runtime-created plugin homes default to `.kuudra/plugin-homes`, but can be set b
 - Component references must use `type/namespace/name`, for example `event-source/hello-world/loop-emitter` and `actor/hello-world/console-printer`.
 - A `KuudraFlow` is the runtime scheduling unit. A single `KuudraRuntime` is owned by the active `KuudraApp`.
 - Actors execute asynchronously. `Actor.act` returns `CompletionStage<Void>` and may call `ActionContext.emit(Event)` at any point; Runtime automatically applies the current Session and lineage. Ordering is preserved within one session by default; independent sessions may proceed in parallel.
-- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, isolated ClassLoaders, annotation-discovered components, and declared dependency ordering. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
+- Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, dependency-aware ClassLoaders, annotation-discovered components, and declared dependency ordering. A dependency plugin's classes/resources are visible to its dependents; cycles and missing dependency archives are errors. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
 - `kuudra-web` is an adapter only. Its lifecycle is conceptually independent from App lifecycle: stopping App closes Runtime/plugins but must not make HTTP lifecycle endpoints disappear.
 
 See `docs/kuudra-event-architecture.md`, `docs/kuudra-architecture.md`, and `docs/kuudra-app-management.md` before changing these boundaries.
@@ -57,13 +57,13 @@ kuudra-web
   -> Event -> SessionAllocator -> Actor
 ```
 
-- `KUUDRA_CONFIG_PATH` points `kuudra-web` to a `kuudra.yaml`; without it, Web creates an empty App that can still be controlled through HTTP.
+- `KUUDRA_CONFIG_PATH` points `kuudra-web` to a `kuudra.yaml`. With no explicit path, `classpath:/kuudra.yaml` is the reserved lowest-priority development configuration when it is filesystem-backed; otherwise Web creates an empty App.
 - Global YAML contains runtime queue/worker settings, plugin directories, `flowsDirectory`, and `globalContext`.
 - Each Flow YAML declares nodes, edges, and source bindings. Node types currently supported by the compiler: `event-adapter`, `event-processor`, `session-allocator`, `actor`.
 - Examples live in `examples/kuudra.yaml` and `examples/flows/hello-world.yaml`. JARs in `examples/plugins/` are ignored and must be built/copied locally.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 
-Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, richer control-plane Flow behavior, and cross-language bridges remain future work. YAML preserves placeholder templates until Runtime resolves them against Event, Session, global and Flow scopes. Supported syntax and limitations are documented in `docs/kuudra-bootstrap.md`; do not change it without matching tests.
+Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, `kuudra.system.*` Event handling, and cross-language bridges remain future work. All Flows are peers; do not reintroduce a control-plane Flow without an explicit architecture decision. YAML preserves placeholder templates until Runtime resolves them against Event, Session, global and Flow scopes. Supported syntax and limitations are documented in `docs/kuudra-bootstrap.md`; do not change it without matching tests.
 
 ## Build and verification
 

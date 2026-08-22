@@ -1,5 +1,9 @@
 # Kuudra 架构说明
 
+## Flow 与系统控制
+
+所有 KuudraFlow 处于同一运行层级，不设置具有特殊权限的控制平面 Flow。后续系统控制将以 `kuudra.system.*` 内置 Event 表达：普通 Flow 可产生控制请求，Runtime 负责验证并执行暂停 Flow、停止 Flow、请求取消 Session 等内置操作。
+
 Kuudra 的当前内核以单一 `Event` 和单一 `KuudraTaskQueue` 驱动。完整的组件契约、会话边界、路由规则与不变量见 [事件与会话架构](kuudra-event-architecture.md)。
 
 模块职责：

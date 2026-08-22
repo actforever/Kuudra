@@ -28,6 +28,8 @@ import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.net.URL;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,6 +59,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public static KuudraApp createConfigured(Path configFile) throws IOException {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(configFile);
         return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+    }
+    /** Lowest-priority development configuration: classpath:/kuudra.yaml, when it is backed by a file directory. */
+    public static KuudraApp createDefaultOrClasspathConfigured() throws IOException {
+        URL resource = KuudraApp.class.getClassLoader().getResource("kuudra.yaml");
+        if (resource == null || !resource.getProtocol().equals("file")) return createDefault();
+        try { return createConfigured(Path.of(resource.toURI())); }
+        catch (URISyntaxException error) { throw new IOException("Invalid classpath kuudra.yaml location", error); }
     }
 
     @Override public synchronized void start() {
@@ -137,16 +146,28 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Status(AppSnapshot app, List<Flow> flows, int activeSessions) {
         public Status { flows = List.copyOf(flows); }
     }
+    public synchronized void loadPluginArchives(List<Path> pluginArchives) throws IOException {
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(pluginArchives, KuudraApp.class.getClassLoader());
+        try {
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) requirePlugins().register(archive.plugin());
+            archives.addAll(loaded);
+        } catch (RuntimeException error) {
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) try { archive.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
+            throw error;
+        }
+    }
 
     /** Loads plugin archives, resolves their metadata dependencies, and assembles every configured Event Flow. */
     private void applyConfiguration(KuudraConfig.RuntimeConfig config) {
         try {
+            List<Path> pluginArchives = new ArrayList<>();
             for (Path directory : config.pluginDirectories()) {
                 Files.createDirectories(directory);
                 try (var files = Files.list(directory)) {
-                    for (Path archive : files.filter(path -> path.getFileName().toString().endsWith(".jar")).sorted().toList()) loadPlugin(archive);
+                    pluginArchives.addAll(files.filter(path -> path.getFileName().toString().endsWith(".jar")).sorted().toList());
                 }
             }
+            loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
             for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
             for (KuudraConfig.FlowConfig flow : config.flows().values()) {

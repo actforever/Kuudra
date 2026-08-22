@@ -5,33 +5,79 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.jar.JarFile;
 
 /** Loads a metadata-declared Java plugin from an isolated child class loader. */
 public final class PluginArchiveLoader {
     public LoadedArchive load(Path archive, ClassLoader parent) throws IOException {
-        Path normalized = Objects.requireNonNull(archive, "archive").toAbsolutePath().normalize();
-        if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) {
-            throw new IOException("Plugin archive must be a readable JAR: " + normalized);
+        return loadAll(List.of(archive), parent).get(0);
+    }
+
+    /** Loads one dependency graph so dependent plugin classes are visible through declared metadata dependencies. */
+    public List<LoadedArchive> loadAll(List<Path> archives, ClassLoader parent) throws IOException {
+        Objects.requireNonNull(parent, "parent");
+        LinkedHashMap<String, ArchiveDefinition> definitions = new LinkedHashMap<>();
+        for (Path archive : archives) {
+            Path normalized = normalizedArchive(archive);
+            PluginMetadata metadata = readMetadata(normalized);
+            if (definitions.putIfAbsent(metadata.id(), new ArchiveDefinition(normalized, metadata)) != null) {
+                throw new IOException("Duplicate plugin id in archives: " + metadata.id());
+            }
         }
-        URLClassLoader classLoader = new URLClassLoader(new URL[]{normalized.toUri().toURL()}, Objects.requireNonNull(parent, "parent"));
+        LinkedHashMap<String, LoadedArchive> loaded = new LinkedHashMap<>();
         try {
-            PluginMetadata metadata = PluginMetadataToml.read(classLoader.getResourceAsStream(PluginMetadataToml.PATH));
-            Class<?> entrypoint = Class.forName(metadata.entrypoint(), true, classLoader);
-            if (!KuudraPlugin.class.isAssignableFrom(entrypoint)) throw new IOException("Plugin entrypoint does not implement KuudraPlugin: " + metadata.entrypoint());
+            for (String id : definitions.keySet()) load(id, definitions, loaded, new ArrayList<>(), parent);
+            return List.copyOf(loaded.values());
+        } catch (IOException | RuntimeException error) {
+            for (LoadedArchive archive : loaded.values()) try { archive.close(); } catch (IOException close) { error.addSuppressed(close); }
+            throw error;
+        }
+    }
+
+    private LoadedArchive load(String id, LinkedHashMap<String, ArchiveDefinition> definitions, LinkedHashMap<String, LoadedArchive> loaded,
+                               List<String> visiting, ClassLoader parent) throws IOException {
+        LoadedArchive existing = loaded.get(id);
+        if (existing != null) return existing;
+        if (visiting.contains(id)) throw new IOException("Plugin dependency cycle: " + visiting + " -> " + id);
+        ArchiveDefinition definition = definitions.get(id);
+        if (definition == null) throw new IOException("Declared plugin dependency archive is missing: " + id);
+        visiting.add(id);
+        List<DependencyPluginClassLoader> dependencies = new ArrayList<>();
+        for (String dependency : definition.metadata.dependencies()) dependencies.add((DependencyPluginClassLoader) load(dependency, definitions, loaded, visiting, parent).classLoader());
+        visiting.remove(visiting.size() - 1);
+        DependencyPluginClassLoader classLoader = new DependencyPluginClassLoader(definition.archive.toUri().toURL(), parent, dependencies);
+        try {
+            Class<?> entrypoint = Class.forName(definition.metadata.entrypoint(), true, classLoader);
+            if (!KuudraPlugin.class.isAssignableFrom(entrypoint)) throw new IOException("Plugin entrypoint does not implement KuudraPlugin: " + definition.metadata.entrypoint());
             KuudraPlugin plugin = (KuudraPlugin) entrypoint.getDeclaredConstructor().newInstance();
-            if (!plugin.id().equals(metadata.id())) throw new IOException("Plugin id does not match metadata: " + metadata.id());
-            List<PluginComponentDefinition> components = new PluginComponentScanner().scan(normalized, classLoader, metadata.id(), metadata.namespace());
-            return new LoadedArchive(normalized, classLoader, new LoadedPlugin(metadata, plugin, components));
+            if (!plugin.id().equals(definition.metadata.id())) throw new IOException("Plugin id does not match metadata: " + definition.metadata.id());
+            List<PluginComponentDefinition> components = new PluginComponentScanner().scan(definition.archive, classLoader, definition.metadata.id(), definition.metadata.namespace());
+            LoadedArchive result = new LoadedArchive(definition.archive, classLoader, new LoadedPlugin(definition.metadata, plugin, components));
+            loaded.put(id, result);
+            return result;
         } catch (IOException error) {
             try { classLoader.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
             throw error;
         } catch (ReflectiveOperationException | RuntimeException error) {
             try { classLoader.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
-            throw new IOException("Cannot load plugin archive " + normalized, error);
+            throw new IOException("Cannot load plugin archive " + definition.archive, error);
         }
     }
+
+    private static Path normalizedArchive(Path archive) throws IOException {
+        Path normalized = Objects.requireNonNull(archive, "archive").toAbsolutePath().normalize();
+        if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) throw new IOException("Plugin archive must be a readable JAR: " + normalized);
+        return normalized;
+    }
+    private static PluginMetadata readMetadata(Path archive) throws IOException {
+        try (JarFile jar = new JarFile(archive.toFile())) { return PluginMetadataToml.read(jar.getInputStream(jar.getJarEntry(PluginMetadataToml.PATH))); }
+        catch (NullPointerException missing) { throw new IOException("Missing " + PluginMetadataToml.PATH + " in " + archive, missing); }
+    }
+    private record ArchiveDefinition(Path archive, PluginMetadata metadata) { }
 
     public record LoadedArchive(Path archive, URLClassLoader classLoader, LoadedPlugin plugin) implements AutoCloseable {
 

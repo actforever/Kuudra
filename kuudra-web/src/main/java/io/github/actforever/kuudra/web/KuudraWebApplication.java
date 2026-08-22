@@ -16,6 +16,6 @@ public class KuudraWebApplication {
 
     @Bean(destroyMethod = "close")
     KuudraApp kuudraApp(@Value("${kuudra.config.path:}") String configPath) throws IOException {
-        return configPath == null || configPath.isBlank() ? KuudraApp.createDefault() : KuudraApp.createConfigured(Path.of(configPath));
+        return configPath == null || configPath.isBlank() ? KuudraApp.createDefaultOrClasspathConfigured() : KuudraApp.createConfigured(Path.of(configPath));
     }
 }
