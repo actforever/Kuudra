@@ -5,6 +5,7 @@ import io.github.actforever.kuudra.api.RawSignalProcessor;
 import io.github.actforever.kuudra.api.RawSignalSource;
 import io.github.actforever.kuudra.api.RootSignal;
 import io.github.actforever.kuudra.api.RootSignalSource;
+import io.github.actforever.kuudra.api.SourceRegistration;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.FlowStatus;
 import io.github.actforever.kuudra.api.RuntimeStateView;
@@ -43,7 +44,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     private final Map<String, IngressPipeline> pipelines = new HashMap<>();
     private final Map<UUID, ManagedSession> sessions = new HashMap<>();
     private final Map<GroupKey, ArrayDeque<RootSignal>> queuedRoots = new HashMap<>();
-    private final CopyOnWriteArrayList<AutoCloseable> sourceStops = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<SourceRegistration> sourceRegistrations = new CopyOnWriteArrayList<>();
     private final KuudraTaskQueue queue;
     private final ExecutorService dispatcher;
     private final ExecutorService workers;
@@ -133,16 +134,30 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         }
     }
 
-    public CompletionStage<Void> registerSource(String pipelineId, RawSignalSource source) {
+    public CompletionStage<SourceRegistration> registerSource(String pipelineId, RawSignalSource source) {
+        synchronized (monitor) {
+            if (!pipelines.containsKey(pipelineId)) throw new IllegalArgumentException("unknown ingress: " + pipelineId);
+        }
         source.setEmitter(raw -> publishRaw(pipelineId, raw));
-        sourceStops.add(source::stop);
-        return source.start();
+        return source.start().thenApply(ignored -> registerSourceStop(source::stop));
     }
 
-    public CompletionStage<Void> registerRootSource(RootSignalSource source) {
+    public CompletionStage<SourceRegistration> registerRootSource(RootSignalSource source) {
         source.setEmitter(this::publishRoot);
-        sourceStops.add(source::stop);
-        return source.start();
+        return source.start().thenApply(ignored -> registerSourceStop(source::stop));
+    }
+
+    private SourceRegistration registerSourceStop(java.util.function.Supplier<CompletionStage<Void>> stop) {
+        AtomicBoolean removed = new AtomicBoolean();
+        AtomicReference<SourceRegistration> reference = new AtomicReference<>();
+        SourceRegistration registration = () -> {
+            if (!removed.compareAndSet(false, true)) return CompletableFuture.completedFuture(null);
+            sourceRegistrations.remove(reference.get());
+            return stop.get();
+        };
+        reference.set(registration);
+        sourceRegistrations.add(registration);
+        return registration;
     }
 
     public boolean publishRaw(String pipelineId, RawSignal signal) {
@@ -378,7 +393,9 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     @Override public void close() {
         if (!running.compareAndSet(true, false)) return;
-        for (AutoCloseable stop : sourceStops) try { stop.close(); } catch (Exception ignored) { }
+        for (SourceRegistration registration : sourceRegistrations) {
+            try { registration.unregister().toCompletableFuture().join(); } catch (RuntimeException ignored) { }
+        }
         synchronized (monitor) { sessions.values().stream().filter(ManagedSession::isActive).forEach(s -> { s.cancelled.set(true); s.status = SessionStatus.CANCELLATION_REQUESTED; }); }
         queue.close(); dispatcher.shutdownNow(); workers.shutdownNow();
     }

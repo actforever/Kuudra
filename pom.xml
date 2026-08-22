@@ -13,6 +13,7 @@
         <module>kuudra-api</module>
         <module>kuudra-config</module>
         <module>kuudra-plugin</module>
+        <module>kuudra-hello-plugin</module>
         <module>kuudra-runtime</module>
         <module>kuudra-app</module>
         <module>kuudra-web</module>

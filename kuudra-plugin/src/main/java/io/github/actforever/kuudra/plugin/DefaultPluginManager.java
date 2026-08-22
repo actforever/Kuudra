@@ -25,13 +25,19 @@ import java.util.function.Function;
  */
 public final class DefaultPluginManager implements AutoCloseable {
     private final Path pluginsHome;
+    private final PluginRuntimeServices runtimeServices;
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
     private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
     private List<String> startedOrder = List.of();
 
     public DefaultPluginManager(Path pluginsHome) {
+        this(pluginsHome, PluginRuntimeServices.unavailable());
+    }
+
+    public DefaultPluginManager(Path pluginsHome, PluginRuntimeServices runtimeServices) {
         this.pluginsHome = Objects.requireNonNull(pluginsHome, "pluginsHome").toAbsolutePath().normalize();
+        this.runtimeServices = Objects.requireNonNull(runtimeServices, "runtimeServices");
     }
 
     public synchronized void register(KuudraPlugin plugin) {
@@ -112,7 +118,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             markFailed(pluginId);
             return CompletableFuture.failedFuture(exception);
         }
-        return invoke(plugin, current -> current.initialize(new PluginContext(pluginId, home, resources.get(pluginId))))
+        return invoke(plugin, current -> current.initialize(new PluginContext(pluginId, home, resources.get(pluginId), runtimeServices)))
                 .thenRun(() -> mark(pluginId, PluginState.INITIALIZED))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> mark(pluginId, PluginState.ACTIVE))

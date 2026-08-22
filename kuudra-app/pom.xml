@@ -6,5 +6,6 @@
     <dependencies>
         <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-runtime</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-config</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-plugin</artifactId><version>${project.version}</version></dependency>
     </dependencies>
 </project>
