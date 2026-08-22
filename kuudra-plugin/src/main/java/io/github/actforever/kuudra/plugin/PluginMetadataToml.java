@@ -27,11 +27,11 @@ final class PluginMetadataToml {
                 if (content.startsWith("[") || !content.contains("=")) throw new IOException("Unsupported metadata TOML at line " + number);
                 String[] parts = content.split("=", 2); String key = parts[0].trim(); String value = parts[1].trim();
                 if (key.equals("dependencies")) dependencies = stringArray(value, number);
-                else if (key.equals("id") || key.equals("version") || key.equals("entrypoint")) scalar.put(key, string(value, number));
+                else if (key.equals("id") || key.equals("namespace") || key.equals("version") || key.equals("entrypoint")) scalar.put(key, string(value, number));
                 else throw new IOException("Unknown metadata key at line " + number + ": " + key);
             }
         }
-        try { return new PluginMetadata(required(scalar, "id"), required(scalar, "version"), required(scalar, "entrypoint"), dependencies); }
+        try { return new PluginMetadata(required(scalar, "id"), required(scalar, "namespace"), required(scalar, "version"), required(scalar, "entrypoint"), dependencies); }
         catch (IllegalArgumentException error) { throw new IOException("Invalid plugin metadata", error); }
     }
 

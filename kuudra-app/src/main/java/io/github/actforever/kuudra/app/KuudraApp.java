@@ -86,7 +86,7 @@ public final class KuudraApp implements AutoCloseable {
 
     /**
      * Configuration assembly hook: resolves a plugin declaration such as
-     * {@code signal-source/hello-world}, constructs it, then attaches it to an ingress pipeline.
+     * {@code signal-source/hello-world/loop-emitter}, constructs it, then attaches it to an ingress pipeline.
      */
     public java.util.concurrent.CompletionStage<SourceRegistration> installSignalSource(String componentReference, String ingressPipelineId) {
         RawSignalSource source = plugins.components().create(componentReference, RawSignalSource.class);

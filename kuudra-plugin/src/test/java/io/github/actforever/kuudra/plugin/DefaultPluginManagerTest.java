@@ -85,20 +85,22 @@ class DefaultPluginManagerTest {
     void metadataDependenciesAndAnnotatedComponentsBecomeConfigurationResources() throws Exception {
         PluginMetadata metadata = PluginMetadataToml.read(new java.io.ByteArrayInputStream("""
                 id = "annotated"
+                namespace = "test-plugin"
                 version = "1.0.0"
                 entrypoint = "example.Plugin"
                 dependencies = ["base"]
                 """.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         assertEquals(List.of("base"), metadata.dependencies());
+        assertEquals("test-plugin", metadata.namespace());
         DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("annotated"));
         List<String> calls = new ArrayList<>();
         manager.register(new RecordingPlugin("base", List.of(), calls));
         manager.register(new PluginArchiveLoader.LoadedPlugin(metadata, new RecordingPlugin("annotated", List.of(), calls),
-                List.of(new PluginComponentDefinition("annotated", PluginComponentKind.SIGNAL_SOURCE, "test-source", TestSource.class))));
+                List.of(new PluginComponentDefinition("annotated", "test-plugin", PluginComponentKind.SIGNAL_SOURCE, "test-source", TestSource.class))));
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
-        assertEquals("annotated", manager.components().find("signal-source/test-source").orElseThrow().pluginId());
-        assertTrue(manager.components().create("signal-source/test-source", io.github.actforever.kuudra.api.RawSignalSource.class) instanceof TestSource);
+        assertEquals("annotated", manager.components().find("signal-source/test-plugin/test-source").orElseThrow().pluginId());
+        assertTrue(manager.components().create("signal-source/test-plugin/test-source", io.github.actforever.kuudra.api.RawSignalSource.class) instanceof TestSource);
     }
 
     private static class RecordingPlugin implements KuudraPlugin {

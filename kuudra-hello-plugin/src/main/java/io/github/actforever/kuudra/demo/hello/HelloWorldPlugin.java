@@ -47,7 +47,7 @@ public final class HelloWorldPlugin implements KuudraPlugin {
         return registration == null ? CompletableFuture.completedFuture(null) : registration.unregister();
     }
 
-    @io.github.actforever.kuudra.plugin.annotation.SignalSource("hello-world")
+    @io.github.actforever.kuudra.plugin.annotation.SignalSource("loop-emitter")
     public static final class HelloWorldSource implements RawSignalSource {
         private final AtomicBoolean started = new AtomicBoolean();
         private ScheduledExecutorService scheduler;

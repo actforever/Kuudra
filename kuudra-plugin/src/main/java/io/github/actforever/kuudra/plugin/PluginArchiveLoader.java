@@ -22,7 +22,7 @@ public final class PluginArchiveLoader {
             if (!KuudraPlugin.class.isAssignableFrom(entrypoint)) throw new IOException("Plugin entrypoint does not implement KuudraPlugin: " + metadata.entrypoint());
             KuudraPlugin plugin = (KuudraPlugin) entrypoint.getDeclaredConstructor().newInstance();
             if (!plugin.id().equals(metadata.id())) throw new IOException("Plugin id does not match metadata: " + metadata.id());
-            List<PluginComponentDefinition> components = new PluginComponentScanner().scan(normalized, classLoader, metadata.id());
+            List<PluginComponentDefinition> components = new PluginComponentScanner().scan(normalized, classLoader, metadata.id(), metadata.namespace());
             return new LoadedArchive(normalized, classLoader, new LoadedPlugin(metadata, plugin, components));
         } catch (IOException error) {
             try { classLoader.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
