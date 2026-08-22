@@ -8,6 +8,7 @@ import io.github.actforever.kuudra.api.RootSignalEmitter;
 import io.github.actforever.kuudra.api.RootSignalSource;
 import io.github.actforever.kuudra.api.SessionPolicy;
 import io.github.actforever.kuudra.api.SessionSpec;
+import io.github.actforever.kuudra.api.SessionStatus;
 import io.github.actforever.kuudra.api.Signal;
 import org.junit.jupiter.api.Test;
 
@@ -161,6 +162,91 @@ class KuudraRuntimeTest {
             runtime.resumeFlow("pause");
             assertTrue(secondRan.await(1, TimeUnit.SECONDS));
             assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
+    @Test
+    void parallelPolicyLetsDifferentSessionsRunConcurrently() throws Exception {
+        CountDownLatch bothStarted = new CountDownLatch(2);
+        List<CompletableFuture<List<Signal>>> gates = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 2)) {
+            runtime.registerFlow(oneActorFlow("parallel", SessionPolicy.PARALLEL, (signal, context) -> {
+                CompletableFuture<List<Signal>> gate = new CompletableFuture<>();
+                gates.add(gate); bothStarted.countDown(); return gate;
+            }));
+            runtime.publishRoot(root("parallel", SessionPolicy.PARALLEL));
+            runtime.publishRoot(root("parallel", SessionPolicy.PARALLEL));
+            assertTrue(bothStarted.await(1, TimeUnit.SECONDS));
+            assertEquals(2, runtime.activeSessionCount("parallel", "session"));
+            gates.forEach(gate -> gate.complete(List.of()));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
+    @Test
+    void ignorePolicyDropsNewRootsWhileTheAdmissionGroupIsActive() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CompletableFuture<List<Signal>> gate = new CompletableFuture<>();
+        AtomicInteger calls = new AtomicInteger();
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.registerFlow(oneActorFlow("ignore", SessionPolicy.IGNORE, (signal, context) -> {
+                calls.incrementAndGet(); started.countDown(); return gate;
+            }));
+            runtime.publishRoot(root("ignore", SessionPolicy.IGNORE));
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            runtime.publishRoot(root("ignore", SessionPolicy.IGNORE));
+            Thread.sleep(50);
+            assertEquals(1, calls.get());
+            gate.complete(List.of());
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
+    @Test
+    void actionFailureMarksTheSessionFailedAndPublishesAnEvent() throws Exception {
+        CountDownLatch failed = new CountDownLatch(1);
+        AtomicReference<java.util.UUID> sessionId = new AtomicReference<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.systemEvents().subscribe(event -> {
+                if (event.type().equals("session.failed")) {
+                    sessionId.set(java.util.UUID.fromString((String) event.data().get("sessionId")));
+                    failed.countDown();
+                }
+            });
+            runtime.registerFlow(oneActorFlow("failing", SessionPolicy.PARALLEL,
+                    (signal, context) -> CompletableFuture.failedFuture(new IllegalStateException("expected"))));
+            runtime.publishRoot(root("failing", SessionPolicy.PARALLEL));
+            assertTrue(failed.await(1, TimeUnit.SECONDS));
+            assertEquals(SessionStatus.FAILED, runtime.session(sessionId.get()).orElseThrow().status());
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+        }
+    }
+
+    @Test
+    void stoppingAPausedFlowDrainsItsDeferredContinuationCooperatively() throws Exception {
+        CompletableFuture<List<Signal>> gate = new CompletableFuture<>();
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch continuationRan = new CountDownLatch(1);
+        AtomicReference<Signal> firstSignal = new AtomicReference<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.registerFlow(new KuudraFlow("stopping", rootProcessor(SessionPolicy.PARALLEL), "first",
+                    Map.of(
+                            "first", new FlowNode.ActorNode("first", (signal, context) -> { firstSignal.set(signal); firstStarted.countDown(); return gate; }),
+                            "next", new FlowNode.ActorNode("next", (signal, context) -> { continuationRan.countDown(); return CompletableFuture.completedFuture(List.of()); })
+                    ), Map.of("first", List.of("next"))));
+            runtime.publishRoot(root("stopping", SessionPolicy.PARALLEL));
+            assertTrue(firstStarted.await(1, TimeUnit.SECONDS));
+            runtime.pauseFlow("stopping");
+            gate.complete(List.of(firstSignal.get()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (runtime.flow("stopping").orElseThrow().deferredTasks() != 1 && System.nanoTime() < deadline) Thread.onSpinWait();
+            runtime.stopFlow("stopping");
+            assertTrue(continuationRan.await(1, TimeUnit.SECONDS));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+            long stoppedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (runtime.flow("stopping").orElseThrow().status() != io.github.actforever.kuudra.api.FlowStatus.STOPPED
+                    && System.nanoTime() < stoppedDeadline) Thread.onSpinWait();
+            assertEquals(io.github.actforever.kuudra.api.FlowStatus.STOPPED, runtime.flow("stopping").orElseThrow().status());
         }
     }
 

@@ -116,7 +116,14 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             sessions.values().stream().filter(s -> s.flow.id().equals(flowId) && s.isActive()).forEach(s -> toCancel.add(s.id));
         }
         toCancel.forEach(this::cancel);
-        deferred.forEach(this::offer);
+        deferred.forEach(task -> {
+            if (!offer(task)) {
+                synchronized (monitor) {
+                    ManagedSession session = sessions.get(task.sessionId());
+                    if (session != null) release(session, null);
+                }
+            }
+        });
         event("flow.stopping", Map.of("flowId", flowId));
     }
 
@@ -320,7 +327,8 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
     }
 
     private void fail(ManagedSession session, Throwable error) {
-        synchronized (monitor) { session.status = SessionStatus.FAILED; session.work.set(0); monitor.notifyAll(); }
+        if (!session.terminal.compareAndSet(false, true)) return;
+        synchronized (monitor) { session.status = SessionStatus.FAILED; monitor.notifyAll(); }
         event("session.failed", Map.of("sessionId", session.id.toString(), "error", error.toString()));
         admitNext(session.group);
         markStoppedIfDrained(session.flow.id());
@@ -385,7 +393,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     private static final class ManagedSession {
         private final UUID id; private final KuudraFlow flow; private final RootSignal root; private final GroupKey group;
-        private final AtomicBoolean cancelled = new AtomicBoolean(); private final AtomicInteger work = new AtomicInteger();
+        private final AtomicBoolean cancelled = new AtomicBoolean(); private final AtomicBoolean terminal = new AtomicBoolean(); private final AtomicInteger work = new AtomicInteger();
         private final AtomicSessionContext context = new AtomicSessionContext();
         private CompletableFuture<Void> tail = CompletableFuture.completedFuture(null);
         private long sequence; private volatile SessionStatus status = SessionStatus.ACTIVE;
