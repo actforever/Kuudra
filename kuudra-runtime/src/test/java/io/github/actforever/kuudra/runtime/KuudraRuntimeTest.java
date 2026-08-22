@@ -119,6 +119,18 @@ class KuudraRuntimeTest {
     }
 
     @Test
+    void sourceRegistrationCanBeExplicitlyUnregisteredBeforeRuntimeShutdown() {
+        TestRawSource source = new TestRawSource(raw("unregister.raw"));
+        try (KuudraRuntime runtime = new KuudraRuntime(32, 1)) {
+            runtime.registerIngress(new IngressPipeline("unregister-in", List.of(), List.of()));
+            var registration = runtime.registerSource("unregister-in", source).toCompletableFuture().join();
+            registration.unregister().toCompletableFuture().join();
+            assertTrue(source.stopped.get());
+            registration.unregister().toCompletableFuture().join();
+        }
+    }
+
+    @Test
     void actionCanAtomicallyUpdateSessionContextForLaterGraphNodes() throws Exception {
         CountDownLatch observed = new CountDownLatch(1);
         var write = (io.github.actforever.kuudra.api.Action) call -> {
