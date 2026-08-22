@@ -116,13 +116,10 @@ public final class DefaultPluginManager implements AutoCloseable {
         }
         CompletionStage<Void> chain = CompletableFuture.completedFuture(null);
         for (String pluginId : order) {
-            chain = chain.thenCompose(ignored -> initializeAndStart(pluginId));
+            chain = chain.thenCompose(ignored -> initializeAndStart(pluginId))
+                    .thenRun(() -> recordStarted(pluginId));
         }
-        return chain.thenRun(() -> {
-            synchronized (this) {
-                startedOrder = List.copyOf(order);
-            }
-        });
+        return chain;
     }
 
     public CompletionStage<Void> stopAll() {
@@ -167,7 +164,7 @@ public final class DefaultPluginManager implements AutoCloseable {
                 .thenRun(() -> mark(pluginId, PluginState.INITIALIZED))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> mark(pluginId, PluginState.ACTIVE))
-                .exceptionallyCompose(error -> failed(pluginId, error));
+                .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }
 
     private CompletionStage<Void> stopAndDestroy(String pluginId) {
@@ -207,6 +204,23 @@ public final class DefaultPluginManager implements AutoCloseable {
     private CompletionStage<Void> failed(String pluginId, Throwable error) {
         markFailed(pluginId);
         return CompletableFuture.failedFuture(error);
+    }
+
+    private CompletionStage<Void> cleanupFailedStart(String pluginId, KuudraPlugin plugin, Throwable failure) {
+        return invoke(plugin, KuudraPlugin::destroy).handle((ignored, destroyError) -> {
+            if (destroyError != null) failure.addSuppressed(destroyError);
+            try { closeResources(pluginId); }
+            catch (RuntimeException resourceError) { failure.addSuppressed(resourceError); }
+            markFailed(pluginId);
+            return null;
+        }).thenCompose(ignored -> CompletableFuture.failedFuture(failure));
+    }
+
+    private synchronized void recordStarted(String pluginId) {
+        if (startedOrder.contains(pluginId)) return;
+        List<String> updated = new ArrayList<>(startedOrder);
+        updated.add(pluginId);
+        startedOrder = List.copyOf(updated);
     }
 
     private void closeResources(String pluginId) {

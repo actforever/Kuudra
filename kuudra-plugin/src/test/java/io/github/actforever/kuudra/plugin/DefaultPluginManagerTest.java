@@ -60,6 +60,28 @@ class DefaultPluginManagerTest {
     }
 
     @Test
+    void failedDependentCleansItselfAndPreviouslyStartedDependencies() {
+        List<String> calls = new ArrayList<>();
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("rollback"));
+        manager.register(new RecordingPlugin("base", List.of(), calls));
+        manager.register(new RecordingPlugin("child", List.of("base"), calls) {
+            @Override public CompletionStage<Void> start() {
+                calls.add("child.start");
+                return CompletableFuture.failedFuture(new IllegalStateException("boom"));
+            }
+        });
+
+        assertThrows(Exception.class, () -> manager.startAll().toCompletableFuture().join());
+        manager.close();
+
+        assertEquals(List.of(
+                "base.initialize", "base.start", "child.initialize", "child.start", "child.destroy",
+                "base.stop", "base.destroy"), calls);
+        assertEquals(PluginState.FAILED, manager.state("child"));
+        assertEquals(PluginState.STOPPED, manager.state("base"));
+    }
+
+    @Test
     void closesPluginResourcesAfterDestroyInReverseRegistrationOrder() {
         List<String> calls = new ArrayList<>();
         DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("resources"));

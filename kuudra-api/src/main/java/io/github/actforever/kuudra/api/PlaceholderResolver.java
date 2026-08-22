@@ -14,44 +14,93 @@ public final class PlaceholderResolver {
     private PlaceholderResolver() { }
 
     public static Map<String, Object> resolveMap(Map<String, Object> template, Event event, EventContext context) {
-        @SuppressWarnings("unchecked") Map<String, Object> resolved = (Map<String, Object>) resolve(template, event, context);
-        return resolved;
+        return compileMap(template).resolve(event, context);
     }
 
     public static Object resolve(Object template, Event event, EventContext context) {
-        Objects.requireNonNull(event, "event");
-        Objects.requireNonNull(context, "context");
-        if (template instanceof String value) return resolveString(value, event, context);
+        return compile(template).resolve(event, context);
+    }
+
+    /** Compiles placeholder syntax once so event-time resolution only performs value lookup and result assembly. */
+    public static CompiledMap compileMap(Map<String, Object> template) {
+        Objects.requireNonNull(template, "template");
+        return new CompiledMap(compile(template));
+    }
+
+    private static Template compile(Object template) {
+        if (template instanceof String value) return compileString(value);
         if (template instanceof Map<?, ?> map) {
-            Map<String, Object> result = new LinkedHashMap<>();
+            Map<String, Template> compiled = new LinkedHashMap<>();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 if (!(entry.getKey() instanceof String key)) throw new IllegalArgumentException("Placeholder template map keys must be strings");
-                result.put(key, resolve(entry.getValue(), event, context));
+                compiled.put(key, compile(entry.getValue()));
             }
-            return Map.copyOf(result);
+            Map<String, Template> immutable = Map.copyOf(compiled);
+            return (event, context) -> {
+                Map<String, Object> result = new LinkedHashMap<>();
+                immutable.forEach((key, value) -> result.put(key, value.resolve(event, context)));
+                return Map.copyOf(result);
+            };
         }
         if (template instanceof List<?> list) {
-            List<Object> result = new ArrayList<>();
-            for (Object value : list) result.add(resolve(value, event, context));
-            return List.copyOf(result);
+            List<Template> compiled = list.stream().map(PlaceholderResolver::compile).toList();
+            return (event, context) -> compiled.stream().map(value -> value.resolve(event, context)).toList();
         }
-        return template;
+        return (event, context) -> template;
     }
 
-    private static Object resolveString(String template, Event event, EventContext context) {
-        Matcher matcher = PLACEHOLDER.matcher(template);
-        if (!matcher.find()) return template;
-        if (matcher.start() == 0 && matcher.end() == template.length()) return lookup(matcher.group(1), event, context);
-        StringBuffer result = new StringBuffer();
-        do { matcher.appendReplacement(result, Matcher.quoteReplacement(String.valueOf(lookup(matcher.group(1), event, context)))); }
-        while (matcher.find());
-        matcher.appendTail(result);
-        return result.toString();
+    private static Template compileString(String value) {
+        Matcher matcher = PLACEHOLDER.matcher(value);
+        if (!matcher.find()) return (event, context) -> value;
+        if (matcher.start() == 0 && matcher.end() == value.length()) {
+            String[] expression = expression(matcher.group(1));
+            return (event, context) -> lookup(expression, event, context);
+        }
+        List<Segment> segments = new ArrayList<>();
+        int start = 0;
+        do {
+            if (matcher.start() > start) segments.add(new Literal(value.substring(start, matcher.start())));
+            segments.add(new Expression(expression(matcher.group(1))));
+            start = matcher.end();
+        } while (matcher.find());
+        if (start < value.length()) segments.add(new Literal(value.substring(start)));
+        List<Segment> immutable = List.copyOf(segments);
+        return (event, context) -> {
+            StringBuilder result = new StringBuilder();
+            for (Segment segment : immutable) result.append(segment.resolve(event, context));
+            return result.toString();
+        };
     }
 
-    private static Object lookup(String expression, Event event, EventContext context) {
+    private static String[] expression(String expression) {
         String[] parts = expression.split("\\.");
         if (parts.length < 2) throw unresolved(expression);
+        return parts;
+    }
+
+    public static final class CompiledMap {
+        private final Template template;
+        private CompiledMap(Template template) { this.template = template; }
+        @SuppressWarnings("unchecked")
+        public Map<String, Object> resolve(Event event, EventContext context) {
+            Objects.requireNonNull(event, "event");
+            Objects.requireNonNull(context, "context");
+            return (Map<String, Object>) template.resolve(event, context);
+        }
+    }
+
+    @FunctionalInterface
+    private interface Template { Object resolve(Event event, EventContext context); }
+    private sealed interface Segment permits Literal, Expression { Object resolve(Event event, EventContext context); }
+    private record Literal(String value) implements Segment {
+        @Override public Object resolve(Event event, EventContext context) { return value; }
+    }
+    private record Expression(String[] parts) implements Segment {
+        @Override public Object resolve(Event event, EventContext context) { return lookup(parts, event, context); }
+    }
+
+    private static Object lookup(String[] parts, Event event, EventContext context) {
+        String expression = String.join(".", parts);
         return switch (parts[0]) {
             case "event" -> eventValue(parts, event, expression);
             case "session" -> sessionValue(parts, context, expression);

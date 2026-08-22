@@ -183,14 +183,15 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         RegisteredFlow registration;
         synchronized (monitor) { registration = flows.get(eventTask.flowId()); }
         if (registration == null || registration.status != FlowStatus.ACTIVE) { releaseIfBound(eventTask.event(), null); return; }
-        if (!eventTask.event().hasSession()) { workers.execute(() -> execute(registration.flow, eventTask, null)); return; }
+        if (!eventTask.event().hasSession()) { workers.execute(() -> execute(registration, eventTask, null)); return; }
         ManagedSession session;
         synchronized (monitor) { session = sessions.get(eventTask.event().session().id()); }
         if (session == null || !session.isActive() || session.cancelled.get()) { releaseIfBound(eventTask.event(), null); return; }
-        session.submit(() -> execute(registration.flow, eventTask, session));
+        session.submit(() -> execute(registration, eventTask, session));
     }
 
-    private CompletionStage<Void> execute(KuudraFlow flow, RuntimeTask.EventTask task, ManagedSession owner) {
+    private CompletionStage<Void> execute(RegisteredFlow registration, RuntimeTask.EventTask task, ManagedSession owner) {
+        KuudraFlow flow = registration.flow;
         FlowNode node;
         try { node = flow.node(task.nodeId()); }
         catch (RuntimeException error) { finishTask(owner, error); return CompletableFuture.failedFuture(error); }
@@ -201,7 +202,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
                 ? new EventContext(flow.id(), null, Map.of(), null, () -> false, globalContext, Map.of())
                 : new EventContext(flow.id(), new SessionReference(owner.id, flow.id()), owner.context.snapshot(), owner.context, owner.cancelled::get, globalContext, Map.of());
         EventContext context = new EventContext(baseContext.flowId(), baseContext.session(), baseContext.sessionValues(), baseContext.sessionContext(),
-                baseContext.cancellationToken(), globalContext, PlaceholderResolver.resolveMap(configurationOf(node), task.event(), baseContext));
+                baseContext.cancellationToken(), globalContext, registration.configuration(task.nodeId()).resolve(task.event(), baseContext));
         if (node instanceof FlowNode.ActorNode actor) {
             return actor.apply(task.event(), context, output -> emitFromActor(flow, actor, task.event(), output)).handle((ignored, error) -> {
                 finishTask(owner, error); return null;
@@ -347,7 +348,17 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     private record GroupKey(String flowId, String allocatorId, String name, String admissionKey) { }
     private record AllocationRequest(KuudraFlow flow, FlowNode.AllocatorNode allocator, Event event) { }
-    private static final class RegisteredFlow { private final KuudraFlow flow; private FlowStatus status = FlowStatus.ACTIVE; private RegisteredFlow(KuudraFlow flow) { this.flow = flow; } }
+    private static final class RegisteredFlow {
+        private final KuudraFlow flow;
+        private final Map<String, PlaceholderResolver.CompiledMap> configurations;
+        private FlowStatus status = FlowStatus.ACTIVE;
+        private RegisteredFlow(KuudraFlow flow) {
+            this.flow = flow;
+            configurations = flow.nodes().entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                    Map.Entry::getKey, entry -> PlaceholderResolver.compileMap(configurationOf(entry.getValue()))));
+        }
+        private PlaceholderResolver.CompiledMap configuration(String nodeId) { return configurations.get(nodeId); }
+    }
     private static final class ManagedSession {
         private final UUID id; private final KuudraFlow flow; private final io.github.actforever.kuudra.api.SessionSpec spec; private final GroupKey group; private final Set<UUID> parents;
         private final AtomicBoolean cancelled = new AtomicBoolean(); private final AtomicBoolean terminal = new AtomicBoolean(); private final AtomicInteger work = new AtomicInteger(); private final AtomicSessionContext context = new AtomicSessionContext();

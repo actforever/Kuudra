@@ -1,6 +1,6 @@
 # 插件与 Web 演示
 
-同一批扫描到的插件 JAR 会先读取全部 `metadata.toml`，再按 `dependencies` 建立依赖 ClassLoader 图。依赖插件的类与资源对下层插件可见，因此前置插件可提供共享 Java 类型，依赖方不必重复打包它们。依赖必须形成无环图；卸载时依赖方先停止，前置插件最后停止。
+同一批扫描到的插件 JAR 会先读取全部 `metadata.toml`，再按 `dependencies` 建立依赖 ClassLoader 图。依赖插件的类、单个资源与资源枚举结果对下层插件可见，因此前置插件可提供共享 Java 类型或 ServiceLoader 资源，依赖方不必重复打包它们。该行为由真实父/子插件归档集成测试覆盖。依赖必须形成无环图；卸载或启动失败回滚时依赖方先清理，前置插件最后停止。详细委派顺序、隔离边界和失败清理见 [插件运行目录与加载](kuudra-plugin-layout.md)。
 
 插件 JAR 在 `META-INF/kuudra-plugin/metadata.toml` 中声明：
 

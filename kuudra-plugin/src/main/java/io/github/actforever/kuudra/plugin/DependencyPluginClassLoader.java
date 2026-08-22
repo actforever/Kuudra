@@ -1,7 +1,11 @@
 package io.github.actforever.kuudra.plugin;
 
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /** Parent-first for Kuudra APIs, then declared plugin dependencies, then this archive's own classes. */
@@ -41,5 +45,14 @@ final class DependencyPluginClassLoader extends URLClassLoader {
             if (resource != null) return resource;
         }
         return findResource(name);
+    }
+
+    @Override
+    public Enumeration<URL> getResources(String name) throws IOException {
+        LinkedHashSet<URL> resources = new LinkedHashSet<>();
+        resources.addAll(Collections.list(getParent().getResources(name)));
+        for (ClassLoader dependency : dependencies) resources.addAll(Collections.list(dependency.getResources(name)));
+        resources.addAll(Collections.list(findResources(name)));
+        return Collections.enumeration(resources);
     }
 }

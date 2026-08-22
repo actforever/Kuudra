@@ -57,9 +57,10 @@ Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`
 
 1. `KuudraYamlLoader` 读取 Flow YAML，将节点 `options` 保存为未解析的 Map 模板；此时 Event 和 Session 尚不存在，因此不会做字符串替换。
 2. `KuudraApp` 编译 Flow 时，把 Adapter、Processor 和 Actor 的 options 模板保存在对应 `FlowNode` 中。
-3. 每个 Event 到达节点时，`KuudraRuntime.execute` 构造当前 `EventContext`，其中包含 Event 对应的 Flow、可选 Session、Session 最新快照以及 App 的只读 `global-context`。
-4. Runtime 调用 `PlaceholderResolver.resolveMap`，递归遍历 options 中的 Map、List 和字符串，针对这一次 Event 生成新的不可变配置 Map；原模板不会被修改，因此同一节点处理后续 Event 时会重新解析。
-5. Adapter 和 Processor 从 `EventContext.configuration()` 获取解析结果；Actor 从 `ActionContext.configuration()` 获取同一份解析结果。
+3. Runtime 注册 Flow 时调用 `PlaceholderResolver.compileMap`。这一阶段只执行一次正则扫描、字符串静态片段切分、表达式路径切分以及 Map/List 模板递归编译，并把每个节点的 `CompiledMap` 保存在 `RegisteredFlow` 中。语法结构不会在 Event 热路径中重复解释。
+4. 每个 Event 到达节点时，`KuudraRuntime.execute` 构造当前 `EventContext`，其中包含 Event 对应的 Flow、可选 Session、Session 最新快照以及 App 的只读 `global-context`。
+5. Runtime 调用已编译模板的 `resolve`，此时只按预切分路径查询本次 Event/Session/global/Flow 值，并组装新的不可变 Map/List；原模板和已编译结构都不会被修改，可被不同 Event 和工作线程安全复用。
+6. Adapter 和 Processor 从 `EventContext.configuration()` 获取解析结果；Actor 从 `ActionContext.configuration()` 获取同一份解析结果。
 
 例如：
 
@@ -89,3 +90,9 @@ options:
 若整个字符串只有一个占位符，解析器保留原值类型，例如数字、布尔值、Map 或 List；若占位符嵌在较长字符串中，则通过 `String.valueOf` 转为文本。普通非字符串标量保持不变。表达式不存在会使当前节点执行失败，不会静默生成空值；无 Session 的节点引用 `${session...}` 会抛出明确错误。
 
 这条链路对 `event-adapter`、`event-processor` 和 `actor` 已闭环，并有 API 解析测试与 Runtime 组件注入测试覆盖。`session-allocator` 的策略在 App 启动编译 Flow 时就必须确定，不能使用事件期占位符；`event-source` 没有输入 Event 上下文，当前契约也不接收节点 options，因此同样不支持动态占位符。
+
+### 执行成本
+
+优化前，每次节点执行都要对完整 options 树重新遍历并对每个字符串执行正则匹配和 `split(".")`；成本随 `事件数 × 节点执行数 × 模板大小` 增长。优化后，正则与表达式语法解析成本只在 Flow 注册时支付一次。Event 热路径仍必须完成动态作用域查找、结果 Map/List 分配和插值字符串拼接，因为这些值会随 Event 与 Session 改变；其成本与本次真正需要解析的模板节点和表达式路径深度线性相关。
+
+`PlaceholderResolver.resolve/resolveMap` 公共便捷方法为保持独立调用语义，单次调用仍会即时编译再解析；Runtime 的高频路径固定使用可复用的 `CompiledMap`，不会走该便捷路径。
