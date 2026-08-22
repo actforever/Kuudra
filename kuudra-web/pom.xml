@@ -3,5 +3,20 @@
     <modelVersion>4.0.0</modelVersion>
     <parent><groupId>io.github.actforever</groupId><artifactId>kuudra</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>kuudra-web</artifactId>
-    <dependencies><dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-api</artifactId><version>${project.version}</version></dependency></dependencies>
+    <dependencies>
+        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-runtime</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+        <dependency><groupId>com.github.xiaoymin</groupId><artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId><version>4.4.0</version></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration><mainClass>io.github.actforever.kuudra.web.KuudraWebApplication</mainClass></configuration>
+                <executions><execution><goals><goal>repackage</goal></goals></execution></executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

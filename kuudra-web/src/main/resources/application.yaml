@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: kuudra-web
+server:
+  port: 8080
+knife4j:
+  enable: true
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /doc.html

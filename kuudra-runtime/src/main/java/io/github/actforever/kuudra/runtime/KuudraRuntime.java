@@ -201,6 +201,12 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
             return Optional.of(new FlowSnapshot(flowId, flow.status, active, flow.deferred.size()));
         }
     }
+    /** Immutable diagnostic snapshot of all currently registered Flows. */
+    public List<FlowSnapshot> flows() {
+        synchronized (monitor) {
+            return flows.keySet().stream().map(this::flow).flatMap(Optional::stream).toList();
+        }
+    }
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
         synchronized (monitor) {
