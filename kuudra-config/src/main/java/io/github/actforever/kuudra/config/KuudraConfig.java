@@ -11,7 +11,7 @@ import java.util.Map;
 public final class KuudraConfig {
     private KuudraConfig() { }
 
-    /** Aggregate produced from kuudra.yaml and the definitions in flows/. */
+    /** Aggregate produced from config.yaml and the definitions in flows/. */
     public record RuntimeConfig(RuntimeSettings runtime, List<Path> pluginDirectories, Path pluginHomeDirectory, List<PluginReference> pluginsToLoad, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
         public RuntimeConfig { pluginDirectories = List.copyOf(pluginDirectories); pluginHomeDirectory = pluginHomeDirectory.toAbsolutePath().normalize(); pluginsToLoad = List.copyOf(pluginsToLoad); globalContext = Map.copyOf(globalContext); flows = Map.copyOf(flows); }
     }

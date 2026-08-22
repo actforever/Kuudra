@@ -4,20 +4,6 @@ spring:
 server:
   port: 8080
 
-kuudra:
-  # Spring merges this section with an external application.yaml before Web creates App.
-  # Omit base-directory to use the executable JAR directory.
-  runtime:
-    queueCapacity: 1024
-    workerThreads: 2
-  plugins:
-    directories:
-      - .kuudra/plugins
-    homeDirectory: .kuudra/plugins
-    load: []
-  flowsDirectory: flows
-  globalContext: {}
-
 knife4j:
   enable: true
 springdoc:

@@ -23,6 +23,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.11.4</junit.version>
+        <skipTests>true</skipTests>
 
         <!-- 第三方库版本 -->
 <!--        <jnativehook.version>2.2.2</jnativehook.version>-->
@@ -105,7 +106,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.2</version>
                     <configuration>
-                        <skipTests>true</skipTests>
+                        <skipTests>${skipTests}</skipTests>
                     </configuration>
                 </plugin>
 

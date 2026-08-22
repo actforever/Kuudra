@@ -3,6 +3,8 @@ package io.github.actforever.kuudra.config;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,14 +15,34 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
 
-/** Reads kuudra.yaml plus Flow YAML files into the format-neutral configuration model. */
+/** Reads config.yaml plus Flow YAML files into the format-neutral configuration model. */
 public final class KuudraYamlLoader {
     private KuudraYamlLoader() { }
 
     public static KuudraConfig.RuntimeConfig load(Path file) throws IOException {
+        return load(readResource(file));
+    }
+
+    public static KuudraConfigResource readResource(Path file) throws IOException {
         Path configFile = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         if (!Files.isRegularFile(configFile)) throw new IOException("Kuudra configuration does not exist: " + configFile);
-        return load(new KuudraConfigResource(mapping(read(configFile), configFile), configFile.getParent(), configFile.toString()));
+        return new KuudraConfigResource(mapping(read(configFile), configFile), configFile.getParent(), configFile.toString());
+    }
+
+    public static KuudraConfigResource readResource(InputStream input, Path baseDirectory, String description) throws IOException {
+        Objects.requireNonNull(input, "input");
+        try (Reader reader = new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8)) {
+            return new KuudraConfigResource(mapping(new Yaml().load(reader), description), baseDirectory, description);
+        }
+    }
+
+    /** Deeply merges resources from lowest to highest priority using one path-resolution base. */
+    public static KuudraConfigResource merge(Path baseDirectory, String description, KuudraConfigResource... resources) throws IOException {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        for (KuudraConfigResource resource : resources) {
+            if (resource != null) mergeMappings(merged, resource.values());
+        }
+        return new KuudraConfigResource(merged, baseDirectory, description);
     }
 
     /** Compiles a framework-neutral configuration resource after its host has merged any overrides. */
@@ -29,16 +51,16 @@ public final class KuudraYamlLoader {
         Path base = resource.baseDirectory();
         Map<String, Object> root = resource.values();
         Map<String, Object> runtime = optionalMapping(root, "runtime");
-        int queueCapacity = integer(runtime, "queueCapacity", 1_024);
-        int workerThreads = integer(runtime, "workerThreads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
+        int queueCapacity = integer(runtime, "queue-capacity", 1_024);
+        int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
         Map<String, Object> plugins = optionalMapping(root, "plugins");
         List<Path> pluginDirectories = strings(plugins.get("directories")).stream().map(value -> base.resolve(value).normalize()).toList();
-        Path pluginHomeDirectory = base.resolve(string(plugins.getOrDefault("homeDirectory", ".kuudra/plugins"), "plugins.homeDirectory")).normalize();
+        Path pluginHomeDirectory = base.resolve(string(plugins.getOrDefault("home-directory", ".kuudra/plugins"), "plugins.home-directory")).normalize();
         List<KuudraConfig.PluginReference> pluginsToLoad = pluginReferences(plugins.get("load"));
-        String flowsDirectory = string(root.getOrDefault("flowsDirectory", "flows"), "flowsDirectory");
+        String flowsDirectory = string(root.getOrDefault("flows-directory", "flows"), "flows-directory");
         Map<String, KuudraConfig.FlowConfig> flows = loadFlows(base.resolve(flowsDirectory).normalize());
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), pluginDirectories, pluginHomeDirectory, pluginsToLoad,
-                optionalMapping(root, "globalContext"), flows);
+                optionalMapping(root, "global-context"), flows);
     }
 
     private static Map<String, KuudraConfig.FlowConfig> loadFlows(Path directory) throws IOException {
@@ -75,11 +97,23 @@ public final class KuudraYamlLoader {
                 }
             }
         } else {
-            for (Object item : list(map.get("sources"))) { Map<String, Object> source = mapping(item, "source"); String component = string(required(source, "component"), "source.component"); sources.add(new KuudraConfig.SourceBinding(string(source.getOrDefault("id", component), "source.id"), component, string(required(source, "targetNodeId"), "source.targetNodeId"), bool(source.get("enabled"), true))); }
+            for (Object item : list(map.get("sources"))) { Map<String, Object> source = mapping(item, "source"); String component = string(required(source, "component"), "source.component"); sources.add(new KuudraConfig.SourceBinding(string(source.getOrDefault("id", component), "source.id"), component, string(required(source, "target-node-id"), "source.target-node-id"), bool(source.get("enabled"), true))); }
         }
         return new KuudraConfig.FlowConfig(id, nodes, edges, sources);
     }
     private static Object read(Path file) throws IOException { try (Reader reader = Files.newBufferedReader(file)) { return new Yaml().load(reader); } }
+    private static void mergeMappings(Map<String, Object> target, Map<String, Object> source) throws IOException {
+        for (Map.Entry<String, Object> entry : source.entrySet()) {
+            Object existing = target.get(entry.getKey());
+            if (existing instanceof Map<?, ?> && entry.getValue() instanceof Map<?, ?>) {
+                Map<String, Object> nested = new LinkedHashMap<>(mapping(existing, entry.getKey()));
+                mergeMappings(nested, mapping(entry.getValue(), entry.getKey()));
+                target.put(entry.getKey(), nested);
+            } else {
+                target.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
     private static Map<String, Object> mapping(Object value, Object location) throws IOException {
         if (!(value instanceof Map<?, ?> source)) throw new IOException("Expected mapping at " + location);
         Map<String, Object> result = new LinkedHashMap<>();

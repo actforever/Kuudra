@@ -29,8 +29,6 @@ import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.net.URL;
-import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,28 +59,47 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig) { this.queueCapacity = queueCapacity; this.workerThreads = workerThreads; this.bootstrapConfig = bootstrapConfig; start(); }
     public static KuudraApp createDefault() { return new KuudraApp(1_024, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)); }
     public static KuudraApp createConfigured(Path configFile) throws IOException {
-        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(configFile);
+        KuudraConfigResource explicit = KuudraYamlLoader.readResource(configFile);
+        KuudraConfig.RuntimeConfig config = loadConfiguration(explicit.baseDirectory(), explicit);
         return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
     }
-    /** Creates App from a host-provided, framework-neutral configuration resource. */
+    /** Creates App using a programmatic configuration as the highest-priority layer. */
     public static KuudraApp createConfigured(KuudraConfigResource resource) throws IOException {
-        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(resource);
+        KuudraConfig.RuntimeConfig config = loadConfiguration(resource.baseDirectory(), resource);
         return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
     }
-    /** Lowest-priority development configuration: classpath:/kuudra.yaml, when it is backed by a file directory. */
+    /** Creates App from its home config, falling back to the packaged defaults. */
     public static KuudraApp createDefaultOrClasspathConfigured() throws IOException {
-        URL resource = KuudraApp.class.getClassLoader().getResource("kuudra.yaml");
-        if (resource == null || !resource.getProtocol().equals("file")) return createDefault();
-        try { return createConfigured(Path.of(resource.toURI())); }
-        catch (URISyntaxException error) { throw new IOException("Invalid classpath kuudra.yaml location", error); }
+        return createFromDefaultLocations();
     }
-    /** App-owned configuration precedence: explicit environment, JVM property, then classpath development defaults. */
+    /** App-owned configuration precedence: home-directory/config.yaml, then packaged config.yaml. */
     public static KuudraApp createFromDefaultLocations() throws IOException {
-        String environment = System.getenv("KUUDRA_CONFIG_PATH");
-        if (environment != null && !environment.isBlank()) return createConfigured(Path.of(environment));
-        String property = System.getProperty("kuudra.config.path");
-        if (property != null && !property.isBlank()) return createConfigured(Path.of(property));
-        return createDefaultOrClasspathConfigured();
+        return createFromDefaultLocations(Path.of("."));
+    }
+    /** Uses the supplied directory as the base for all relative App configuration paths. */
+    public static KuudraApp createFromDefaultLocations(Path baseDirectory) throws IOException {
+        Path base = baseDirectory.toAbsolutePath().normalize();
+        KuudraConfig.RuntimeConfig config = loadConfiguration(base, null);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+    }
+
+    private static KuudraConfig.RuntimeConfig loadConfiguration(Path baseDirectory, KuudraConfigResource explicit) throws IOException {
+        Path base = baseDirectory.toAbsolutePath().normalize();
+        KuudraConfigResource defaults;
+        try (var input = KuudraApp.class.getClassLoader().getResourceAsStream("config.yaml")) {
+            if (input == null) throw new IOException("Packaged Kuudra configuration is missing: classpath:/config.yaml");
+            defaults = KuudraYamlLoader.readResource(input, base, "classpath:/config.yaml");
+        }
+        KuudraConfigResource discovery = KuudraYamlLoader.merge(base, "Kuudra configuration discovery", defaults, explicit);
+        Object configuredHome = discovery.values().get("home-directory");
+        if (!(configuredHome instanceof String home) || home.isBlank()) {
+            throw new IOException("Expected non-blank string at home-directory");
+        }
+        Path homeConfigFile = base.resolve(home).normalize().resolve("config.yaml");
+        KuudraConfigResource homeConfig = Files.isRegularFile(homeConfigFile)
+                ? KuudraYamlLoader.readResource(homeConfigFile) : null;
+        KuudraConfigResource merged = KuudraYamlLoader.merge(base, "merged Kuudra configuration", defaults, homeConfig, explicit);
+        return KuudraYamlLoader.load(merged);
     }
 
     @Override public synchronized void start() {
@@ -263,9 +280,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private static SessionSpec sessionSpec(KuudraConfig.NodeConfig node) {
         Map<String, Object> options = node.options();
         String name = text(options.getOrDefault("name", node.id()));
-        String admissionKey = text(options.getOrDefault("admissionKey", "default"));
+        String admissionKey = text(options.getOrDefault("admission-key", "default"));
         SessionPolicy policy = SessionPolicy.valueOf(text(options.getOrDefault("policy", SessionPolicy.PARALLEL.name())));
-        ParentTerminationPolicy parent = ParentTerminationPolicy.valueOf(text(options.getOrDefault("parentTerminationPolicy", ParentTerminationPolicy.NONE.name())));
+        ParentTerminationPolicy parent = ParentTerminationPolicy.valueOf(text(options.getOrDefault("parent-termination-policy", ParentTerminationPolicy.NONE.name())));
         return new SessionSpec(name, admissionKey, policy, parent);
     }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }

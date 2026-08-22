@@ -1,12 +1,16 @@
 package io.github.actforever.kuudra.app;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.github.actforever.kuudra.api.EventEmitter;
 import io.github.actforever.kuudra.api.EventSource;
+import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class KuudraAppTest {
+    @TempDir Path directory;
+
     @Test
     void exposesAppLifecycleWithoutLeakingRuntimeTypes() {
         try (KuudraApp app = new KuudraApp(8, 1)) {
@@ -42,6 +48,37 @@ class KuudraAppTest {
             assertEquals("STOPPED", app.stopEventSource("flow", "input").status());
             assertEquals(1, starts.get());
             assertEquals(1, stops.get());
+        }
+    }
+
+    @Test
+    void loadsHomeConfigurationOverPackagedDefaults() throws Exception {
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Files.writeString(home.resolve("config.yaml"), """
+                global-context:
+                  source: home
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("home", app.globalContext().get("source"));
+        }
+    }
+
+    @Test
+    void programmaticConfigurationOverridesHomeConfiguration() throws Exception {
+        Path home = Files.createDirectories(directory.resolve("custom-home"));
+        Files.writeString(home.resolve("config.yaml"), """
+                global-context:
+                  source: home
+                  retained: true
+                """);
+        KuudraConfigResource explicit = new KuudraConfigResource(Map.of(
+                "home-directory", "custom-home",
+                "global-context", Map.of("source", "explicit")), directory, "test configuration");
+
+        try (KuudraApp app = KuudraApp.createConfigured(explicit)) {
+            assertEquals("explicit", app.globalContext().get("source"));
+            assertEquals(true, app.globalContext().get("retained"));
         }
     }
 }

@@ -1,26 +1,50 @@
-# Kuudra 外部配置启动
+# Kuudra 配置与启动
 
-当前最小可用启动链路是：`kuudra-web` 启动后创建 `KuudraApp`；App 读取 `kuudra.yaml`，加载插件目录中的 JAR，解析插件元数据与依赖，启动插件，再将 `flows/*.yaml` 编译为 `KuudraFlow`，最后注册并启动每个事件源。
+当前最小可用启动链路是：`kuudra-web` 创建 `KuudraApp`；App 合并配置，加载插件目录中的 JAR，解析插件元数据与依赖，启动插件，再将 `flows/*.yaml` 编译为 `KuudraFlow`，最后注册并启动每个事件源。
 
-`kuudra-web` 可通过环境变量 `KUUDRA_CONFIG_PATH` 指定全局配置的绝对路径；未指定时 App 以空运行时启动，仍可通过 HTTP 生命周期接口管理它。
+## 配置优先级
 
-```text
-KUUDRA_CONFIG_PATH=/absolute/path/kuudra.yaml
+App 按以下顺序深度合并配置，同名值由高优先级覆盖：
+
+1. 初始化 `KuudraApp` 时直接传入的配置文件或 `KuudraConfigResource`；
+2. `<home-directory>/config.yaml`；
+3. `kuudra-app/src/main/resources/config.yaml` 中的内置默认配置。
+
+`home-directory` 由内置默认和显式配置共同确定，默认值为 `.kuudra`。家目录配置可以覆盖内置配置的任意部分；显式配置还可覆盖家目录配置。映射会递归合并，未覆盖的嵌套值继续保留。
+
+Standalone App 以当前工作目录作为相对路径基准；打包后的 Web 以可执行 JAR 所在目录为基准。旧的 `KUUDRA_CONFIG_PATH`、`kuudra.config.path` 和 Spring `kuudra.*` 配置入口不再使用。
+
+## 配置格式
+
+全部 YAML 配置键使用小写 kebab-case：
+
+```yaml
+home-directory: .kuudra
+runtime:
+  queue-capacity: 1024
+  worker-threads: 2
+plugins:
+  directories:
+    - .kuudra/plugins
+  home-directory: .kuudra/plugins
+  load: []
+flows-directory: flows
+global-context: {}
 ```
 
-未显式提供该环境变量时，App 会检查最低优先级的开发配置 `classpath:/kuudra.yaml`。仅当该资源位于普通文件目录时才加载，以便同时读取相邻的 `flows/`；显式 `KUUDRA_CONFIG_PATH` 始终优先。
+`plugins.directories` 和 `plugins.home-directory` 均相对 App 配置基目录解析；前者存放待扫描的 JAR，后者仅在对应插件真正初始化时创建其 `<plugin-id>/` 家目录。`flows-directory` 同样相对 App 配置基目录解析。
 
-全局配置示例见 [examples/kuudra.yaml](../examples/kuudra.yaml)，Flow 示例见 [examples/flows/hello-world.yaml](../examples/flows/hello-world.yaml)。`plugins.directories` 和 `plugins.homeDirectory` 都相对 `kuudra.yaml` 所在目录解析；前者存放待扫描的 JAR，后者仅在对应插件真正初始化时才创建其 `<plugin-id>/` 家目录。未声明插件目录的空 App 不会创建任何插件目录。
+Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`、`event-adapter`、`event-processor`、`session-allocator` 和 `actor`；`component` 使用 `namespace/component-id`。Session Allocator 选项使用 `admission-key` 与 `parent-termination-policy` 等 kebab-case 键。
 
 启动顺序如下：
 
-1. `KuudraYamlLoader` 读取全局配置和所有 Flow YAML。
-2. App 扫描每个插件目录的 `*.jar`，读取 `META-INF/kuudra-plugin/metadata.toml`，通过隔离 ClassLoader 加载插件。
-3. `DefaultPluginManager` 按 `metadata.toml` 的依赖关系拓扑排序，依次初始化、启动插件，并注册带命名空间的组件，例如 `event-source/hello-world/loop-emitter`。
-4. App 将节点和边编译为 `KuudraFlow`，注册 Flow，再根据 `sources` 绑定启动事件源。
+1. App 合并三层配置，`KuudraYamlLoader` 编译全局配置与 Flow YAML；
+2. App 扫描插件目录中的 `*.jar`，读取 `META-INF/kuudra-plugin/metadata.toml`；
+3. `DefaultPluginManager` 按依赖关系启动选中的插件并注册组件；
+4. App 编译并注册 Flow，再启动其中启用的 EventSource 资源。
 
-任一步失败都会使 App 进入 `FAILED`，并释放已创建的 Runtime、插件与 ClassLoader；不会回退启动旧配置。`POST /api/v1/app/restart` 会使用同一份已读取的配置重新创建内核。
+任一步失败都会使 App 进入 `FAILED` 并释放已创建的 Runtime、插件与 ClassLoader。`POST /api/v1/app/restart` 使用 App 创建时已经合并并编译的配置重新建立内核。
 
-`globalContext` 已由 App 保存为只读上下文。节点 `options` 中的占位符在 Runtime 处理具体 Event 时解析，并通过 `EventContext.configuration()` 或 `ActionContext.configuration()` 注入组件；YAML 加载器只保存模板，绝不提前替换。
+`global-context` 由 App 保存为只读上下文。节点 `options` 中的占位符在 Runtime 处理 Event 时解析，并通过 `EventContext.configuration()` 或 `ActionContext.configuration()` 注入组件；YAML 加载器只保存模板。
 
-支持的作用域为：`${event.id}`、`${event.type}`、`${event.occurredAt}`、`${event.data.<namespace>.<key>}`、`${session.id}`、`${session.flowId}`、`${session.values.<key>}`、`${global.<key>}` 与 `${flow.id}`。完整值 `${...}` 保留原始类型，插入到更长字符串时转换为文本。缺失值或在无 Session 节点中引用 `${session...}` 会使当前事件执行失败并留下明确错误；`session-allocator` 的策略字段在会话创建前就必须确定，因此不支持动态占位符。
+支持 `${event.id}`、`${event.type}`、`${event.occurredAt}`、`${event.data.<namespace>.<key>}`、`${session.id}`、`${session.flowId}`、`${session.values.<key>}`、`${global.<key>}` 和 `${flow.id}`。完整占位符保留原始类型，嵌入较长字符串时转为文本。

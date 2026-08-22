@@ -16,15 +16,15 @@ class KuudraConfigTest {
     @Test
     void loadsRuntimeAndFlowYamlFiles() throws Exception {
         Path flows = Files.createDirectory(directory.resolve("flows"));
-        Files.writeString(directory.resolve("kuudra.yaml"), """
+        Files.writeString(directory.resolve("config.yaml"), """
                 runtime:
-                  queueCapacity: 32
-                  workerThreads: 2
+                  queue-capacity: 32
+                  worker-threads: 2
                 plugins:
                   directories: [plugins]
                   load: [demo/demo-plugin]
-                flowsDirectory: flows
-                globalContext:
+                flows-directory: flows
+                global-context:
                   profile: demo
                 """);
         Files.writeString(flows.resolve("demo.yaml"), """
@@ -47,7 +47,7 @@ class KuudraConfigTest {
                   - from: allocate
                     to: actor
                 """);
-        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("kuudra.yaml"));
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
         assertEquals(directory.resolve(".kuudra/plugins").toAbsolutePath().normalize(), config.pluginHomeDirectory());
         assertEquals("demo/demo-plugin", config.pluginsToLoad().get(0).toString());
@@ -64,9 +64,9 @@ class KuudraConfigTest {
     @Test
     void loadsFrameworkNeutralConfigurationResource() throws Exception {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(new KuudraConfigResource(Map.of(
-                "runtime", Map.of("queueCapacity", 48, "workerThreads", 3),
+                "runtime", Map.of("queue-capacity", 48, "worker-threads", 3),
                 "plugins", Map.of("directories", java.util.List.of("plugins")),
-                "globalContext", Map.of("profile", "host")), directory, "host configuration"));
+                "global-context", Map.of("profile", "host")), directory, "host configuration"));
 
         assertEquals(48, config.runtime().queueCapacity());
         assertEquals(3, config.runtime().workerThreads());

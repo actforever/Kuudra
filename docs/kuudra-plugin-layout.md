@@ -16,7 +16,7 @@
 plugins:
   directories:
     - .kuudra/plugins
-  homeDirectory: .kuudra/plugins
+  home-directory: .kuudra/plugins
   load:
     - hello-world/hello-world
 ```

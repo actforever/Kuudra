@@ -1,24 +1,18 @@
 package io.github.actforever.kuudra.web;
 
 import io.github.actforever.kuudra.app.KuudraApp;
-import io.github.actforever.kuudra.config.KuudraConfigResource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.bind.Bindable;
-import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.system.ApplicationHome;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.context.annotation.Bean;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @SpringBootApplication
 public class KuudraWebApplication {
@@ -54,29 +48,8 @@ public class KuudraWebApplication {
     }
 
     @Bean(destroyMethod = "close")
-    KuudraApp kuudraApp(Environment environment) throws IOException {
-        Map<String, Object> values = appConfiguration(environment);
-        String configuredBaseDirectory = environment.getProperty("kuudra.base-directory");
-        Path baseDirectory = configuredBaseDirectory == null || configuredBaseDirectory.isBlank()
-                ? executableDirectoryOrWorkingDirectory() : Path.of(configuredBaseDirectory);
-        return KuudraApp.createConfigured(new KuudraConfigResource(values, baseDirectory, "Spring application configuration"));
-    }
-
-    private static Map<String, Object> appConfiguration(Environment environment) {
-        Binder binder = Binder.get(environment);
-        Map<String, Object> runtime = new LinkedHashMap<>();
-        runtime.put("queueCapacity", environment.getProperty("kuudra.runtime.queue-capacity", Integer.class, 1_024));
-        runtime.put("workerThreads", environment.getProperty("kuudra.runtime.worker-threads", Integer.class, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)));
-        Map<String, Object> plugins = new LinkedHashMap<>();
-        plugins.put("directories", binder.bind("kuudra.plugins.directories", Bindable.listOf(String.class)).orElse(List.of()));
-        plugins.put("homeDirectory", environment.getProperty("kuudra.plugins.home-directory", ".kuudra/plugins"));
-        plugins.put("load", binder.bind("kuudra.plugins.load", Bindable.listOf(String.class)).orElse(List.of()));
-        Map<String, Object> values = new LinkedHashMap<>();
-        values.put("runtime", runtime);
-        values.put("plugins", plugins);
-        values.put("flowsDirectory", environment.getProperty("kuudra.flows-directory", "flows"));
-        values.put("globalContext", binder.bind("kuudra.global-context", Bindable.mapOf(String.class, Object.class)).orElse(Map.of()));
-        return values;
+    KuudraApp kuudraApp() throws IOException {
+        return KuudraApp.createFromDefaultLocations(executableDirectoryOrWorkingDirectory());
     }
 
     private static Path executableDirectoryOrWorkingDirectory() {
