@@ -17,6 +17,7 @@ import io.github.actforever.kuudra.api.Signal;
 import io.github.actforever.kuudra.api.SignalContext;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
+import io.github.actforever.kuudra.logging.KuudraLog;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Single-process queue-driven runtime for all three signal stages. */
 public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
+    private static final org.slf4j.Logger LOG = KuudraLog.getLogger(KuudraRuntime.class);
     private final Object monitor = new Object();
     private final Map<String, RegisteredFlow> flows = new HashMap<>();
     private final Map<String, IngressPipeline> pipelines = new HashMap<>();
@@ -61,6 +63,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         dispatcher = Executors.newSingleThreadExecutor(r -> new Thread(r, "kuudra-dispatcher"));
         workers = Executors.newFixedThreadPool(workerThreads, r -> new Thread(r, "kuudra-worker"));
         dispatcher.execute(this::dispatchLoop);
+        LOG.info("KuudraRuntime started with {} worker(s)", workerThreads);
     }
 
     public SystemEventBus systemEvents() { return events; }
@@ -398,6 +401,7 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
         }
         synchronized (monitor) { sessions.values().stream().filter(ManagedSession::isActive).forEach(s -> { s.cancelled.set(true); s.status = SessionStatus.CANCELLATION_REQUESTED; }); }
         queue.close(); dispatcher.shutdownNow(); workers.shutdownNow();
+        LOG.info("KuudraRuntime stopped");
     }
 
     private record GroupKey(String flowId, String name, String admissionKey) { }

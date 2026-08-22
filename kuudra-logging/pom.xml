@@ -2,10 +2,9 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
     <parent><groupId>io.github.actforever</groupId><artifactId>kuudra</artifactId><version>0.1.0-SNAPSHOT</version></parent>
-    <artifactId>kuudra-runtime</artifactId>
+    <artifactId>kuudra-logging</artifactId>
     <dependencies>
-        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-api</artifactId><version>${project.version}</version></dependency>
-        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-logging</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>ch.qos.logback</groupId><artifactId>logback-classic</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
     </dependencies>
 </project>
