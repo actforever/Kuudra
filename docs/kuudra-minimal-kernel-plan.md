@@ -62,3 +62,11 @@ Flow 生命周期首期实现 `INACTIVE → ACTIVE → STOPPING → STOPPED`；�
 ## 6. 有意不在本阶段实现的内容
 
 完整 YAML/JSON/TOML 解析器、SQLite StateStore、插件 ClassLoader、控制平面 Flow、REST/WebSocket、外部桥接与真实键鼠插件都保留模块边界与 SPI，但不作为最小完整内核的阻塞项。
+
+## 7. 本分支实现结果
+
+- API 已提供 `RawSignal`、`RootSignal`、带会话的 `Signal`，以及 Source、Processor、Actor、Action、Context 和系统事件 SPI。
+- Runtime 使用可替换的有界 `KuudraTaskQueue` 统一调度三阶段任务；SessionProcessor 创建会话，带会话的图节点只在原 Flow/Session 内继续路由。
+- 四种会话准入策略、会话内顺序、跨会话并行、Action 上下文写入、Action 失败、协作取消、Flow pause/resume/stop drain 都有单元测试。
+- Plugin Manager 对已经注册的 Java 插件进行依赖排序，创建插件家目录，并按依赖正序初始化/启动、逆序停止/销毁。插件自行拥有长期资源和循环调度器；隔离 ClassLoader 与 Fat JAR 发现仍不在最小内核范围。
+- `kuudra-app` 的双击 A 到模拟 C Demo 从 YAML 子集读取参数，并经 RawSignal、RawSignalProcessor、SessionProcessor、Actor/Action 端到端运行。

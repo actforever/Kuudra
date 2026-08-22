@@ -59,6 +59,28 @@ class DefaultPluginManagerTest {
         assertEquals(PluginState.FAILED, brokenManager.state("broken"));
     }
 
+    @Test
+    void closesPluginResourcesAfterDestroyInReverseRegistrationOrder() {
+        List<String> calls = new ArrayList<>();
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("resources"));
+        manager.register(new RecordingPlugin("resource-owner", List.of(), calls) {
+            @Override
+            public CompletionStage<Void> initialize(PluginContext context) {
+                super.initialize(context);
+                context.resources().register("first", () -> calls.add("resource.first.close"));
+                context.resources().register("second", () -> calls.add("resource.second.close"));
+                return CompletableFuture.completedFuture(null);
+            }
+        });
+
+        manager.startAll().toCompletableFuture().join();
+        manager.stopAll().toCompletableFuture().join();
+
+        assertEquals(List.of(
+                "resource-owner.initialize", "resource-owner.start", "resource-owner.stop", "resource-owner.destroy",
+                "resource.second.close", "resource.first.close"), calls);
+    }
+
     private static class RecordingPlugin implements KuudraPlugin {
         private final String id;
         private final List<String> requires;

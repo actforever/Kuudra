@@ -627,9 +627,9 @@ plugins/*               独立构建和发布的插件 Fat JAR
 
 ### 11.1 当前最小实现状态
 
-`refactor/kuudra-kernel` 分支上的首个可运行内核已建立 `kuudra-api`、`kuudra-runtime`、`kuudra-config`、`kuudra-plugin`、`kuudra-app` 与 `kuudra-web` 模块，并验证了“内存 RawSignal → 双击 RawSignalProcessor → SessionProcessor → 异步 Actor”的无插件 Demo。它使用共享有界队列、内存 RuntimeStateTable 和 `PARALLEL`/`QUEUED`/`TOGGLE`/`IGNORE` 会话准入；Demo 的 YAML 读取器只支持嵌套标量映射，目的是验证配置到装配的链路，**不是**正式 YAML 实现。
+`refactor/kuudra-kernel` 分支上的首个可运行内核已建立 `kuudra-api`、`kuudra-runtime`、`kuudra-config`、`kuudra-plugin`、`kuudra-app` 与 `kuudra-web` 模块，并验证了“内存 RawSignal → 双击 RawSignalProcessor → SessionProcessor → 多节点会话图 → 异步 Actor/Action”的无插件 Demo。它使用共享有界队列、内存 RuntimeStateTable、会话内串行 lane、`PARALLEL`/`QUEUED`/`TOGGLE`/`IGNORE` 会话准入、协作取消，以及 pause/resume/stop drain。`kuudra-plugin` 已实现对已加载插件的依赖拓扑、私有目录与 `initialize → start → stop → destroy` 生命周期顺序；Demo 的 YAML 读取器只支持嵌套标量映射，目的是验证配置到装配的链路，**不是**正式 YAML 实现。
 
-首个 Demo 尚未实现通用 YAML/JSON/TOML 适配器、完整图编译、会话阶段的多节点 SignalProcessor、持久化 StateStore、Fat JAR ClassLoader、HTTP/WebSocket 或真实输入/Robot 插件。它们仍按本章后续顺序演进，不应因为最小实现存在而被视为已完成。
+首个最小内核尚未实现通用 YAML/JSON/TOML 适配器、声明式完整图编译、持久化 StateStore、Fat JAR 隔离 ClassLoader、控制平面、HTTP/WebSocket 或真实输入/Robot 插件。它们仍按本章后续顺序演进，不应因为最小内核存在而被视为已完成。
 
 1. 建立 `kuudra-api` 的 Signal、Session、Component SPI、SystemEvent、StateStore 模型和错误模型；先完成不依赖真实输入的单元测试。
 2. 实现 `kuudra-state` 的嵌入式 StateStore，以及 KuudraRuntime（状态机、可替换的共享有界队列、KuudraFlow 公平调度、分支引用计数、取消、Actor 异步执行、SystemEventBus），以假的 SignalSource/Action 验证不变量。

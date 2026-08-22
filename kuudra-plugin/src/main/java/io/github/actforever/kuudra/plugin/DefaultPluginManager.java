@@ -27,6 +27,7 @@ public final class DefaultPluginManager implements AutoCloseable {
     private final Path pluginsHome;
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
+    private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
     private List<String> startedOrder = List.of();
 
     public DefaultPluginManager(Path pluginsHome) {
@@ -44,6 +45,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         }
         plugins.put(plugin.id(), plugin);
         states.put(plugin.id(), PluginState.REGISTERED);
+        resources.put(plugin.id(), new ManagedResources());
     }
 
     public synchronized PluginState state(String pluginId) {
@@ -110,7 +112,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             markFailed(pluginId);
             return CompletableFuture.failedFuture(exception);
         }
-        return invoke(plugin, current -> current.initialize(new PluginContext(pluginId, home)))
+        return invoke(plugin, current -> current.initialize(new PluginContext(pluginId, home, resources.get(pluginId))))
                 .thenRun(() -> mark(pluginId, PluginState.INITIALIZED))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> mark(pluginId, PluginState.ACTIVE))
@@ -127,6 +129,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         }
         return invoke(plugin, KuudraPlugin::stop)
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::destroy))
+                .thenRun(() -> closeResources(pluginId))
                 .thenRun(() -> mark(pluginId, PluginState.STOPPED))
                 .exceptionallyCompose(error -> failed(pluginId, error));
     }
@@ -153,6 +156,10 @@ public final class DefaultPluginManager implements AutoCloseable {
     private CompletionStage<Void> failed(String pluginId, Throwable error) {
         markFailed(pluginId);
         return CompletableFuture.failedFuture(error);
+    }
+
+    private void closeResources(String pluginId) {
+        resources.get(pluginId).closeAll();
     }
 
     private List<String> dependencyOrder() {
@@ -187,5 +194,39 @@ public final class DefaultPluginManager implements AutoCloseable {
     @Override
     public void close() {
         stopAll().toCompletableFuture().join();
+    }
+
+    private static final class ManagedResources implements PluginResourceRegistry {
+        private final LinkedHashMap<String, AutoCloseable> resources = new LinkedHashMap<>();
+
+        @Override
+        public synchronized void register(String name, AutoCloseable resource) {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(resource, "resource");
+            if (name.isBlank() || resources.putIfAbsent(name, resource) != null) {
+                throw new IllegalArgumentException("Duplicate or blank plugin resource: " + name);
+            }
+        }
+
+        @Override
+        public synchronized List<String> names() {
+            return List.copyOf(resources.keySet());
+        }
+
+        private synchronized void closeAll() {
+            List<AutoCloseable> closeOrder = new ArrayList<>(resources.values());
+            Collections.reverse(closeOrder);
+            resources.clear();
+            RuntimeException failure = null;
+            for (AutoCloseable resource : closeOrder) {
+                try {
+                    resource.close();
+                } catch (Exception error) {
+                    if (failure == null) failure = new IllegalStateException("Failed to close plugin resource", error);
+                    else failure.addSuppressed(error);
+                }
+            }
+            if (failure != null) throw failure;
+        }
     }
 }
