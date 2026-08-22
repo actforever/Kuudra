@@ -1,8 +1,9 @@
 package io.github.actforever.kuudra.api;
 
 import java.util.concurrent.CompletionStage;
+import java.util.List;
 
 @FunctionalInterface
 public interface Actor {
-    CompletionStage<Void> act(Signal signal, ActionContext context);
+    CompletionStage<List<Signal>> act(Signal signal, ActionContext context);
 }

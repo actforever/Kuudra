@@ -16,10 +16,7 @@
 
 ```powershell
 .\mvnw.cmd test
-java -cp "kuudra-app\target\classes;kuudra-runtime\target\classes;kuudra-api\target\classes" io.github.actforever.kuudra.app.DoubleClickDemo
-java -cp "kuudra-app\target\classes;kuudra-runtime\target\classes;kuudra-api\target\classes" io.github.actforever.kuudra.app.RuntimeSmokeCheck
-java -cp "kuudra-app\target\classes;kuudra-runtime\target\classes;kuudra-api\target\classes;kuudra-config\target\classes" io.github.actforever.kuudra.app.ConfiguredDemo
-java -cp "kuudra-app\target\classes;kuudra-runtime\target\classes;kuudra-api\target\classes" io.github.actforever.kuudra.app.SessionPolicyCheck
+java -cp "kuudra-app\target\classes;kuudra-runtime\target\classes;kuudra-api\target\classes;kuudra-config\target\classes" io.github.actforever.kuudra.app.KuudraDemo
 ```
 
 预期最后两行包含：

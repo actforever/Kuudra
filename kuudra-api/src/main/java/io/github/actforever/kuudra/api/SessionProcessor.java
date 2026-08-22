@@ -1,8 +1,8 @@
 package io.github.actforever.kuudra.api;
 
-import java.util.Optional;
+import java.util.List;
 
 @FunctionalInterface
 public interface SessionProcessor {
-    Optional<SessionSpec> process(RawSignal signal, RuntimeStateView state);
+    List<RootSignal> process(RawSignal signal, SessionProcessorContext context);
 }
