@@ -37,11 +37,12 @@ public final class KuudraLog {
         return CONTEXT;
     }
 
-    /** Opens one kernel log lifecycle, truncating latest.log and archiving it on close. */
+    /** Opens one kernel log lifecycle, replacing the previous latest.log and archiving it on close. */
     public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.SystemEventBus events) throws IOException {
         Path directory = logsDirectory.toAbsolutePath().normalize();
         Files.createDirectories(directory);
         Path latest = directory.resolve("latest.log");
+        Files.deleteIfExists(latest);
         Logger logger = CONTEXT.getLogger("io.github.actforever.kuudra.session." + UUID.randomUUID());
         logger.setAdditive(true);
         FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file = new FileAppender<>();
@@ -103,7 +104,6 @@ public final class KuudraLog {
                 try (var input = Files.newInputStream(latest); var output = new GZIPOutputStream(Files.newOutputStream(archive))) {
                     input.transferTo(output);
                 }
-                Files.delete(latest);
             } catch (IOException error) {
                 throw new IllegalStateException("Failed to archive Kuudra latest.log", error);
             }

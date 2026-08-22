@@ -69,7 +69,7 @@ class KuudraAppTest {
         assertTrue(Files.isDirectory(home.resolve("plugins")));
         assertTrue(Files.isDirectory(home.resolve("flows")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
-        assertTrue(Files.notExists(home.resolve("logs/latest.log")));
+        assertTrue(Files.readString(home.resolve("logs/latest.log")).contains("app.stopped"));
         Path archive;
         try (var files = Files.list(home.resolve("logs"))) {
             archive = files.filter(path -> path.getFileName().toString().endsWith(".log.gz")).findFirst().orElseThrow();

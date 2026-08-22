@@ -16,7 +16,6 @@ import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraLogTest {
@@ -36,7 +35,7 @@ class KuudraLogTest {
             bus.publish(SystemEvent.of("plugin.active", Map.of("pluginId", "keyboard")));
             assertTrue(Files.readString(logs.resolve("latest.log")).contains("plugin.active"));
         }
-        assertFalse(Files.exists(logs.resolve("latest.log")));
+        assertTrue(Files.readString(logs.resolve("latest.log")).contains("plugin.active"));
         Path first;
         try (var files = Files.list(logs)) {
             first = files.filter(path -> path.getFileName().toString().endsWith("-1.log.gz")).findFirst().orElseThrow();
@@ -44,8 +43,10 @@ class KuudraLogTest {
         assertTrue(unzip(first).contains("pluginId=keyboard"));
 
         try (KuudraLogSession ignored = KuudraLog.openSession(logs, bus)) {
+            assertEquals("", Files.readString(logs.resolve("latest.log")));
             bus.publish(SystemEvent.of("app.stopped", Map.of()));
         }
+        assertTrue(Files.readString(logs.resolve("latest.log")).contains("app.stopped"));
         try (var files = Files.list(logs)) {
             assertTrue(files.anyMatch(path -> path.getFileName().toString().endsWith("-2.log.gz")));
         }
