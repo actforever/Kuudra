@@ -12,6 +12,17 @@ App 按以下顺序深度合并配置，同名值由高优先级覆盖：
 
 `home-directory` 由内置默认和显式配置共同确定，默认值为 `.kuudra`。家目录配置可以覆盖内置配置的任意部分；显式配置还可覆盖家目录配置。映射会递归合并，未覆盖的嵌套值继续保留。
 
+确定家目录后，App 会在解析用户配置和启动内核前统一初始化以下结构：
+
+```text
+<home-directory>/
+  config.yaml
+  plugins/
+  flows/
+```
+
+若 `config.yaml` 不存在，App 使用只创建、不覆盖的方式将包内 `classpath:/config.yaml` 原样复制到该位置；已有普通文件永远不会被改写。若 `config.yaml` 被误配，可删除它并重启，App 会重新生成一份当前版本的默认配置。若该路径存在但不是普通文件，或者目录无法创建/写入，启动会立即失败并给出路径错误。`plugins/` 与 `flows/` 即使为空也会在每次初始化时检查并补建。
+
 Standalone App 以当前工作目录作为相对路径基准；打包后的 Web 以可执行 JAR 所在目录为基准。旧的 `KUUDRA_CONFIG_PATH`、`kuudra.config.path` 和 Spring `kuudra.*` 配置入口不再使用。
 
 ## 配置格式
@@ -44,10 +55,11 @@ Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`
 
 启动顺序如下：
 
-1. App 合并三层配置，`KuudraYamlLoader` 编译全局配置与 Flow YAML；
-2. App 扫描插件目录中的 `*.jar`，读取 `META-INF/kuudra-plugin/metadata.toml`；
-3. `DefaultPluginManager` 按依赖关系启动全部插件并注册组件；
-4. App 编译并注册 Flow，再启动其中启用的 EventSource 资源。
+1. App 读取包内默认配置以确定家目录，补建家目录、默认 `config.yaml`、`plugins/` 和 `flows/`；
+2. App 合并三层配置，`KuudraYamlLoader` 编译全局配置与 Flow YAML；
+3. App 扫描插件目录中的 `*.jar`，读取 `META-INF/kuudra-plugin/metadata.toml`；
+4. `DefaultPluginManager` 按依赖关系启动全部插件并注册组件；
+5. App 编译并注册 Flow，再启动其中启用的 EventSource 资源。
 
 任一步失败都会使 App 进入 `FAILED` 并释放已创建的 Runtime、插件与 ClassLoader。`POST /api/v1/app/restart` 使用 App 创建时已经合并并编译的配置重新建立内核。
 

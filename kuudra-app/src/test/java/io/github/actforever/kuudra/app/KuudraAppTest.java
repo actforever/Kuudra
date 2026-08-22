@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraAppTest {
     @TempDir Path directory;
@@ -55,14 +56,45 @@ class KuudraAppTest {
     @Test
     void loadsHomeConfigurationOverPackagedDefaults() throws Exception {
         Path home = Files.createDirectories(directory.resolve(".kuudra"));
-        Files.writeString(home.resolve("config.yaml"), """
+        String userConfiguration = """
                 global-context:
                   source: home
-                """);
+                """;
+        Files.writeString(home.resolve("config.yaml"), userConfiguration);
 
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             assertEquals("home", app.globalContext().get("source"));
         }
+        assertEquals(userConfiguration, Files.readString(home.resolve("config.yaml")));
+        assertTrue(Files.isDirectory(home.resolve("plugins")));
+        assertTrue(Files.isDirectory(home.resolve("flows")));
+    }
+
+    @Test
+    void initializesHomeWithPackagedConfigurationAndRequiredDirectories() throws Exception {
+        Path home = directory.resolve(".kuudra");
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("RUNNING", app.health().status());
+        }
+
+        assertTrue(Files.readString(home.resolve("config.yaml")).contains("home-directory: .kuudra"));
+        assertTrue(Files.isDirectory(home.resolve("plugins")));
+        assertTrue(Files.isDirectory(home.resolve("flows")));
+    }
+
+    @Test
+    void deletingInvalidHomeConfigurationRestoresPackagedDefaultsOnRestart() throws Exception {
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Path configuration = home.resolve("config.yaml");
+        Files.writeString(configuration, "- invalid-root");
+        assertThrows(java.io.IOException.class, () -> KuudraApp.createFromDefaultLocations(directory));
+
+        Files.delete(configuration);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("RUNNING", app.health().status());
+        }
+        assertTrue(Files.readString(configuration).contains("global-context: {}"));
     }
 
     @Test

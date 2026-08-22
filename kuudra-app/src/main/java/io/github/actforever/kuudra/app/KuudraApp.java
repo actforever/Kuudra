@@ -27,7 +27,9 @@ import io.github.actforever.kuudra.runtime.KuudraFlow;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
 import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -86,18 +88,38 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         KuudraConfigResource defaults;
         try (var input = KuudraApp.class.getClassLoader().getResourceAsStream("config.yaml")) {
             if (input == null) throw new IOException("Packaged Kuudra configuration is missing: classpath:/config.yaml");
-            defaults = KuudraYamlLoader.readResource(input, base, "classpath:/config.yaml");
+            byte[] defaultConfiguration = input.readAllBytes();
+            defaults = KuudraYamlLoader.readResource(new ByteArrayInputStream(defaultConfiguration), base, "classpath:/config.yaml");
+            KuudraConfigResource discovery = KuudraYamlLoader.merge(base, "Kuudra configuration discovery", defaults, explicit);
+            Object configuredHome = discovery.values().get("home-directory");
+            if (!(configuredHome instanceof String home) || home.isBlank()) {
+                throw new IOException("Expected non-blank string at home-directory");
+            }
+            Path homeDirectory = base.resolve(home).normalize();
+            initializeHomeDirectory(homeDirectory, defaultConfiguration);
+            KuudraConfigResource homeConfig = KuudraYamlLoader.readResource(homeDirectory.resolve("config.yaml"));
+            KuudraConfigResource merged = KuudraYamlLoader.merge(base, "merged Kuudra configuration", defaults, homeConfig, explicit);
+            return KuudraYamlLoader.load(merged);
         }
-        KuudraConfigResource discovery = KuudraYamlLoader.merge(base, "Kuudra configuration discovery", defaults, explicit);
-        Object configuredHome = discovery.values().get("home-directory");
-        if (!(configuredHome instanceof String home) || home.isBlank()) {
-            throw new IOException("Expected non-blank string at home-directory");
+    }
+
+    private static void initializeHomeDirectory(Path homeDirectory, byte[] defaultConfiguration) throws IOException {
+        Files.createDirectories(homeDirectory);
+        Files.createDirectories(homeDirectory.resolve("plugins"));
+        Files.createDirectories(homeDirectory.resolve("flows"));
+        Path homeConfigFile = homeDirectory.resolve("config.yaml");
+        if (Files.exists(homeConfigFile) && !Files.isRegularFile(homeConfigFile)) {
+            throw new IOException("Kuudra home configuration is not a regular file: " + homeConfigFile);
         }
-        Path homeConfigFile = base.resolve(home).normalize().resolve("config.yaml");
-        KuudraConfigResource homeConfig = Files.isRegularFile(homeConfigFile)
-                ? KuudraYamlLoader.readResource(homeConfigFile) : null;
-        KuudraConfigResource merged = KuudraYamlLoader.merge(base, "merged Kuudra configuration", defaults, homeConfig, explicit);
-        return KuudraYamlLoader.load(merged);
+        if (!Files.exists(homeConfigFile)) {
+            try {
+                Files.write(homeConfigFile, defaultConfiguration, java.nio.file.StandardOpenOption.CREATE_NEW);
+            } catch (FileAlreadyExistsException concurrentCreation) {
+                if (!Files.isRegularFile(homeConfigFile)) {
+                    throw concurrentCreation;
+                }
+            }
+        }
     }
 
     @Override public synchronized void start() {
