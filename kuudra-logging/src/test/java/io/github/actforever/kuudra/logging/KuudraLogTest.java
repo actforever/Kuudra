@@ -16,6 +16,7 @@ import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraLogTest {
@@ -49,6 +50,38 @@ class KuudraLogTest {
         assertTrue(Files.readString(logs.resolve("latest.log")).contains("app.stopped"));
         try (var files = Files.list(logs)) {
             assertTrue(files.anyMatch(path -> path.getFileName().toString().endsWith("-2.log.gz")));
+        }
+    }
+
+    @Test
+    void appliesLevelAndFileOutputConfiguration() throws Exception {
+        TestBus bus = new TestBus();
+        Path logs = directory.resolve("configured-logs");
+        KuudraLogConfiguration configuration = new KuudraLogConfiguration(KuudraLogLevel.ERROR, false, true);
+        try (KuudraLogSession ignored = KuudraLog.openSession(logs, bus, configuration)) {
+            bus.publish(SystemEvent.of("app.running", Map.of()));
+            bus.publish(SystemEvent.of("app.failed", Map.of("reason", "test")));
+        }
+        String latest = Files.readString(logs.resolve("latest.log"));
+        assertFalse(latest.contains("app.running"));
+        assertTrue(latest.contains("app.failed"));
+    }
+
+    @Test
+    void disabledFileOutputDoesNotReplaceOrArchiveLatestLog() throws Exception {
+        TestBus bus = new TestBus();
+        Path logs = Files.createDirectories(directory.resolve("console-only"));
+        Path latest = logs.resolve("latest.log");
+        Files.writeString(latest, "previous run");
+        KuudraLogConfiguration configuration = new KuudraLogConfiguration(KuudraLogLevel.INFO, false, false);
+
+        try (KuudraLogSession ignored = KuudraLog.openSession(logs, bus, configuration)) {
+            bus.publish(SystemEvent.of("app.running", Map.of()));
+        }
+
+        assertEquals("previous run", Files.readString(latest));
+        try (var files = Files.list(logs)) {
+            assertFalse(files.anyMatch(path -> path.getFileName().toString().endsWith(".log.gz")));
         }
     }
 

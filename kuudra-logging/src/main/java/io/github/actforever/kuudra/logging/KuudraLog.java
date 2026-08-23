@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
@@ -39,22 +40,45 @@ public final class KuudraLog {
 
     /** Opens one kernel log lifecycle, replacing the previous latest.log and archiving it on close. */
     public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.SystemEventBus events) throws IOException {
+        return openSession(logsDirectory, events, KuudraLogConfiguration.DEFAULT);
+    }
+
+    /** Opens one configured kernel log lifecycle. */
+    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.SystemEventBus events,
+                                               KuudraLogConfiguration configuration) throws IOException {
+        Objects.requireNonNull(events, "events");
+        Objects.requireNonNull(configuration, "configuration");
         Path directory = logsDirectory.toAbsolutePath().normalize();
         Files.createDirectories(directory);
         Path latest = directory.resolve("latest.log");
-        Files.deleteIfExists(latest);
         Logger logger = CONTEXT.getLogger("io.github.actforever.kuudra.session." + UUID.randomUUID());
-        logger.setAdditive(true);
-        FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file = new FileAppender<>();
-        file.setContext(CONTEXT);
-        file.setName("KUUDRA_FILE_" + UUID.randomUUID());
-        file.setFile(latest.toString());
-        file.setAppend(false);
-        file.setEncoder(encoder(CONTEXT, "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %msg%n"));
-        file.start();
-        logger.addAppender(file);
+        logger.setLevel(level(configuration.level()));
+        logger.setAdditive(configuration.consoleEnabled());
+        FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file = null;
+        if (configuration.fileEnabled()) {
+            Files.deleteIfExists(latest);
+            file = new FileAppender<>();
+            file.setContext(CONTEXT);
+            file.setName("KUUDRA_FILE_" + UUID.randomUUID());
+            file.setFile(latest.toString());
+            file.setAppend(false);
+            file.setEncoder(encoder(CONTEXT, "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %msg%n"));
+            file.start();
+            logger.addAppender(file);
+        }
         AutoCloseable subscription = events.subscribe(event -> write(logger, event));
-        return new Session(directory, latest, logger, file, subscription);
+        return new Session(directory, latest, logger, file, subscription, configuration.fileEnabled());
+    }
+
+    private static Level level(KuudraLogLevel level) {
+        return switch (level) {
+            case TRACE -> Level.TRACE;
+            case DEBUG -> Level.DEBUG;
+            case INFO -> Level.INFO;
+            case WARN -> Level.WARN;
+            case ERROR -> Level.ERROR;
+            case OFF -> Level.OFF;
+        };
     }
 
     private static LoggerContext createContext() {
@@ -87,15 +111,19 @@ public final class KuudraLog {
 
     private static final class Session implements KuudraLogSession {
         private final Path directory; private final Path latest; private final Logger logger;
-        private final FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file; private final AutoCloseable subscription; private boolean closed;
+        private final FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file; private final AutoCloseable subscription;
+        private final boolean archiveFile; private boolean closed;
         private Session(Path directory, Path latest, Logger logger,
-                        FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file, AutoCloseable subscription) {
-            this.directory = directory; this.latest = latest; this.logger = logger; this.file = file; this.subscription = subscription;
+                        FileAppender<ch.qos.logback.classic.spi.ILoggingEvent> file, AutoCloseable subscription,
+                        boolean archiveFile) {
+            this.directory = directory; this.latest = latest; this.logger = logger; this.file = file;
+            this.subscription = subscription; this.archiveFile = archiveFile;
         }
         @Override public synchronized void close() {
             if (closed) return; closed = true;
             try { subscription.close(); } catch (Exception error) { throw new IllegalStateException("Failed to unsubscribe Kuudra logging", error); }
-            logger.detachAppender(file); file.stop();
+            if (file != null) { logger.detachAppender(file); file.stop(); }
+            if (!archiveFile) return;
             try {
                 if (!Files.exists(latest)) return;
                 String date = LocalDate.now(ZoneId.systemDefault()).toString();

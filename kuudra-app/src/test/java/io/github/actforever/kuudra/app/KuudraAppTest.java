@@ -129,6 +129,24 @@ class KuudraAppTest {
     }
 
     @Test
+    void appliesLoggingConfigurationFromHomeYaml() throws Exception {
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Files.writeString(home.resolve("config.yaml"), """
+                logging:
+                  level: error
+                  console-enabled: false
+                  file-enabled: false
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("RUNNING", app.health().status());
+        }
+
+        assertTrue(Files.isDirectory(home.resolve("logs")));
+        assertEquals(false, Files.exists(home.resolve("logs/latest.log")));
+    }
+
+    @Test
     void rejectsEveryInvalidJarInTheFixedPluginDirectory() throws Exception {
         Path plugins = Files.createDirectories(directory.resolve(".kuudra/plugins"));
         Files.writeString(plugins.resolve("not-a-kuudra-plugin.jar"), "invalid jar");

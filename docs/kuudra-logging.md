@@ -12,9 +12,28 @@ Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。它们�
 
 当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。SSE 等其他观察者仍可同时订阅同一总线，日志不会反向进入业务 Event 管线。
 
+## 配置接口
+
+`kuudra-logging` 对外提供不依赖 Spring 或 YAML 的 `KuudraLogConfiguration` 和 `KuudraLogLevel`。宿主通过 `KuudraLog.openSession(logsDirectory, events, configuration)` 创建日志会话；原有双参数方法继续使用默认配置。
+
+`kuudra-app` 将根配置中的 `logging` 映射到该接口：
+
+```yaml
+logging:
+  level: info
+  console-enabled: true
+  file-enabled: true
+```
+
+- `level` 是所有 Kuudra 内核输出的最低级别，支持 `trace`、`debug`、`info`、`warn`、`error`、`off`，大小写不敏感；
+- `console-enabled` 单独控制粗体彩色终端输出；
+- `file-enabled` 单独控制 `latest.log` 和停止时的 gzip 归档。
+
+关闭文件输出时不会创建、删除或归档 `latest.log`；已有日志文件保持不变。日志目录仍固定为 `<home-directory>/logs`，不会通过配置改变。
+
 ## 文件策略
 
-日志目录固定为 `<home-directory>/logs/`，App 初始化家目录时必须检查并创建它。每次启动内核：
+启用文件输出时，日志目录固定为 `<home-directory>/logs/`，App 初始化家目录时无论文件输出是否启用都必须检查并创建它。每次启动内核：
 
 1. 删除上一份 `logs/latest.log`，再创建一份属于本次运行的新 `latest.log`；
 2. 内核运行期间同步追加纯文本事件日志；

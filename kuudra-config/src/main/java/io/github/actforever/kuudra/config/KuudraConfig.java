@@ -12,8 +12,9 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from config.yaml and the definitions in flows/. */
-    public record RuntimeConfig(RuntimeSettings runtime, Path homeDirectory, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+    public record RuntimeConfig(RuntimeSettings runtime, LoggingSettings logging, Path homeDirectory, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
         public RuntimeConfig {
+            if (runtime == null || logging == null) throw new IllegalArgumentException("runtime and logging settings must not be null");
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
             flows = Map.copyOf(flows);
@@ -21,6 +22,11 @@ public final class KuudraConfig {
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads) {
         public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }
+    }
+    public record LoggingSettings(String level, boolean consoleEnabled, boolean fileEnabled) {
+        public LoggingSettings {
+            if (level == null || level.isBlank()) throw new IllegalArgumentException("logging level must not be blank");
+        }
     }
 
     /** Compose-style Flow scope: named components plus their routing graph. */

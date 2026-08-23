@@ -55,9 +55,17 @@ public final class KuudraYamlLoader {
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
+        Map<String, Object> logging = optionalMapping(root, "logging");
+        String loggingLevel = string(logging.getOrDefault("level", "info"), "logging.level").toUpperCase(java.util.Locale.ROOT);
+        if (!java.util.Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF").contains(loggingLevel)) {
+            throw new IOException("Unsupported logging.level: " + loggingLevel);
+        }
+        boolean consoleEnabled = bool(logging.get("console-enabled"), true);
+        boolean fileEnabled = bool(logging.get("file-enabled"), true);
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         Map<String, KuudraConfig.FlowConfig> flows = loadFlows(homeDirectory.resolve("flows"));
-        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads), homeDirectory,
+        return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads),
+                new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled), homeDirectory,
                 optionalMapping(root, "global-context"), flows);
     }
 

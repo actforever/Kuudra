@@ -27,6 +27,8 @@ import io.github.actforever.kuudra.runtime.KuudraFlow;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
 import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
 import io.github.actforever.kuudra.logging.KuudraLog;
+import io.github.actforever.kuudra.logging.KuudraLogConfiguration;
+import io.github.actforever.kuudra.logging.KuudraLogLevel;
 import io.github.actforever.kuudra.logging.KuudraLogSession;
 
 import java.io.ByteArrayInputStream;
@@ -130,7 +132,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (status == AppStatus.RUNNING || status == AppStatus.STARTING) return;
         try {
             Path home = bootstrapConfig == null ? Path.of(".kuudra") : bootstrapConfig.homeDirectory();
-            logSession = KuudraLog.openSession(home.resolve("logs"), events);
+            KuudraLogConfiguration logging = bootstrapConfig == null
+                    ? KuudraLogConfiguration.DEFAULT
+                    : new KuudraLogConfiguration(KuudraLogLevel.valueOf(bootstrapConfig.logging().level()),
+                    bootstrapConfig.logging().consoleEnabled(), bootstrapConfig.logging().fileEnabled());
+            logSession = KuudraLog.openSession(home.resolve("logs"), events, logging);
             status = AppStatus.STARTING; publish("app.starting");
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();

@@ -35,8 +35,14 @@ home-directory: .kuudra
 runtime:
   queue-capacity: 1024
   worker-threads: 2
+logging:
+  level: info
+  console-enabled: true
+  file-enabled: true
 global-context: {}
 ```
+
+`logging.level` 支持 `trace`、`debug`、`info`、`warn`、`error` 和 `off`，大小写不敏感。`console-enabled` 控制独立的彩色终端输出，`file-enabled` 控制 `latest.log` 与 gzip 归档；二者可以分别关闭。日志目录位置仍固定为 `<home-directory>/logs`，不接受外部路径配置。
 
 插件与 Flow 使用固定的 Kuudra 家目录布局，不再提供 `plugins.directories`、`plugins.home-directory`、`plugins.load` 或 `flows-directory` 配置项：
 

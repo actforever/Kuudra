@@ -81,6 +81,10 @@ home-directory: .kuudra
 runtime:
   queue-capacity: 1024
   worker-threads: 2
+logging:
+  level: info
+  console-enabled: true
+  file-enabled: true
 global-context: {}
 ```
 

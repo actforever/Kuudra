@@ -21,6 +21,10 @@ class KuudraConfigTest {
                 runtime:
                   queue-capacity: 32
                   worker-threads: 2
+                logging:
+                  level: warn
+                  console-enabled: false
+                  file-enabled: true
                 global-context:
                   profile: demo
                 """);
@@ -46,6 +50,9 @@ class KuudraConfigTest {
                 """);
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
         assertEquals(32, config.runtime().queueCapacity());
+        assertEquals("WARN", config.logging().level());
+        assertEquals(false, config.logging().consoleEnabled());
+        assertEquals(true, config.logging().fileEnabled());
         assertEquals(home.toAbsolutePath().normalize(), config.homeDirectory());
         assertEquals("demo", config.flows().get("demo").id());
         assertEquals("actor", config.flows().get("demo").nodes().get("actor").type());
@@ -66,6 +73,9 @@ class KuudraConfigTest {
 
         assertEquals(48, config.runtime().queueCapacity());
         assertEquals(3, config.runtime().workerThreads());
+        assertEquals("INFO", config.logging().level());
+        assertEquals(true, config.logging().consoleEnabled());
+        assertEquals(true, config.logging().fileEnabled());
         assertEquals(directory.resolve("custom-home").toAbsolutePath().normalize(), config.homeDirectory());
         assertEquals("host", config.globalContext().get("profile"));
     }
@@ -76,5 +86,11 @@ class KuudraConfigTest {
                 Map.of("plugins", Map.of()), directory, "legacy plugin configuration")));
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
                 Map.of("flows-directory", "flows"), directory, "legacy flow configuration")));
+    }
+
+    @Test
+    void rejectsUnsupportedLoggingLevel() {
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
+                Map.of("logging", Map.of("level", "verbose")), directory, "invalid logging configuration")));
     }
 }
