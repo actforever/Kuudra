@@ -18,3 +18,5 @@ Kuudra 的当前内核以单一 `Event` 和单一 `KuudraTaskQueue` 驱动。完
 | `kuudra-web` | 唯一 HTTP 适配器：将 App 管理接口适配为 REST、SSE 与后续 WebSocket。 |
 
 `KuudraRuntime` 在一个 App 实例内唯一；Flow 是逻辑隔离和调度单元，不是独立消息队列。插件组件通过 `type/namespace/name` 引用，例如 `event-source/hello-world/loop-emitter`。控制平面、热重载、持久化 StateStore 与 WebSocket 适配是后续在此内核上增加的能力，不能改变 Event 路由和会话不变量。
+
+下一阶段配置将从“Flow 内嵌组件”演进为 K8s 风格资源清单：插件定义能力，Component 资源声明命名实例，Flow 通过 imports 和 edges 编排实例。App 使用期望状态调谐组件、绑定和 Flow，不按实现类型隐式创建全局单例。完整目标及迁移边界见 [资源清单与调谐模型](kuudra-resource-manifests.md)。

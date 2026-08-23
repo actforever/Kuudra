@@ -147,6 +147,7 @@ Kuudra 的长期目标是让自动化能力以插件和声明式 Flow 组合，�
 - [插件运行目录与加载](docs/kuudra-plugin-layout.md)
 - [App 管理 API](docs/kuudra-app-management.md)
 - [资源控制模型](docs/kuudra-resource-management.md)
+- [资源清单与调谐模型](docs/kuudra-resource-manifests.md)
 - [Web 配置](docs/kuudra-web-configuration.md)
 - [内核日志](docs/kuudra-logging.md)
 

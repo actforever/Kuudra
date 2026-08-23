@@ -33,7 +33,7 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 
 Actor 同样采用显式复用。插件作者单方面声明 `singleton` 不足以决定部署语义，因为同一 Actor 可能需要不同 options，且内部状态未必适合并发共享。更合理的约束是：插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类底层稀缺对象，插件也可以把 Robot 封装成插件生命周期内的共享服务，而让轻量 Actor 实例继续保持隔离。
 
-这套模型尚未进入当前 YAML schema。本节定义演进方向，实施时需要同步修改配置模型、App 资源身份、Runtime 的一对多 EventSource 注册、生命周期回滚和资源 API，不能先加入基于类型的实例缓存。
+这套模型尚未进入当前 YAML schema。本节定义演进方向，实施时需要同步修改配置模型、App 资源身份、Runtime 的一对多 EventSource 注册、生命周期回滚和资源 API，不能先加入基于类型的实例缓存。目标清单格式、实例约束、调谐 API、家目录和迁移步骤见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
 
 ## 状态语义
 
