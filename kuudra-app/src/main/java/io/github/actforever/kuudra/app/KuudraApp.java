@@ -115,7 +115,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private static void initializeHomeDirectory(Path homeDirectory, byte[] defaultConfiguration) throws IOException {
         Files.createDirectories(homeDirectory);
         Files.createDirectories(homeDirectory.resolve("plugins"));
-        Files.createDirectories(homeDirectory.resolve("flows"));
         Files.createDirectories(homeDirectory.resolve("manifests"));
         Files.createDirectories(homeDirectory.resolve("logs"));
         Files.createDirectories(homeDirectory.resolve("state"));
@@ -284,14 +283,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
             applyManifests(config.manifests());
-            for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
-            for (KuudraConfig.FlowConfig flow : config.flows().values()) {
-                for (KuudraConfig.SourceBinding source : flow.sources()) {
-                    ResourceKey key = new ResourceKey(flow.id(), source.id());
-                    if (eventSources.putIfAbsent(key, new ManagedEventSource(key, source.component(), source.targetNodeId(), null)) != null) throw new IllegalArgumentException("Duplicate EventSource resource: " + flow.id() + "/" + source.id());
-                    if (source.enabled()) startEventSource(flow.id(), source.id());
-                }
-            }
         } catch (IOException | RuntimeException error) {
             throw new IllegalStateException("Failed to apply Kuudra configuration", error);
         }
@@ -316,22 +307,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         try { logSession.close(); } finally { logSession = null; }
     }
 
-    private KuudraFlow compile(KuudraConfig.FlowConfig definition) {
-        Map<String, FlowNode> nodes = new LinkedHashMap<>();
-        for (KuudraConfig.NodeConfig node : definition.nodes().values()) {
-            FlowNode compiled = switch (node.type()) {
-                case "event-adapter" -> new FlowNode.AdapterNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), EventAdapter.class), node.options());
-                case "event-processor" -> new FlowNode.ProcessorNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), EventProcessor.class), node.options());
-                case "actor" -> new FlowNode.ActorNode(node.id(), requirePlugins().createComponent(componentReference(node.type(), node.component()), Actor.class), node.options());
-                case "session-allocator" -> new FlowNode.AllocatorNode(node.id(), sessionSpec(node));
-                default -> throw new IllegalArgumentException("Unsupported Flow node type: " + node.type());
-            };
-            nodes.put(node.id(), compiled);
-        }
-        Map<String, List<String>> edges = new LinkedHashMap<>();
-        for (KuudraConfig.EdgeConfig edge : definition.edges()) edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
-        return new KuudraFlow(definition.id(), nodes, edges);
-    }
 
     private void applyManifests(KuudraManifest.Resources resources) {
         if (resources.isEmpty()) return;
@@ -434,11 +409,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private static SessionSpec sessionSpec(String id, Map<String, Object> options) {
-        return sessionSpec(new KuudraConfig.NodeConfig(id, "session-allocator", "core/session-allocator", options));
-    }
-    private static SessionSpec sessionSpec(KuudraConfig.NodeConfig node) {
-        Map<String, Object> options = node.options();
-        String name = text(options.getOrDefault("name", node.id()));
+        String name = text(options.getOrDefault("name", id));
         String admissionKey = text(options.getOrDefault("admission-key", "default"));
         SessionPolicy policy = SessionPolicy.valueOf(text(options.getOrDefault("policy", SessionPolicy.PARALLEL.name())));
         ParentTerminationPolicy parent = ParentTerminationPolicy.valueOf(text(options.getOrDefault("parent-termination-policy", ParentTerminationPolicy.NONE.name())));

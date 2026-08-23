@@ -56,7 +56,7 @@ The minimal end-to-end path is implemented:
 ```text
 kuudra-web
   -> KuudraApp
-  -> config.yaml + manifests/**/*.yaml (legacy flows/*.yaml remains compatible)
+  -> config.yaml + manifests/**/*.yaml
   -> plugin JAR scan
   -> metadata/dependency resolution and plugin startup
   -> Flow compilation and EventSource registration
@@ -64,12 +64,12 @@ kuudra-web
 ```
 
 - App configuration is owned entirely by `KuudraApp`; Web does not source Kuudra settings from Spring. Configuration is deeply merged in ascending priority: packaged `kuudra-app/src/main/resources/config.yaml`, `<home-directory>/config.yaml`, then an explicit `KuudraConfigResource` or configuration path passed while creating the App. For packaged Web, relative paths use the executable JAR directory as their base; standalone App defaults to the working directory.
-- Global YAML contains root `home-directory`, runtime queue/worker settings, logging level/output switches and `global-context`. App config keys use lowercase kebab-case; K8s-style resource manifests use standard camelCase fields such as `apiVersion` and `desiredState`. App initialization ensures fixed `plugins/`, compatibility `flows/`, `manifests/`, `logs/`, and `state/` directories exist and restores a missing home `config.yaml` from packaged defaults.
+- Global YAML contains root `home-directory`, runtime queue/worker settings, logging level/output switches and `global-context`. App config keys use lowercase kebab-case; K8s-style resource manifests use standard camelCase fields such as `apiVersion` and `desiredState`. App initialization ensures fixed `plugins/`, `manifests/`, `logs/`, and `state/` directories exist and restores a missing home `config.yaml` from packaged defaults. Do not recreate a top-level `flows/` directory.
 - Each Flow YAML uses Compose-style `components` and `routes`. An `event-source` component is a separately controlled resource; other node types currently supported by the compiler are `event-adapter`, `event-processor`, `session-allocator`, and `actor`. The component `type` is declared by the node and `component` uses `namespace/component-id` (for example `hello-world/loop-emitter`), not the former duplicated type-prefixed form.
 - Flow is a scope for component names, routing and sessions; starting, pausing or stopping a Flow changes its routing/session gate and does not implicitly start or stop its resources. Event sources are queried and controlled through App resource APIs and `/api/v1/app/flows/{flowId}/resources/event-sources/...`.
 - Cross-Flow reuse is explicit: plugin definitions provide instance constraints, Component manifests define named App-owned instances, and Flow manifests import them. Sharing requires `shareable` and `threadSafe`; one EventSource can fan out to multiple Flow targets and starts/stops once.
-- K8s-style resources use camelCase keys (`apiVersion`, `desiredState`) under recursively discovered `<home>/manifests/`. Both Component and Flow are resource kinds, but dependency direction is strict: Flow `spec.imports` references Component identities; Component resources never reference Flow. Startup validates identities, references, kinds, limits and sharing safety. Generic resource APIs and continuous reconciliation remain future work; legacy `flows/` stays readable during migration.
-- Flow files live under fixed `<home-directory>/flows`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
+- K8s-style resources use camelCase keys (`apiVersion`, `desiredState`) under recursively discovered `<home>/manifests/`. Both Component and Flow are resource kinds, but dependency direction is strict: Flow `spec.imports` references Component identities; Component resources never reference Flow. Startup validates identities, references, kinds, limits and sharing safety. There is no legacy Flow schema or separate Flow configuration directory.
+- Component and Flow resources live under fixed `<home-directory>/manifests`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 - Logging event coverage, isolation and file rotation are documented in `docs/kuudra-logging.md`.
 
@@ -94,7 +94,7 @@ mvn -f plugins/pom.xml clean package
 
 The current machine has previously failed full forked tests because of a small Windows paging file. Running Surefire in-process can then fail Spring/Mockito's ByteBuddy self-attach requirement. These are environment failures, not established product failures. Prefer targeted module tests and a real packaged Web bootstrap verification; report the exact command and limitation in handoff/final output.
 
-For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write `.kuudra/config.yaml` and the referenced Flow YAML under `.kuudra/flows/`, launch `kuudra-web`, then query `GET /api/v1/app/status`. Expected result: `RUNNING`, one `hello-world` Flow, and HelloWorld Actor output.
+For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write Component and Flow manifests under `.kuudra/manifests/`, launch `kuudra-web`, then query `GET /api/v1/app/status`.
 
 ## Working rules
 

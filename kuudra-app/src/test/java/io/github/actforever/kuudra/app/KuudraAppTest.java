@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,7 +68,7 @@ class KuudraAppTest {
         }
         assertEquals(userConfiguration, Files.readString(home.resolve("config.yaml")));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
-        assertTrue(Files.isDirectory(home.resolve("flows")));
+        assertFalse(Files.exists(home.resolve("flows")));
         assertTrue(Files.isDirectory(home.resolve("manifests")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
         assertTrue(Files.isDirectory(home.resolve("state")));
@@ -94,7 +95,9 @@ class KuudraAppTest {
 
         assertTrue(Files.readString(home.resolve("config.yaml")).contains("home-directory: .kuudra"));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
-        assertTrue(Files.isDirectory(home.resolve("flows")));
+        assertFalse(Files.exists(home.resolve("flows")));
+        assertTrue(Files.isDirectory(home.resolve("manifests")));
+        assertTrue(Files.isDirectory(home.resolve("state")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
     }
 

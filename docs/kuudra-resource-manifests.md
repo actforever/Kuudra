@@ -1,6 +1,6 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。旧 `<home-directory>/flows/*.yaml` schema 在迁移期继续兼容；通用资源 API 与持续调谐仍是后续工作。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本只从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。通用资源 API 与持续调谐仍是后续工作。
 
 ## 设计目标
 
@@ -230,7 +230,6 @@ start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，
 3. 实现 App ResourceRegistry、依赖图和一次性事务式 reconcile；先覆盖 Component 创建和 Flow import。
 4. 将 EventSource emitter 改为一实例多绑定，并验证跨 Flow 启停与失败回滚。
 5. 增加统一资源 API 和 `kuudractl apply/get/delete`，再接入持久 ResourceRepository。
-6. 启用 `.kuudra/manifests/` 启动加载；迁移期可只读兼容 `flows/`，但同一 Flow 身份同时出现时必须报错。
-7. 示例、插件文档和部署工具完成迁移后，删除顶层 `flows/` 初始化与旧 Flow schema。
+6. 启用 `.kuudra/manifests/` 启动加载，并删除顶层 `flows/` 初始化与旧 Flow schema。
 
 整个迁移期间，Event/Session 路由不变量、插件依赖类加载和 App/Web 边界保持不变。

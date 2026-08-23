@@ -1,6 +1,6 @@
 # Kuudra 配置与启动
 
-当前启动链路是：`kuudra-web` 创建 `KuudraApp`；App 合并配置、加载并启动插件，递归读取 `manifests/` 中的 Component 与 Flow 资源，由 Flow 的 `imports` 引用 Component 并编排事件边，最后注册 Flow 并启动 EventSource。旧 `flows/` schema 在迁移期继续兼容。
+当前启动链路是：`kuudra-web` 创建 `KuudraApp`；App 合并配置、加载并启动插件，递归读取 `manifests/` 中的 Component 与 Flow 资源，由 Flow 的 `imports` 引用 Component 并编排事件边，最后注册 Flow 并启动 EventSource。
 
 ## 配置优先级
 
@@ -19,12 +19,11 @@ App 按以下顺序深度合并配置，同名值由高优先级覆盖：
   config.yaml
   plugins/
   manifests/
-  flows/        # 旧 Flow schema 兼容目录
   logs/
   state/
 ```
 
-若 `config.yaml` 不存在，App 使用只创建、不覆盖的方式将包内 `classpath:/config.yaml` 原样复制到该位置；已有普通文件永远不会被改写。若 `config.yaml` 被误配，可删除它并重启，App 会重新生成一份当前版本的默认配置。若该路径存在但不是普通文件，或者目录无法创建/写入，启动会立即失败并给出路径错误。`plugins/`、`manifests/`、`flows/`、`logs/` 与 `state/` 即使为空也会在每次初始化时检查并补建。
+若 `config.yaml` 不存在，App 使用只创建、不覆盖的方式将包内 `classpath:/config.yaml` 原样复制到该位置；已有普通文件永远不会被改写。若 `config.yaml` 被误配，可删除它并重启，App 会重新生成一份当前版本的默认配置。若该路径存在但不是普通文件，或者目录无法创建/写入，启动会立即失败并给出路径错误。`plugins/`、`manifests/`、`logs/` 与 `state/` 即使为空也会在每次初始化时检查并补建。
 
 Standalone App 以当前工作目录作为相对路径基准；打包后的 Web 以可执行 JAR 所在目录为基准。旧的 `KUUDRA_CONFIG_PATH`、`kuudra.config.path` 和 Spring `kuudra.*` 配置入口不再使用。
 
@@ -54,18 +53,19 @@ global-context: {}
   plugins/
     plugin-a.jar
     plugin-a/
-  flows/
+  manifests/
+    component-a.yaml
     flow-a.yaml
 ```
 
-App 会尝试加载 `plugins/` 下所有以 `.jar` 结尾的普通文件。每个 JAR 都必须包含合法的 `META-INF/kuudra-plugin/metadata.toml`、有效入口类与一致的插件 ID；缺少元数据、JAR 损坏、入口类错误、重复 ID、依赖缺失或依赖循环都会使 App 启动失败并退出内核。插件进入初始化时，其运行时家目录固定为 `plugins/<plugin-id>/`。`flows/` 下所有 `.yaml` 和 `.yml` 文件都会被加载。
+App 会尝试加载 `plugins/` 下所有以 `.jar` 结尾的普通文件。每个 JAR 都必须包含合法的 `META-INF/kuudra-plugin/metadata.toml`、有效入口类与一致的插件 ID；缺少元数据、JAR 损坏、入口类错误、重复 ID、依赖缺失或依赖循环都会使 App 启动失败并退出内核。插件进入初始化时，其运行时家目录固定为 `plugins/<plugin-id>/`。`manifests/` 下所有 `.yaml` 和 `.yml` 文件都会被递归加载。
 
-Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`、`event-adapter`、`event-processor`、`session-allocator` 和 `actor`；`component` 使用 `namespace/component-id`。Session Allocator 选项使用 `admission-key` 与 `parent-termination-policy` 等 kebab-case 键。
+资源使用 `apiVersion`、`kind`、`metadata` 和 `spec`。Component 声明实例与 options；Flow 使用 `imports` 导入 Component，并以 `edges` 编排路由。
 
 启动顺序如下：
 
-1. App 读取包内默认配置以确定家目录，补建家目录、默认 `config.yaml`、`plugins/`、`flows/` 和 `logs/`；
-2. App 合并三层配置，`KuudraYamlLoader` 编译全局配置与 Flow YAML；
+1. App 读取包内默认配置以确定家目录，补建家目录、默认 `config.yaml`、`plugins/`、`manifests/`、`logs/` 和 `state/`；
+2. App 合并三层配置，`KuudraYamlLoader` 编译全局配置与资源清单；
 3. App 扫描插件目录中的 `*.jar`，读取 `META-INF/kuudra-plugin/metadata.toml`；
 4. `DefaultPluginManager` 按依赖关系启动全部插件并注册组件；
 5. App 编译并注册 Flow，再启动其中启用的 EventSource 资源。
@@ -76,7 +76,7 @@ Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`
 
 占位符链路如下：
 
-1. `KuudraYamlLoader` 读取 Flow YAML，将节点 `options` 保存为未解析的 Map 模板；此时 Event 和 Session 尚不存在，因此不会做字符串替换。
+1. `KuudraYamlLoader` 读取 Component 清单，将 `spec.options` 保存为未解析的 Map 模板；此时 Event 和 Session 尚不存在，因此不会做字符串替换。
 2. `KuudraApp` 编译 Flow 时，把 Adapter、Processor 和 Actor 的 options 模板保存在对应 `FlowNode` 中。
 3. Runtime 注册 Flow 时调用 `PlaceholderResolver.compileMap`。这一阶段只执行一次正则扫描、字符串静态片段切分、表达式路径切分以及 Map/List 模板递归编译，并把每个节点的 `CompiledMap` 保存在 `RegisteredFlow` 中。语法结构不会在 Event 热路径中重复解释。
 4. 每个 Event 到达节点时，`KuudraRuntime.execute` 构造当前 `EventContext`，其中包含 Event、可选 Session、当前 Flow 和 Global 四级作用域的本次执行快照及可写上下文。
@@ -89,12 +89,13 @@ Flow YAML 使用 `components` 和 `routes`。节点 `type` 支持 `event-source`
 global-context:
   profile: production
 
-# <home-directory>/flows/example.yaml 中某个 actor 节点
-options:
-  key: ${input.key}                # 自动按 Event -> Session -> Flow -> Global 查找
-  mode: ${session#mode}            # 只查 Session
-  profile: ${global#profile}       # 只查 Global
-  label: ${flow.id}:${event.type}
+# <home-directory>/manifests/example-actor.yaml 的 spec 片段
+spec:
+  options:
+    key: ${input.key}                # 自动按 Event -> Session -> Flow -> Global 查找
+    mode: ${session#mode}            # 只查 Session
+    profile: ${global#profile}       # 只查 Global
+    label: ${flow.id}:${event.type}
 ```
 
 支持的表达式为：

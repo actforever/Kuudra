@@ -51,7 +51,7 @@ public final class KuudraYamlLoader {
         Path base = resource.baseDirectory();
         Map<String, Object> root = resource.values();
         if (root.containsKey("plugins")) throw new IOException("Configuration key 'plugins' has been removed; use <home-directory>/plugins");
-        if (root.containsKey("flows-directory")) throw new IOException("Configuration key 'flows-directory' has been removed; use <home-directory>/flows");
+        if (root.containsKey("flows-directory")) throw new IOException("Configuration key 'flows-directory' has been removed; use <home-directory>/manifests");
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
@@ -64,10 +64,9 @@ public final class KuudraYamlLoader {
         boolean fileEnabled = bool(logging.get("file-enabled"), true);
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         KuudraManifest.Resources manifests = loadManifests(homeDirectory.resolve("manifests"));
-        Map<String, KuudraConfig.FlowConfig> flows = loadFlows(homeDirectory.resolve("flows"));
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled), homeDirectory,
-                optionalMapping(root, "global-context"), manifests, flows);
+                optionalMapping(root, "global-context"), manifests);
     }
 
     private static KuudraManifest.Resources loadManifests(Path directory) throws IOException {
@@ -141,46 +140,6 @@ public final class KuudraYamlLoader {
         return Map.copyOf(result);
     }
 
-    private static Map<String, KuudraConfig.FlowConfig> loadFlows(Path directory) throws IOException {
-        if (!Files.exists(directory)) return Map.of();
-        if (!Files.isDirectory(directory)) throw new IOException("Flow directory is not a directory: " + directory);
-        Map<String, KuudraConfig.FlowConfig> result = new LinkedHashMap<>();
-        try (Stream<Path> files = Files.list(directory)) {
-            for (Path file : files.filter(path -> path.getFileName().toString().endsWith(".yaml") || path.getFileName().toString().endsWith(".yml")).sorted().toList()) {
-                Map<String, Object> root = mapping(read(file), file);
-                if (root.containsKey("apiVersion")) continue;
-                KuudraConfig.FlowConfig flow = flow(root);
-                if (result.putIfAbsent(flow.id(), flow) != null) throw new IOException("Duplicate Flow id: " + flow.id());
-            }
-        }
-        return Map.copyOf(result);
-    }
-    private static KuudraConfig.FlowConfig flow(Map<String, Object> map) throws IOException {
-        String id = string(required(map, "id"), "id");
-        Map<String, KuudraConfig.NodeConfig> nodes = new LinkedHashMap<>();
-        Map<String, Object> componentDefinitions = map.containsKey("components") ? optionalMapping(map, "components") : optionalMapping(map, "nodes");
-        for (Map.Entry<String, Object> entry : componentDefinitions.entrySet()) {
-            Map<String, Object> node = mapping(entry.getValue(), "node " + entry.getKey());
-            if ("event-source".equals(node.get("type"))) continue;
-            nodes.put(entry.getKey(), new KuudraConfig.NodeConfig(entry.getKey(), string(required(node, "type"), "node.type"),
-                    node.containsKey("component") ? string(node.get("component"), "node.component") : null, optionalMapping(node, "options")));
-        }
-        List<KuudraConfig.EdgeConfig> edges = new ArrayList<>();
-        for (Object item : list(map.containsKey("routes") ? map.get("routes") : map.get("edges"))) { Map<String, Object> edge = mapping(item, "edge"); edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to"))); }
-        List<KuudraConfig.SourceBinding> sources = new ArrayList<>();
-        if (map.containsKey("components")) {
-            for (Map.Entry<String, Object> entry : componentDefinitions.entrySet()) {
-                Map<String, Object> component = mapping(entry.getValue(), "component " + entry.getKey());
-                if ("event-source".equals(component.get("type"))) {
-                    sources.add(new KuudraConfig.SourceBinding(entry.getKey(), string(required(component, "component"), "component.component"),
-                            string(required(component, "target"), "component.target"), bool(component.get("enabled"), true)));
-                }
-            }
-        } else {
-            for (Object item : list(map.get("sources"))) { Map<String, Object> source = mapping(item, "source"); String component = string(required(source, "component"), "source.component"); sources.add(new KuudraConfig.SourceBinding(string(source.getOrDefault("id", component), "source.id"), component, string(required(source, "target-node-id"), "source.target-node-id"), bool(source.get("enabled"), true))); }
-        }
-        return new KuudraConfig.FlowConfig(id, nodes, edges, sources);
-    }
     private static Object read(Path file) throws IOException { try (Reader reader = Files.newBufferedReader(file)) { return new Yaml().load(reader); } }
     private static void mergeMappings(Map<String, Object> target, Map<String, Object> source) throws IOException {
         for (Map.Entry<String, Object> entry : source.entrySet()) {
