@@ -104,6 +104,27 @@ class KuudraRuntimeTest {
     }
 
     @Test
+    void oneSourceStartsOnceAndFansOutToMultipleFlows() throws Exception {
+        CountDownLatch delivered = new CountDownLatch(2);
+        AtomicReference<io.github.actforever.kuudra.api.EventEmitter> emitter = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger starts = new java.util.concurrent.atomic.AtomicInteger();
+        EventSource source = new EventSource() {
+            @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter value) { emitter.set(value); }
+            @Override public java.util.concurrent.CompletionStage<Void> start() { starts.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+            @Override public java.util.concurrent.CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
+        };
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 2)) {
+            for (String flowId : List.of("first", "second")) runtime.registerFlow(new KuudraFlow(flowId,
+                    Map.of("sink", new FlowNode.AdapterNode("sink", (event, context) -> { delivered.countDown(); return List.of(); })), Map.of()));
+            runtime.registerSource(List.of(new KuudraRuntime.SourceTarget("first", "sink"),
+                    new KuudraRuntime.SourceTarget("second", "sink")), source).toCompletableFuture().join();
+            assertTrue(emitter.get().emit(Event.of("test", EventData.empty())));
+            assertTrue(delivered.await(1, TimeUnit.SECONDS));
+            assertEquals(1, starts.get());
+        }
+    }
+
+    @Test
     void resolvesAutomaticAndExplicitScopesAndSharesTypedValues() throws Exception {
         CountDownLatch observed = new CountDownLatch(1);
         try (KuudraRuntime runtime = new KuudraRuntime(32, 1, Map.of("input", Map.of("shared", "global")))) {

@@ -68,7 +68,9 @@ class KuudraAppTest {
         assertEquals(userConfiguration, Files.readString(home.resolve("config.yaml")));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
         assertTrue(Files.isDirectory(home.resolve("flows")));
+        assertTrue(Files.isDirectory(home.resolve("manifests")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
+        assertTrue(Files.isDirectory(home.resolve("state")));
         assertTrue(Files.readString(home.resolve("logs/latest.log")).contains("app.stopped"));
         Path archive;
         try (var files = Files.list(home.resolve("logs"))) {

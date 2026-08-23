@@ -97,12 +97,30 @@ public final class KuudraRuntime implements AutoCloseable, RuntimeStateView {
 
     /** Binds a plugin EventSource to the first node of a Flow. Sources may only emit unbound Events. */
     public CompletionStage<SourceRegistration> registerSource(String flowId, String targetNodeId, EventSource source) {
-        synchronized (monitor) { requireFlow(flowId).flow.node(targetNodeId); }
+        return registerSource(List.of(new SourceTarget(flowId, targetNodeId)), source);
+    }
+
+    /** Binds one EventSource instance to one or more Flow entry nodes and starts it exactly once. */
+    public CompletionStage<SourceRegistration> registerSource(List<SourceTarget> targets, EventSource source) {
+        if (targets == null || targets.isEmpty()) throw new IllegalArgumentException("EventSource requires at least one target");
+        List<SourceTarget> bindings = List.copyOf(targets);
+        synchronized (monitor) {
+            for (SourceTarget target : bindings) requireFlow(target.flowId()).flow.node(target.targetNodeId());
+        }
         source.setEmitter(event -> {
             if (event.hasSession()) throw new IllegalArgumentException("EventSource must emit an unbound Event");
-            return publish(flowId, targetNodeId, event);
+            boolean accepted = false;
+            for (SourceTarget target : bindings) accepted |= publish(target.flowId(), target.targetNodeId(), event);
+            return accepted;
         });
         return source.start().thenApply(ignored -> registerSourceStop(source::stop));
+    }
+
+    public record SourceTarget(String flowId, String targetNodeId) {
+        public SourceTarget {
+            if (flowId == null || flowId.isBlank()) throw new IllegalArgumentException("flowId must not be blank");
+            if (targetNodeId == null || targetNodeId.isBlank()) throw new IllegalArgumentException("targetNodeId must not be blank");
+        }
     }
     private SourceRegistration registerSourceStop(java.util.function.Supplier<CompletionStage<Void>> stop) {
         AtomicBoolean removed = new AtomicBoolean(); AtomicReference<SourceRegistration> reference = new AtomicReference<>();

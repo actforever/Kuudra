@@ -1,6 +1,6 @@
 # Kuudra 配置与启动
 
-当前最小可用启动链路是：`kuudra-web` 创建 `KuudraApp`；App 合并配置，加载插件目录中的 JAR，解析插件元数据与依赖，启动插件，再将 `flows/*.yaml` 编译为 `KuudraFlow`，最后注册并启动每个事件源。
+当前启动链路是：`kuudra-web` 创建 `KuudraApp`；App 合并配置、加载并启动插件，递归读取 `manifests/` 中的 Component 与 Flow 资源，由 Flow 的 `imports` 引用 Component 并编排事件边，最后注册 Flow 并启动 EventSource。旧 `flows/` schema 在迁移期继续兼容。
 
 ## 配置优先级
 
@@ -18,11 +18,13 @@ App 按以下顺序深度合并配置，同名值由高优先级覆盖：
 <home-directory>/
   config.yaml
   plugins/
-  flows/
+  manifests/
+  flows/        # 旧 Flow schema 兼容目录
   logs/
+  state/
 ```
 
-若 `config.yaml` 不存在，App 使用只创建、不覆盖的方式将包内 `classpath:/config.yaml` 原样复制到该位置；已有普通文件永远不会被改写。若 `config.yaml` 被误配，可删除它并重启，App 会重新生成一份当前版本的默认配置。若该路径存在但不是普通文件，或者目录无法创建/写入，启动会立即失败并给出路径错误。`plugins/`、`flows/` 与 `logs/` 即使为空也会在每次初始化时检查并补建。
+若 `config.yaml` 不存在，App 使用只创建、不覆盖的方式将包内 `classpath:/config.yaml` 原样复制到该位置；已有普通文件永远不会被改写。若 `config.yaml` 被误配，可删除它并重启，App 会重新生成一份当前版本的默认配置。若该路径存在但不是普通文件，或者目录无法创建/写入，启动会立即失败并给出路径错误。`plugins/`、`manifests/`、`flows/`、`logs/` 与 `state/` 即使为空也会在每次初始化时检查并补建。
 
 Standalone App 以当前工作目录作为相对路径基准；打包后的 Web 以可执行 JAR 所在目录为基准。旧的 `KUUDRA_CONFIG_PATH`、`kuudra.config.path` 和 Spring `kuudra.*` 配置入口不再使用。
 

@@ -11,10 +11,12 @@ import java.util.Map;
 public final class KuudraConfig {
     private KuudraConfig() { }
 
-    /** Aggregate produced from config.yaml and the definitions in flows/. */
-    public record RuntimeConfig(RuntimeSettings runtime, LoggingSettings logging, Path homeDirectory, Map<String, Object> globalContext, Map<String, FlowConfig> flows) {
+    /** Aggregate produced from config.yaml, manifests/, and legacy flows/. */
+    public record RuntimeConfig(RuntimeSettings runtime, LoggingSettings logging, Path homeDirectory,
+                                Map<String, Object> globalContext, KuudraManifest.Resources manifests,
+                                Map<String, FlowConfig> flows) {
         public RuntimeConfig {
-            if (runtime == null || logging == null) throw new IllegalArgumentException("runtime and logging settings must not be null");
+            if (runtime == null || logging == null || manifests == null) throw new IllegalArgumentException("runtime, logging, and manifests must not be null");
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
             flows = Map.copyOf(flows);

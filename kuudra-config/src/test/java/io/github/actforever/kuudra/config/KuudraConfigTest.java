@@ -93,4 +93,70 @@ class KuudraConfigTest {
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
                 Map.of("logging", Map.of("level", "verbose")), directory, "invalid logging configuration")));
     }
+
+    @Test
+    void recursivelyLoadsKubernetesStyleComponentAndFlowManifests() throws Exception {
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Path manifests = Files.createDirectories(home.resolve("manifests/nested"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Files.writeString(manifests.resolve("source.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Component
+                metadata:
+                  namespace: input
+                  name: keyboard
+                  labels:
+                    device: keyboard
+                spec:
+                  type: event-source
+                  component: native-input/keyboard
+                  desiredState: stopped
+                  options:
+                    mouseEnabled: false
+                """);
+        Files.writeString(manifests.resolve("flow.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata:
+                  namespace: macros
+                  name: demo
+                spec:
+                  imports:
+                    input:
+                      kind: Component
+                      namespace: input
+                      name: keyboard
+                    actor:
+                      kind: Component
+                      namespace: actions
+                      name: printer
+                  edges:
+                    - from: input
+                      to: actor
+                """);
+
+        KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
+        KuudraManifest.Component source = config.manifests().components().get(
+                new KuudraManifest.ResourceId("Component", "input", "keyboard"));
+        assertEquals("stopped", source.desiredState());
+        assertEquals(false, source.options().get("mouseEnabled"));
+        assertEquals("keyboard", config.manifests().flows().values().iterator().next().imports().get("input").name());
+    }
+
+    @Test
+    void rejectsDuplicateManifestIdentityAcrossDirectories() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests/a"));
+        Files.createDirectories(directory.resolve(".kuudra/manifests/b"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        String component = """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Component
+                metadata: {namespace: default, name: duplicate}
+                spec: {type: actor, component: demo/actor}
+                """;
+        Files.writeString(manifests.resolve("one.yaml"), component);
+        Files.writeString(directory.resolve(".kuudra/manifests/b/two.yaml"), component);
+
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+    }
 }

@@ -1,6 +1,6 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义 Kuudra 下一阶段的目标资源模型。当前版本仍从 `<home-directory>/flows/*.yaml` 创建 Flow 级组件实例；本文中的 `manifests/`、资源 API、跨 Flow 共享和调谐器尚未实现，实施时必须按文末迁移顺序推进。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。旧 `<home-directory>/flows/*.yaml` schema 在迁移期继续兼容；通用资源 API 与持续调谐仍是后续工作。
 
 ## 设计目标
 
@@ -34,16 +34,16 @@ annotation/metadata   →   Component 实例   ← import/绑定 →   Flow + ed
 
 Component 资源描述“创建哪个实例”。两个 Flow 只有导入相同资源身份时才共享同一 Java 实例。仅仅使用相同的 `spec.component` 不会触发复用。
 
-### Flow 资源
+### Flow 配置
 
-Flow 资源描述“实例如何连接”。`imports` 为资源分配 Flow 内别名，`edges` 只引用这些别名。Flow 不再内嵌组件构造信息，也不拥有导入实例的生命周期。
+Flow 资源描述“实例如何连接”。它是 Component 资源的消费者：`imports` 为 Component 分配 Flow 内别名，`edges` 只引用这些别名。Component 不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。
 
 ## 清单格式
 
-资源清单采用 K8s 风格的信封结构，同时遵循 Kuudra 已确定的 lowercase kebab-case 键规范，因此使用 `api-version` 而不是 `apiVersion`：
+资源清单采用 K8s 风格的信封结构，并遵循其 camelCase 字段惯例；App 根配置仍使用 kebab-case，两类配置不应混用：
 
 ```yaml
-api-version: kuudra.io/v1alpha1
+apiVersion: kuudra.io/v1alpha1
 kind: Component
 metadata:
   namespace: input
@@ -53,14 +53,14 @@ metadata:
 spec: {}
 ```
 
-资源身份固定为 `(api-version, kind, metadata.namespace, metadata.name)`。`metadata.namespace` 是资源命名空间，不等于插件 namespace、上下文 namespace 或实例互斥域；四者不可混用。缺省资源 namespace 可使用 `default`。
+资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`。`metadata.namespace` 是资源命名空间，不等于插件 namespace、上下文 namespace 或实例互斥域；四者不可混用。缺省资源 namespace 可使用 `default`。
 
 一个文件可以包含一个对象；是否支持 YAML 多文档应在实现加载器时一次决定并补充测试。首版建议一个文件一个资源，便于原子更新、错误定位和未来 apply 持久化。
 
 ### Component 示例
 
 ```yaml
-api-version: kuudra.io/v1alpha1
+apiVersion: kuudra.io/v1alpha1
 kind: Component
 metadata:
   namespace: input
@@ -68,13 +68,13 @@ metadata:
 spec:
   type: event-source
   component: native-input/jnativehook-keyboard
-  desired-state: running
+  desiredState: running
   options:
     capture-mouse: false
 ```
 
 ```yaml
-api-version: kuudra.io/v1alpha1
+apiVersion: kuudra.io/v1alpha1
 kind: Component
 metadata:
   namespace: actions
@@ -82,7 +82,7 @@ metadata:
 spec:
   type: actor
   component: awt-input/keyboard-robot
-  desired-state: active
+  desiredState: active
   options: {}
 ```
 
@@ -91,13 +91,13 @@ spec:
 ### Flow 示例
 
 ```yaml
-api-version: kuudra.io/v1alpha1
+apiVersion: kuudra.io/v1alpha1
 kind: Flow
 metadata:
   namespace: macros
   name: combat
 spec:
-  desired-state: active
+  desiredState: active
   imports:
     keyboard:
       kind: Component
@@ -127,22 +127,22 @@ spec:
 “是否允许多例”应升级为通用实例策略，而不是单一布尔值：
 
 ```text
-max-instances: 1
-limit-scope: app
-exclusivity-domain: native-input/jnativehook
+maxInstances: 1
+limitScope: app
+exclusivityDomain: native-input/jnativehook
 shareable: true
-thread-safe: true
+threadSafe: true
 ```
 
-- `max-instances`：同一限制键允许存在的最大实例数；缺省为不限制。
-- `limit-scope`：首期支持 `app` 和 `flow`。App 范围覆盖全部 Flow；Flow 范围只在单个 Flow 内计数。
-- `exclusivity-domain`：把不同组件定义纳入同一个资源冲突域，例如所有会安装 JNativeHook 全局钩子的实现。
+- `maxInstances`：同一限制键允许存在的最大实例数；缺省为不限制。
+- `limitScope`：首期支持 `app` 和 `flow`。App 范围覆盖全部 Flow；Flow 范围只在单个 Flow 内计数。
+- `exclusivityDomain`：把不同组件定义纳入同一个资源冲突域，例如所有会安装 JNativeHook 全局钩子的实现。
 - `shareable`：是否允许一个实例被多个 Flow 导入。
-- `thread-safe`：共享调用是否可并行；为 false 时即使允许共享，Runtime 也必须串行化调用或拒绝并发绑定。
+- `threadSafe`：共享调用是否可并行；为 false 时即使允许共享，Runtime 也必须串行化调用或拒绝并发绑定。
 
-有效限制键为 `(limit-scope-owner, exclusivity-domain)`，不是实现类名。互斥域必须使用限定名称 `<authority>/<name>`；插件自己的域默认以插件 namespace 为 authority，跨插件协议则由共同依赖的契约插件或 `kuudra.system/*` 保留域定义。这样既避免无意同名冲突，也允许两个不同插件明确声明它们竞争同一个全局钩子。
+有效限制键为 `(limitScope-owner, exclusivityDomain)`，不是实现类名。互斥域必须使用限定名称 `<authority>/<name>`；插件自己的域默认以插件 namespace 为 authority，跨插件协议则由共同依赖的契约插件或 `kuudra.system/*` 保留域定义。这样既避免无意同名冲突，也允许两个不同插件明确声明它们竞争同一个全局钩子。
 
-插件元数据是硬约束，资源清单不能放宽它。清单可以选择更严格的部署策略，但不能把 `max-instances: 1` 的组件扩成多例，也不能把非 shareable 组件强制跨 Flow 共享。调谐前必须先对完整期望状态执行数量与能力校验，违反约束时不创建任何一半成功的实例。
+插件元数据是硬约束，资源清单不能放宽它。清单可以选择更严格的部署策略，但不能把 `maxInstances: 1` 的组件扩成多例，也不能把非 shareable 组件强制跨 Flow 共享。调谐前必须先对完整期望状态执行数量与能力校验，违反约束时不创建任何一半成功的实例。
 
 对于 AWT Robot，更推荐插件在自身生命周期内维护一个共享底层服务，多个轻量 Actor 使用该服务；如果 Actor 本身无状态且线程安全，也可直接声明为 shareable 并由多个 Flow 导入同一个 Component 资源。
 
@@ -156,7 +156,7 @@ thread-safe: true
 | Adapter/Processor/Actor Component | `active/inactive` | 创建实例并允许路由，或关闭新投递并按策略排空在途调用。 |
 | Flow | `active/paused/stopped` | 控制路由和 Session 闸门，不拥有导入组件。 |
 
-组件定义需要声明 `lifecycle-capabilities`。EventSource 通常支持 start/stop；被动组件至少支持 materialize/destroy，active/inactive 是 Runtime 路由门控，不要求插件实现没有意义的 `start()`。
+组件定义需要声明 `lifecycleCapabilities`。EventSource 通常支持 start/stop；被动组件至少支持 materialize/destroy，active/inactive 是 Runtime 路由门控，不要求插件实现没有意义的 `start()`。
 
 删除资源表示从期望状态中删除该资源并由调谐器回收实例，不叫“从上下文删除”。Event、Session、Flow、Global context 是数据作用域；删除其中的键属于独立的数据操作和权限问题，不能与资源 DELETE API 混为一谈。
 
@@ -164,7 +164,7 @@ thread-safe: true
 
 ```yaml
 status:
-  observed-generation: 3
+  observedGeneration: 3
   phase: ready
   conditions:
     - type: Ready
@@ -173,7 +173,7 @@ status:
   bindings: 2
 ```
 
-`metadata.generation` 在 spec 变化时递增；只有 `status.observed-generation` 追上它，调用方才能确认新期望状态已经生效。
+`metadata.generation` 在 spec 变化时递增；只有 `status.observedGeneration` 追上它，调用方才能确认新期望状态已经生效。
 
 ## 调谐与控制 API
 
@@ -198,7 +198,7 @@ DELETE /api/v1/resources/{kind}/{namespace}/{name}
 GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 ```
 
-start/stop/enable/disable 是对 `spec.desired-state` 的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 App、Flow、EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
+start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 App、Flow、EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
 
 `kuudractl apply -f xxx.yaml` 将同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。持久化期望状态需要 ResourceRepository/StateStore；在该能力完成前，CLI apply 必须明确标记为仅当前进程有效，不能暗示重启后仍存在。
 

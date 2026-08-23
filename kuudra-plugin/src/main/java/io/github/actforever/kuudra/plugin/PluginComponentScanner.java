@@ -26,15 +26,16 @@ final class PluginComponentScanner {
     }
 
     private java.util.Optional<PluginComponentDefinition> definition(String pluginId, String namespace, Class<?> type) {
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventSource.class)) return component(pluginId, namespace, PluginComponentKind.EVENT_SOURCE, type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventSource.class).value(), type);
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventProcessor.class)) return component(pluginId, namespace, PluginComponentKind.EVENT_PROCESSOR, type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventProcessor.class).value(), type);
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class)) return component(pluginId, namespace, PluginComponentKind.EVENT_ADAPTER, type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class).value(), type);
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Actor.class)) return component(pluginId, namespace, PluginComponentKind.ACTOR, type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Actor.class).value(), type);
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Action.class)) return component(pluginId, namespace, PluginComponentKind.ACTION, type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Action.class).value(), type);
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventSource.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventSource.class); return component(pluginId, namespace, PluginComponentKind.EVENT_SOURCE, annotation.value(), type, annotation.instancePolicy()); }
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventProcessor.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventProcessor.class); return component(pluginId, namespace, PluginComponentKind.EVENT_PROCESSOR, annotation.value(), type, annotation.instancePolicy()); }
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class); return component(pluginId, namespace, PluginComponentKind.EVENT_ADAPTER, annotation.value(), type, annotation.instancePolicy()); }
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Actor.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Actor.class); return component(pluginId, namespace, PluginComponentKind.ACTOR, annotation.value(), type, annotation.instancePolicy()); }
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Action.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Action.class); return component(pluginId, namespace, PluginComponentKind.ACTION, annotation.value(), type, annotation.instancePolicy()); }
         return java.util.Optional.empty();
     }
 
-    private java.util.Optional<PluginComponentDefinition> component(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> type) {
+    private java.util.Optional<PluginComponentDefinition> component(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> type,
+                                                                     io.github.actforever.kuudra.plugin.annotation.InstancePolicy policy) {
         Class<?> expected = switch (kind) {
             case EVENT_SOURCE -> io.github.actforever.kuudra.api.EventSource.class;
             case EVENT_PROCESSOR -> io.github.actforever.kuudra.api.EventProcessor.class;
@@ -43,6 +44,8 @@ final class PluginComponentScanner {
             case ACTION -> io.github.actforever.kuudra.api.Action.class;
         };
         if (!expected.isAssignableFrom(type)) throw new IllegalArgumentException(type.getName() + " annotated as " + kind + " but does not implement " + expected.getName());
-        return java.util.Optional.of(new PluginComponentDefinition(pluginId, namespace, kind, name, type));
+        ComponentInstancePolicy instancePolicy = new ComponentInstancePolicy(policy.maxInstances(), policy.limitScope(),
+                policy.exclusivityDomain().isBlank() ? namespace + "/" + name : policy.exclusivityDomain(), policy.shareable(), policy.threadSafe());
+        return java.util.Optional.of(new PluginComponentDefinition(pluginId, namespace, kind, name, type, instancePolicy));
     }
 }

@@ -3,7 +3,8 @@ package io.github.actforever.kuudra.plugin;
 import java.util.Objects;
 
 /** A component type declared by a plugin annotation and addressable by configuration. */
-public record PluginComponentDefinition(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> implementation) {
+public record PluginComponentDefinition(String pluginId, String namespace, PluginComponentKind kind, String name,
+                                        Class<?> implementation, ComponentInstancePolicy instancePolicy) {
     public PluginComponentDefinition {
         Objects.requireNonNull(pluginId, "pluginId"); Objects.requireNonNull(kind, "kind");
         if (namespace == null || !namespace.matches("[a-z0-9][a-z0-9-]*")) {
@@ -11,6 +12,10 @@ public record PluginComponentDefinition(String pluginId, String namespace, Plugi
         }
         if (name == null || name.isBlank()) throw new IllegalArgumentException("component name must not be blank");
         Objects.requireNonNull(implementation, "implementation");
+        Objects.requireNonNull(instancePolicy, "instancePolicy");
+    }
+    public PluginComponentDefinition(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> implementation) {
+        this(pluginId, namespace, kind, name, implementation, ComponentInstancePolicy.DEFAULT);
     }
     public String reference() { return kind.prefix() + "/" + namespace + "/" + name; }
 }

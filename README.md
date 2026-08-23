@@ -67,12 +67,14 @@ java -jar kuudra-web\target\kuudra-web-v0.4.0-alpha-1.jar
 .kuudra/
   config.yaml
   plugins/
-  flows/
+  manifests/       # Component、Flow 等 K8s 风格资源
+  flows/           # 旧 Flow schema 兼容目录
   logs/
+  state/
     latest.log
 ```
 
-缺少 `config.yaml` 时，Kuudra 会复制内置默认配置；已有文件不会被覆盖。插件 JAR 放入 `plugins/`，Flow YAML 放入 `flows/`。目录中的非法插件、损坏 JAR、缺失依赖或依赖环都会令启动明确失败，而不是被静默忽略。
+缺少 `config.yaml` 时，Kuudra 会复制内置默认配置；已有文件不会被覆盖。插件 JAR 放入 `plugins/`；新的 Component 与 Flow 资源放入 `manifests/`，旧 Flow YAML 仍可放入 `flows/`。目录中的非法插件、损坏 JAR、缺失依赖或依赖环都会令启动明确失败，而不是被静默忽略。
 
 默认配置如下：
 

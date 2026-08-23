@@ -19,7 +19,10 @@ import io.github.actforever.kuudra.api.SystemEventBus;
 import io.github.actforever.kuudra.plugin.DefaultPluginManager;
 import io.github.actforever.kuudra.plugin.PluginArchiveLoader;
 import io.github.actforever.kuudra.plugin.PluginComponentRegistry;
+import io.github.actforever.kuudra.plugin.PluginComponentDefinition;
+import io.github.actforever.kuudra.plugin.ComponentLimitScope;
 import io.github.actforever.kuudra.config.KuudraConfig;
+import io.github.actforever.kuudra.config.KuudraManifest;
 import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.config.KuudraYamlLoader;
 import io.github.actforever.kuudra.runtime.FlowNode;
@@ -53,6 +56,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final SystemEventBus events = new SimpleSystemEventBus();
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
     private final Map<ResourceKey, ManagedEventSource> eventSources = new LinkedHashMap<>();
+    private final Map<KuudraManifest.ResourceId, Object> manifestInstances = new LinkedHashMap<>();
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
     private AutoCloseable runtimeEvents;
@@ -112,7 +116,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Files.createDirectories(homeDirectory);
         Files.createDirectories(homeDirectory.resolve("plugins"));
         Files.createDirectories(homeDirectory.resolve("flows"));
+        Files.createDirectories(homeDirectory.resolve("manifests"));
         Files.createDirectories(homeDirectory.resolve("logs"));
+        Files.createDirectories(homeDirectory.resolve("state"));
         Path homeConfigFile = homeDirectory.resolve("config.yaml");
         if (Files.exists(homeConfigFile) && !Files.isRegularFile(homeConfigFile)) {
             throw new IOException("Kuudra home configuration is not a regular file: " + homeConfigFile);
@@ -277,6 +283,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             events.publish(SystemEvent.of("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size())));
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
+            applyManifests(config.manifests());
             for (KuudraConfig.FlowConfig flow : config.flows().values()) registerFlow(compile(flow));
             for (KuudraConfig.FlowConfig flow : config.flows().values()) {
                 for (KuudraConfig.SourceBinding source : flow.sources()) {
@@ -296,6 +303,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
         archives.clear();
         eventSources.clear();
+        manifestInstances.clear();
         if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
         runtime = null;
         plugins = null;
@@ -323,6 +331,110 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Map<String, List<String>> edges = new LinkedHashMap<>();
         for (KuudraConfig.EdgeConfig edge : definition.edges()) edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
         return new KuudraFlow(definition.id(), nodes, edges);
+    }
+
+    private void applyManifests(KuudraManifest.Resources resources) {
+        if (resources.isEmpty()) return;
+        validateManifestPolicies(resources);
+        for (KuudraManifest.Component component : resources.components().values()) {
+            Object instance = switch (component.type()) {
+                case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class);
+                case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class);
+                case "event-processor" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventProcessor.class);
+                case "actor" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), Actor.class);
+                case "session-allocator" -> component;
+                default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
+            };
+            manifestInstances.put(component.id(), instance);
+        }
+        Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets = new LinkedHashMap<>();
+        for (KuudraManifest.Flow flow : resources.flows().values()) {
+            registerFlow(compile(flow, resources.components(), sourceTargets));
+            switch (flow.desiredState().toLowerCase(java.util.Locale.ROOT)) {
+                case "active", "running" -> { }
+                case "paused" -> pauseFlow(flow.id().qualifiedName());
+                case "stopped" -> stopFlow(flow.id().qualifiedName());
+                default -> throw new IllegalArgumentException("Unsupported Flow desiredState: " + flow.desiredState());
+            }
+        }
+        for (Map.Entry<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> entry : sourceTargets.entrySet()) {
+            KuudraManifest.Component component = resources.components().get(entry.getKey());
+            String desired = component.desiredState().toLowerCase(java.util.Locale.ROOT);
+            if (desired.equals("stopped") || desired.equals("disabled")) continue;
+            if (!desired.equals("running") && !desired.equals("active")) throw new IllegalArgumentException("Unsupported EventSource desiredState: " + component.desiredState());
+            EventSource source = (EventSource) manifestInstances.get(entry.getKey());
+            requireRuntime().registerSource(entry.getValue(), source).toCompletableFuture().join();
+        }
+    }
+
+    private KuudraFlow compile(KuudraManifest.Flow definition,
+                               Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
+                               Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets) {
+        Map<String, FlowNode> nodes = new LinkedHashMap<>();
+        for (Map.Entry<String, KuudraManifest.ResourceReference> imported : definition.imports().entrySet()) {
+            KuudraManifest.Component component = components.get(imported.getValue().id());
+            if (component == null) throw new IllegalArgumentException("Unknown imported Component: " + imported.getValue().id());
+            Object instance = manifestInstances.get(component.id());
+            FlowNode node = switch (component.type()) {
+                case "event-source" -> null;
+                case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, component.options());
+                case "event-processor" -> new FlowNode.ProcessorNode(imported.getKey(), (EventProcessor) instance, component.options());
+                case "actor" -> new FlowNode.ActorNode(imported.getKey(), (Actor) instance, component.options());
+                case "session-allocator" -> new FlowNode.AllocatorNode(imported.getKey(), sessionSpec(imported.getKey(), component.options()));
+                default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
+            };
+            if (node != null) nodes.put(imported.getKey(), node);
+        }
+        Map<String, List<String>> edges = new LinkedHashMap<>();
+        for (KuudraConfig.EdgeConfig edge : definition.edges()) {
+            KuudraManifest.Component from = components.get(definition.imports().get(edge.from()).id());
+            KuudraManifest.Component to = components.get(definition.imports().get(edge.to()).id());
+            if (to.type().equals("event-source")) throw new IllegalArgumentException("Flow edge cannot target EventSource: " + edge.to());
+            if (from.type().equals("event-source")) {
+                sourceTargets.computeIfAbsent(from.id(), ignored -> new ArrayList<>())
+                        .add(new KuudraRuntime.SourceTarget(definition.id().qualifiedName(), edge.to()));
+            } else edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
+        }
+        return new KuudraFlow(definition.id().qualifiedName(), nodes, edges);
+    }
+
+    private void validateManifestPolicies(KuudraManifest.Resources resources) {
+        Map<String, Integer> appCounts = new LinkedHashMap<>();
+        for (KuudraManifest.Component component : resources.components().values()) {
+            if (component.type().equals("session-allocator")) continue;
+            String reference = componentReference(component.type(), component.component());
+            PluginComponentDefinition definition = requirePlugins().components().find(reference)
+                    .orElseThrow(() -> new IllegalArgumentException("Unknown component: " + reference));
+            if (!definition.kind().prefix().equals(component.type())) throw new IllegalArgumentException("Component type mismatch: " + component.id());
+            if (definition.instancePolicy().limitScope() == ComponentLimitScope.APP) {
+                int count = appCounts.merge(definition.instancePolicy().exclusivityDomain(), 1, Integer::sum);
+                if (count > definition.instancePolicy().maxInstances()) throw new IllegalArgumentException("Component instance limit exceeded for domain " + definition.instancePolicy().exclusivityDomain());
+            }
+        }
+        Map<KuudraManifest.ResourceId, Integer> usages = new LinkedHashMap<>();
+        for (KuudraManifest.Flow flow : resources.flows().values()) {
+            Map<String, Integer> flowCounts = new LinkedHashMap<>();
+            for (KuudraManifest.ResourceReference reference : flow.imports().values()) {
+                KuudraManifest.Component component = resources.components().get(reference.id());
+                if (component == null || component.type().equals("session-allocator")) continue;
+                PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
+                usages.merge(component.id(), 1, Integer::sum);
+                if (definition.instancePolicy().limitScope() == ComponentLimitScope.FLOW) {
+                    int count = flowCounts.merge(definition.instancePolicy().exclusivityDomain(), 1, Integer::sum);
+                    if (count > definition.instancePolicy().maxInstances()) throw new IllegalArgumentException("Flow component instance limit exceeded for domain " + definition.instancePolicy().exclusivityDomain());
+                }
+            }
+        }
+        for (Map.Entry<KuudraManifest.ResourceId, Integer> usage : usages.entrySet()) if (usage.getValue() > 1) {
+            KuudraManifest.Component component = resources.components().get(usage.getKey());
+            PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
+            if (!definition.instancePolicy().shareable() || !definition.instancePolicy().threadSafe())
+                throw new IllegalArgumentException("Component imported by multiple Flows is not shareable and thread-safe: " + component.id());
+        }
+    }
+
+    private static SessionSpec sessionSpec(String id, Map<String, Object> options) {
+        return sessionSpec(new KuudraConfig.NodeConfig(id, "session-allocator", "core/session-allocator", options));
     }
     private static SessionSpec sessionSpec(KuudraConfig.NodeConfig node) {
         Map<String, Object> options = node.options();
