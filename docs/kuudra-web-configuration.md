@@ -22,3 +22,17 @@ global-context:
 ```
 
 代码宿主可通过 `KuudraApp.createConfigured(KuudraConfigResource)` 传入最高优先级配置；该映射也必须使用小写 kebab-case 键。
+
+## OpenAPI 分组
+
+`doc.html` 将管理 API 拆分为五个独立 OpenAPI 分组，并在每组内部使用中文 Tag 和操作摘要：
+
+| 分组 | 内容 |
+| --- | --- |
+| `app-lifecycle` | App 快照、详细状态、启动、停止和重启。 |
+| `flows` | Flow 查询与 start/pause/resume/stop。 |
+| `event-sources` | 全局/Flow EventSource 资源查询与启停。 |
+| `sessions` | Session 查询与协作式取消。 |
+| `system-events` | SystemEvent SSE 订阅。 |
+
+各组规范位于 `/v3/api-docs/{group}`，Swagger 配置入口为 `/v3/api-docs/swagger-config`。分组只改变文档呈现，不改变任何 REST 路径或 App 边界。

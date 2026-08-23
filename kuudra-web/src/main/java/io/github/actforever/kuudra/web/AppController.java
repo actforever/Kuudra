@@ -3,6 +3,7 @@ package io.github.actforever.kuudra.web;
 import io.github.actforever.kuudra.api.AppSnapshot;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.app.KuudraApp;
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,24 +25,43 @@ import java.util.UUID;
 class AppController {
     private final KuudraApp app;
     AppController(KuudraApp app) { this.app = app; }
+    @Operation(summary = "获取 App 快照", tags = "App 生命周期")
     @GetMapping AppSnapshot snapshot() { return app.snapshot(); }
+    @Operation(summary = "获取内核详细状态", tags = "App 生命周期")
     @GetMapping("/status") KuudraApp.Status status() { return app.status(); }
+    @Operation(summary = "启动 App 内核", tags = "App 生命周期")
     @PostMapping("/start") AppSnapshot start() { app.start(); return app.snapshot(); }
+    @Operation(summary = "停止 App 内核", tags = "App 生命周期")
     @PostMapping("/stop") AppSnapshot stop() { app.stop(); return app.snapshot(); }
+    @Operation(summary = "重启 App 内核", tags = "App 生命周期")
     @PostMapping("/restart") AppSnapshot restart() { app.restart(); return app.snapshot(); }
+    @Operation(summary = "列出全部 Flow", tags = "Flow 管理")
     @GetMapping("/flows") List<KuudraApp.Flow> flows() { return app.flows(); }
+    @Operation(summary = "获取 Flow", tags = "Flow 管理")
     @GetMapping("/flows/{flowId}") KuudraApp.Flow flow(@PathVariable("flowId") String flowId) { return app.flow(flowId).orElseThrow(() -> notFound("Flow", flowId)); }
+    @Operation(summary = "启动 Flow", tags = "Flow 管理")
     @PostMapping("/flows/{flowId}/start") KuudraApp.Flow startFlow(@PathVariable("flowId") String flowId) { app.activateFlow(flowId); return flow(flowId); }
+    @Operation(summary = "暂停 Flow", tags = "Flow 管理")
     @PostMapping("/flows/{flowId}/pause") KuudraApp.Flow pauseFlow(@PathVariable("flowId") String flowId) { app.pauseFlow(flowId); return flow(flowId); }
+    @Operation(summary = "恢复 Flow", tags = "Flow 管理")
     @PostMapping("/flows/{flowId}/resume") KuudraApp.Flow resumeFlow(@PathVariable("flowId") String flowId) { app.resumeFlow(flowId); return flow(flowId); }
+    @Operation(summary = "停止 Flow", tags = "Flow 管理")
     @PostMapping("/flows/{flowId}/stop") KuudraApp.Flow stopFlow(@PathVariable("flowId") String flowId) { app.stopFlow(flowId); return flow(flowId); }
+    @Operation(summary = "列出全部 EventSource 资源", tags = "EventSource 资源")
     @GetMapping("/resources/event-sources") List<KuudraApp.Resource> eventSources() { return app.eventSources(); }
+    @Operation(summary = "列出 Flow 的 EventSource 资源", tags = "EventSource 资源")
     @GetMapping("/flows/{flowId}/resources/event-sources") List<KuudraApp.Resource> flowEventSources(@PathVariable("flowId") String flowId) { return call(() -> app.eventSources(flowId), "Flow", flowId); }
+    @Operation(summary = "获取 EventSource 资源", tags = "EventSource 资源")
     @GetMapping("/flows/{flowId}/resources/event-sources/{resourceId}") KuudraApp.Resource eventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.eventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @Operation(summary = "启动 EventSource 资源", tags = "EventSource 资源")
     @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/start") KuudraApp.Resource startEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.startEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @Operation(summary = "停止 EventSource 资源", tags = "EventSource 资源")
     @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/stop") KuudraApp.Resource stopEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.stopEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @Operation(summary = "获取 Session", tags = "Session 管理")
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
+    @Operation(summary = "请求取消 Session", tags = "Session 管理")
     @PostMapping("/sessions/{sessionId}/cancel") Map<String, Object> cancel(@PathVariable("sessionId") UUID sessionId) { if (!app.cancelSession(sessionId)) throw notFound("active session", sessionId.toString()); return Map.of("sessionId", sessionId.toString(), "cancellationRequested", true); }
+    @Operation(summary = "订阅系统事件", tags = "系统事件")
     @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events() {
         SseEmitter emitter = new SseEmitter(0L);
