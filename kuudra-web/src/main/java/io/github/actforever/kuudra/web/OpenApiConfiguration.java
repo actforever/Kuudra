@@ -17,7 +17,15 @@ class OpenApiConfiguration {
                 .addTagsItem(new Tag().name("Flow 管理").description("查询和控制 Flow 路由与会话闸门。"))
                 .addTagsItem(new Tag().name("EventSource 资源").description("查询和控制 Flow 绑定的事件源资源。"))
                 .addTagsItem(new Tag().name("Session 管理").description("查询会话并请求协作式取消。"))
+                .addTagsItem(new Tag().name("插件与组件").description("查询已加载插件、组件能力及结构化文档。"))
                 .addTagsItem(new Tag().name("系统事件").description("订阅 App SystemEvent SSE 流。"));
+    }
+
+    @Bean
+    GroupedOpenApi allApi() {
+        return GroupedOpenApi.builder().group("all")
+                .pathsToMatch("/api/v1/app", "/api/v1/app/**")
+                .build();
     }
 
     @Bean
@@ -57,6 +65,13 @@ class OpenApiConfiguration {
     GroupedOpenApi systemEventApi() {
         return GroupedOpenApi.builder().group("system-events")
                 .pathsToMatch("/api/v1/app/events")
+                .build();
+    }
+
+    @Bean
+    GroupedOpenApi pluginApi() {
+        return GroupedOpenApi.builder().group("plugins")
+                .pathsToMatch("/api/v1/app/plugins/**", "/api/v1/app/components/**")
                 .build();
     }
 }

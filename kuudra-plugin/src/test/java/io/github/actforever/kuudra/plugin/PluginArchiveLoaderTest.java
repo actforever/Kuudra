@@ -34,6 +34,13 @@ class PluginArchiveLoaderTest {
                 "base.ParentInterpreter", """
                         package base;
                         @io.github.actforever.kuudra.plugin.annotation.EventInterpreter("parent-interpreter")
+                        @io.github.actforever.kuudra.plugin.annotation.ComponentDoc(
+                            purpose = "Recognizes a parent sequence",
+                            usageExample = "windowMillis: 100",
+                            lifecyclePhases = {"start", "stop"},
+                            emittedEvents = @io.github.actforever.kuudra.plugin.annotation.EventEmission(
+                                stage = "sequence matched", eventType = "parent.matched",
+                                description = "A recognized parent event", dataExample = "{key: A}"))
                         public final class ParentInterpreter implements io.github.actforever.kuudra.api.EventInterpreter {
                             public java.util.List<io.github.actforever.kuudra.api.KuudraEvent> interpret(
                                     io.github.actforever.kuudra.api.KuudraEvent event,
@@ -75,8 +82,10 @@ class PluginArchiveLoaderTest {
             PluginArchiveLoader.LoadedArchive base = byId.get("base");
             PluginArchiveLoader.LoadedArchive child = byId.get("child");
 
-            assertTrue(base.plugin().components().stream().anyMatch(component ->
-                    component.reference().equals("event-interpreter/base/parent-interpreter")));
+            PluginComponentDefinition interpreter = base.plugin().components().stream().filter(component ->
+                    component.reference().equals("event-interpreter/base/parent-interpreter")).findFirst().orElseThrow();
+            assertEquals("Recognizes a parent sequence", interpreter.documentation().purpose());
+            assertEquals("parent.matched", interpreter.documentation().emittedEvents().get(0).eventType());
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));
             Object restored = child.plugin().instance().getClass().getMethod("roundTrip").invoke(child.plugin().instance());

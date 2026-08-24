@@ -50,6 +50,19 @@ final class PluginComponentScanner {
         if (!expected.isAssignableFrom(type)) throw new IllegalArgumentException(type.getName() + " annotated as " + kind + " but does not implement " + expected.getName());
         ComponentInstancePolicy instancePolicy = new ComponentInstancePolicy(policy.maxInstances(), policy.limitScope(),
                 policy.exclusivityDomain().isBlank() ? namespace + "/" + name : policy.exclusivityDomain(), policy.shareable(), policy.threadSafe());
-        return java.util.Optional.of(new PluginComponentDefinition(pluginId, namespace, kind, name, type, instancePolicy));
+        return java.util.Optional.of(new PluginComponentDefinition(pluginId, namespace, kind, name, type, instancePolicy,
+                documentation(type)));
+    }
+
+    private PluginComponentDocumentation documentation(Class<?> type) {
+        var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.ComponentDoc.class);
+        boolean lifecycle = io.github.actforever.kuudra.api.Lifecycle.class.isAssignableFrom(type)
+                || PluginComponentLifecycle.class.isAssignableFrom(type);
+        if (annotation == null) return new PluginComponentDocumentation("", "", lifecycle, List.of(), List.of());
+        List<PluginEventDocumentation> events = java.util.Arrays.stream(annotation.emittedEvents())
+                .map(item -> new PluginEventDocumentation(item.stage(), item.eventType(), item.description(), item.dataExample()))
+                .toList();
+        return new PluginComponentDocumentation(annotation.purpose(), annotation.usageExample(), lifecycle,
+                List.of(annotation.lifecyclePhases()), events);
     }
 }

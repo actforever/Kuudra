@@ -5,10 +5,19 @@
 ```text
 <jar-directory>/.kuudra/plugins/
   kuudra-hello-world-plugin.jar
-  hello-world/
+  kuudra-official/
+    hello-world/
 ```
 
-`.jar` 文件是待加载的插件归档；`hello-world/` 是插件 ID 对应的运行时家目录。该目录只在插件真正进入初始化时创建，插件可通过 `PluginContext.home()` 或 `PluginComponentContext.plugin().home()` 使用它持久化数据。
+`.jar` 文件是待加载的插件归档；`kuudra-official/hello-world/` 是由插件 namespace 与插件 ID 共同确定的运行时家目录。完整规则为 `<home-directory>/plugins/<plugin-namespace>/<plugin-id>/`，避免不同命名空间使用相同 ID 时发生数据目录冲突。目录只在插件真正进入初始化时创建，插件可通过 `PluginContext.home()` 或 `PluginComponentContext.plugin().home()` 使用它持久化数据。
+
+## 组件文档与插件日志
+
+插件组件可通过 `@ComponentDoc` 声明用途、配置示例和生命周期阶段，并通过一个或多个 `@EventEmission` 描述可能输出的事件类型、输出阶段与数据示例。归档扫描时，这些信息会和组件定义一起进入注册表，而不是从 README 文本中临时解析。
+
+插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。组件是否真正具有生命周期还会根据其接口实现自动识别。
+
+插件代码不直接依赖 Logback。`PluginContext.logger()` 和 `PluginComponentContext.logger()` 返回绑定 namespace 与插件 ID 的 `PluginLogger`；日志先作为 `plugin.log` 系统事件进入 App 总线，再由 `kuudra-logging` 按内核日志配置输出。
 
 插件目录不再可配置，也没有显式加载清单。Kuudra 会按文件名顺序读取 `<home-directory>/plugins/` 下所有 `.jar` 文件，并把它们作为一个依赖图加载。目录中的每个 JAR 都必须是合法 Kuudra 插件：
 

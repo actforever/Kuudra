@@ -6,8 +6,11 @@ server:
 
 knife4j:
   enable: true
+  setting:
+    enable-group: true
 springdoc:
   api-docs:
     path: /v3/api-docs
   swagger-ui:
     path: /doc.html
+    urls-primary-name: all

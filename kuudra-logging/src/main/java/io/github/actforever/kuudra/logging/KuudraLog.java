@@ -103,10 +103,27 @@ public final class KuudraLog {
     }
 
     private static void write(Logger logger, io.github.actforever.kuudra.api.SystemEvent event) {
+        if (event.type().equals("plugin.log")) {
+            String plugin = "[plugin=" + event.data().get("namespace") + "/" + event.data().get("pluginId") + "] ";
+            String message = plugin + event.data().get("message") + fields(event.data().get("fields"));
+            String level = Objects.toString(event.data().get("level"), "INFO");
+            switch (level) {
+                case "TRACE" -> logger.trace(message);
+                case "DEBUG" -> logger.debug(message);
+                case "WARN" -> logger.warn(message);
+                case "ERROR" -> logger.error(message + (event.data().containsKey("error") ? " " + event.data().get("error") : ""));
+                default -> logger.info(message);
+            }
+            return;
+        }
         String message = event.type() + (event.data().isEmpty() ? "" : " " + event.data());
         if (event.type().contains("failed")) logger.error(message);
         else if (event.type().contains("rejected") || event.type().contains("cancel")) logger.warn(message);
         else logger.info(message);
+    }
+
+    private static String fields(Object value) {
+        return value instanceof java.util.Map<?, ?> fields && !fields.isEmpty() ? " " + fields : "";
     }
 
     private static final class Session implements KuudraLogSession {

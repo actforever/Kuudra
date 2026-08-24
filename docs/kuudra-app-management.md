@@ -13,6 +13,11 @@ NEW → STARTING → RUNNING → STOPPING → STOPPED
 | --- | --- | --- |
 | `GET` | `/api/v1/app` | App 状态、队列长度和 Flow 数。 |
 | `GET` | `/api/v1/app/status` | 当前 App 内核汇总：App 状态、队列、全部 Flow 摘要与活跃 Session 总数。 |
+| `GET` | `/api/v1/app/plugins` | 列出当前已加载插件及其版本、命名空间和状态。 |
+| `GET` | `/api/v1/app/plugins/{pluginId}` | 查询单个插件及其组件引用。 |
+| `GET` | `/api/v1/app/plugins/{pluginId}/components` | 查询指定插件的结构化组件文档。 |
+| `GET` | `/api/v1/app/components` | 列出所有已注册插件组件。 |
+| `GET` | `/api/v1/app/components/{type}/{namespace}/{name}` | 按完整组件引用查询用途、示例、生命周期和输出事件。 |
 | `POST` | `/api/v1/app/start` | 创建并启动内核。 |
 | `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
 | `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |

@@ -49,9 +49,11 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
   state/
 ```
 
-所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和依赖；依赖插件的类与资源对下游插件可见。Component 和 Flow 资源统一放在 `manifests/`，Flow 通过 `spec.imports` 引用 Component。
+所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和依赖；依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。Component 和 Flow 资源统一放在 `manifests/`，Flow 通过 `spec.imports` 引用 Component。
 
 当前 Component type 为：`event-source`、`event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时通过统一的 `TypedValueMap` 读取并转换 Component `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
+
+插件组件可使用 `@ComponentDoc` 与 `@EventEmission` 声明结构化用途、示例、生命周期和输出事件说明，并通过 App/Web API 查询。插件通过上下文提供的 `PluginLogger` 写日志，日志自动携带插件身份并进入内核 SystemEvent 日志链路。Knife4j 默认展示聚合 `all` 分组，也保留按能力拆分的分组。
 
 ```powershell
 mvn test -DskipTests=false

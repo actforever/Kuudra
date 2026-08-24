@@ -16,6 +16,7 @@ public record PluginComponentContext(String componentReference, PluginContext pl
     }
 
     public java.nio.file.Path pluginHome() { return plugin.pluginHome(); }
+    public PluginLogger logger() { return plugin.logger(); }
 
     public io.github.actforever.kuudra.api.TypedValueMap configurationValues() {
         return io.github.actforever.kuudra.api.TypedValueMap.of(configuration);

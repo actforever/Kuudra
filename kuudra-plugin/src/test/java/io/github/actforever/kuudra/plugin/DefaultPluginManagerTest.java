@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
@@ -161,6 +162,41 @@ class DefaultPluginManagerTest {
                 Map.of("intervalMillis", 250));
         manager.close();
         assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);
+    }
+
+    @Test
+    void exposesStructuredPluginViewsAndIdentityBoundLogger() {
+        AtomicReference<SystemEvent> logged = new AtomicReference<>();
+        SystemEventBus bus = new SystemEventBus() {
+            @Override public AutoCloseable subscribe(Consumer<SystemEvent> listener) { return () -> { }; }
+            @Override public void publish(SystemEvent event) { if (event.type().equals("plugin.log")) logged.set(event); }
+        };
+        PluginComponentDocumentation documentation = new PluginComponentDocumentation(
+                "periodically emits greetings", "intervalMillis: 1000", true, List.of("start", "stop"),
+                List.of(new PluginEventDocumentation("scheduled tick", "hello.tick", "greeting", "{message: hello}")));
+        AtomicReference<Path> home = new AtomicReference<>();
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("plugin-views"),
+                PluginRuntimeServices.unavailable(), bus);
+        manager.register(new PluginArchiveLoader.LoadedPlugin(
+                new PluginMetadata("sample", "demo", "1.2.3", "example.Plugin", List.of()),
+                new RecordingPlugin("sample", List.of(), new ArrayList<>()) {
+                    @Override public CompletionStage<Void> initialize(PluginContext context) {
+                        home.set(context.home()); context.logger().info("initialized", Map.of("ready", true));
+                        return CompletableFuture.completedFuture(null);
+                    }
+                },
+                List.of(new PluginComponentDefinition("sample", "demo", PluginComponentKind.EVENT_SOURCE,
+                        "source", TestSource.class, ComponentInstancePolicy.DEFAULT, documentation))));
+        manager.startAll().toCompletableFuture().join();
+
+        assertEquals(temporaryDirectory.resolve("plugin-views/demo/sample").toAbsolutePath().normalize(), home.get());
+        assertEquals("demo", logged.get().data().get("namespace"));
+        assertEquals("sample", logged.get().data().get("pluginId"));
+        DefaultPluginManager.PluginView plugin = manager.pluginView("sample");
+        assertEquals("1.2.3", plugin.version());
+        assertEquals("periodically emits greetings", plugin.components().get(0).documentation().purpose());
+        assertEquals("hello.tick", plugin.components().get(0).documentation().emittedEvents().get(0).eventType());
+        manager.close();
     }
 
     private static class RecordingPlugin implements KuudraPlugin {

@@ -12,6 +12,8 @@ Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。它们�
 
 当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。SSE 等其他观察者仍可同时订阅同一总线，日志不会反向进入业务 Event 管线。
 
+插件业务日志同样沿用这条总线。`kuudra-plugin` 向插件暴露绑定 namespace/ID 的 `PluginLogger`，并发布 `plugin.log` 系统事件；`kuudra-logging` 按 TRACE/DEBUG/INFO/WARN/ERROR 级别呈现，并在日志行附加 `[plugin=<namespace>/<plugin-id>]`。插件不需要绑定 Logback、SLF4J 或 Spring Logger。
+
 ## 配置接口
 
 `kuudra-logging` 对外提供不依赖 Spring 或 YAML 的 `KuudraLogConfiguration` 和 `KuudraLogLevel`。宿主通过 `KuudraLog.openSession(logsDirectory, events, configuration)` 创建日志会话；原有双参数方法继续使用默认配置。

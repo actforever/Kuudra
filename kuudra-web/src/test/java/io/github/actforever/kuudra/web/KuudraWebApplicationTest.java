@@ -29,17 +29,24 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.app.status").value("RUNNING"))
                 .andExpect(jsonPath("$.activeSessions").value(0));
+        mvc.perform(get("/api/v1/app/plugins"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/v1/app/components"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }
 
     @Test
     void publishesSeparateOpenApiGroups() throws Exception {
         mvc.perform(get("/v3/api-docs/swagger-config"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$['urls.primaryName']").value("all"))
+                .andExpect(jsonPath("$.urls[?(@.name == 'all')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'app-lifecycle')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'flows')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'event-sources')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'sessions')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'system-events')]").exists());
+
 
         mvc.perform(get("/v3/api-docs/app-lifecycle"))
                 .andExpect(status().isOk())
@@ -57,5 +64,13 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/system-events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/events']").exists());
+        mvc.perform(get("/v3/api-docs/plugins"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/app/plugins']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/components/{type}/{namespace}/{name}']").exists());
+        mvc.perform(get("/v3/api-docs/all"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/plugins']").exists());
     }
 }

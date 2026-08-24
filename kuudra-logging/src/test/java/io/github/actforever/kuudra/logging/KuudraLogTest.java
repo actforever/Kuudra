@@ -85,6 +85,21 @@ class KuudraLogTest {
         }
     }
 
+    @Test
+    void rendersIdentityBoundPluginLogEvents() throws Exception {
+        TestBus bus = new TestBus();
+        Path logs = directory.resolve("plugin-logs");
+        try (KuudraLogSession ignored = KuudraLog.openSession(logs, bus,
+                new KuudraLogConfiguration(KuudraLogLevel.INFO, false, true))) {
+            bus.publish(SystemEvent.of("plugin.log", Map.of("pluginId", "logger", "namespace", "demo",
+                    "level", "WARN", "message", "handled event", "fields", Map.of("type", "hello"))));
+        }
+        String latest = Files.readString(logs.resolve("latest.log"));
+        assertTrue(latest.contains("WARN"));
+        assertTrue(latest.contains("[plugin=demo/logger] handled event"));
+        assertTrue(latest.contains("type=hello"));
+    }
+
     private static String unzip(Path archive) throws Exception {
         try (var input = new GZIPInputStream(Files.newInputStream(archive))) {
             return new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);

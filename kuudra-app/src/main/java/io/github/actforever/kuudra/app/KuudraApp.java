@@ -180,6 +180,19 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public SystemEventBus systemEvents() { return events; }
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
     public synchronized Map<String, Object> globalContext() { return globalContext; }
+    public List<Plugin> plugins() { return requirePlugins().pluginViews().stream().map(KuudraApp::plugin).toList(); }
+    public Optional<Plugin> plugin(String pluginId) {
+        try { return Optional.of(plugin(requirePlugins().pluginView(pluginId))); }
+        catch (IllegalArgumentException missing) { return Optional.empty(); }
+    }
+    public List<Component> components() { return requirePlugins().componentViews().stream().map(KuudraApp::component).toList(); }
+    public List<Component> pluginComponents(String pluginId) {
+        return plugin(pluginId).orElseThrow(() -> new IllegalArgumentException("Unknown plugin: " + pluginId)).components();
+    }
+    public Optional<Component> pluginComponent(String reference) {
+        try { return Optional.of(component(requirePlugins().componentView(reference))); }
+        catch (IllegalArgumentException missing) { return Optional.empty(); }
+    }
 
     public List<Flow> flows() { return requireRuntime().flows().stream().map(KuudraApp::flow).toList(); }
     public Optional<Flow> flow(String flowId) { return requireRuntime().flow(flowId).map(KuudraApp::flow); }
@@ -246,6 +259,20 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     @Override public void close() { stop(); }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.status().name(), snapshot.activeSessions(), snapshot.deferredTasks()); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
+    private static Plugin plugin(DefaultPluginManager.PluginView view) {
+        return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies(),
+                view.components().stream().map(KuudraApp::component).toList());
+    }
+    private static Component component(DefaultPluginManager.ComponentView view) {
+        var documentation = view.documentation();
+        return new Component(view.reference(), view.pluginId(), view.namespace(), view.kind().prefix(), view.name(),
+                view.implementation(), new InstancePolicy(view.instancePolicy().maxInstances(),
+                view.instancePolicy().limitScope().name(), view.instancePolicy().exclusivityDomain(),
+                view.instancePolicy().shareable(), view.instancePolicy().threadSafe()),
+                new ComponentDocumentation(documentation.purpose(), documentation.usageExample(), documentation.lifecycle(),
+                        documentation.lifecyclePhases(), documentation.emittedEvents().stream()
+                        .map(event -> new EventDocumentation(event.stage(), event.eventType(), event.description(), event.dataExample())).toList()));
+    }
     public record Health(String status, int queuedTasks, int flows) { }
     public record Status(AppSnapshot app, List<Flow> flows, int activeSessions) {
         public Status { flows = List.copyOf(flows); }
@@ -430,6 +457,19 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
+    public record Plugin(String id, String namespace, String version, String status, List<String> dependencies,
+                         List<Component> components) {
+        public Plugin { dependencies = List.copyOf(dependencies); components = List.copyOf(components); }
+    }
+    public record Component(String reference, String pluginId, String namespace, String kind, String name,
+                            String implementation, InstancePolicy instancePolicy, ComponentDocumentation documentation) { }
+    public record InstancePolicy(int maxInstances, String limitScope, String exclusivityDomain,
+                                 boolean shareable, boolean threadSafe) { }
+    public record ComponentDocumentation(String purpose, String usageExample, boolean lifecycle,
+                                         List<String> lifecyclePhases, List<EventDocumentation> emittedEvents) {
+        public ComponentDocumentation { lifecyclePhases = List.copyOf(lifecyclePhases); emittedEvents = List.copyOf(emittedEvents); }
+    }
+    public record EventDocumentation(String stage, String eventType, String description, String dataExample) { }
     private ManagedEventSource requireEventSource(String flowId, String resourceId) {
         ManagedEventSource source = eventSources.get(new ResourceKey(flowId, resourceId));
         if (source == null) throw new IllegalArgumentException("Unknown EventSource resource: " + flowId + "/" + resourceId);

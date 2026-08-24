@@ -61,6 +61,21 @@ class AppController {
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
     @Operation(summary = "请求取消 Session", tags = "Session 管理")
     @PostMapping("/sessions/{sessionId}/cancel") Map<String, Object> cancel(@PathVariable("sessionId") UUID sessionId) { if (!app.cancelSession(sessionId)) throw notFound("active session", sessionId.toString()); return Map.of("sessionId", sessionId.toString(), "cancellationRequested", true); }
+    @Operation(summary = "列出已加载插件", tags = "插件与组件")
+    @GetMapping("/plugins") List<KuudraApp.Plugin> plugins() { return app.plugins(); }
+    @Operation(summary = "获取插件及其组件", tags = "插件与组件")
+    @GetMapping("/plugins/{pluginId}") KuudraApp.Plugin plugin(@PathVariable("pluginId") String pluginId) { return app.plugin(pluginId).orElseThrow(() -> notFound("Plugin", pluginId)); }
+    @Operation(summary = "列出插件组件", tags = "插件与组件")
+    @GetMapping("/plugins/{pluginId}/components") List<KuudraApp.Component> pluginComponents(@PathVariable("pluginId") String pluginId) { return call(() -> app.pluginComponents(pluginId), "Plugin", pluginId); }
+    @Operation(summary = "列出全部插件组件", tags = "插件与组件")
+    @GetMapping("/components") List<KuudraApp.Component> components() { return app.components(); }
+    @Operation(summary = "获取组件结构化文档", tags = "插件与组件")
+    @GetMapping("/components/{type}/{namespace}/{name}") KuudraApp.Component component(
+            @PathVariable("type") String type, @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        String reference = type + "/" + namespace + "/" + name;
+        return app.pluginComponent(reference).orElseThrow(() -> notFound("Component", reference));
+    }
     @Operation(summary = "订阅系统事件", tags = "系统事件")
     @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events() {
