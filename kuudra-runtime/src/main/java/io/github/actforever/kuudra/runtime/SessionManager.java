@@ -1,0 +1,83 @@
+package io.github.actforever.kuudra.runtime;
+
+import io.github.actforever.kuudra.api.*;
+import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.*;
+import java.util.function.Consumer;
+
+/** Runtime-owned source of truth for Session identity, context, cancellation and work leases. */
+public final class SessionManager {
+    private final Object monitor = new Object();
+    private final Map<UUID, ManagedSession> sessions = new LinkedHashMap<>();
+    private final Executor executor;
+    private final ContextCodec codec;
+    private final Consumer<ManagedSession> terminalListener;
+
+    SessionManager(Executor executor, ContextCodec codec, Consumer<ManagedSession> terminalListener) {
+        this.executor = executor; this.codec = codec; this.terminalListener = terminalListener;
+    }
+
+    ManagedSession create(String flowId, long revision, String ingressId, String groupKey, Map<String, Object> initial) {
+        ManagedSession session = new ManagedSession(UUID.randomUUID(), flowId, revision, ingressId, groupKey,
+                new AtomicValueContext(codec, initial), executor);
+        synchronized (monitor) { sessions.put(session.id, session); }
+        return session;
+    }
+
+    ManagedSession require(UUID id) { synchronized (monitor) { return sessions.get(id); } }
+    public Optional<SessionSnapshot> snapshot(UUID id) { synchronized (monitor) { return Optional.ofNullable(sessions.get(id)).map(ManagedSession::snapshot); } }
+    public List<SessionSnapshot> snapshots() { synchronized (monitor) { return sessions.values().stream().map(ManagedSession::snapshot).toList(); } }
+    public int activeCount(String flowId) { synchronized (monitor) { return (int) sessions.values().stream().filter(s -> s.flowId.equals(flowId) && s.active()).count(); } }
+    public boolean cancel(UUID id) {
+        ManagedSession session = require(id);
+        if (session == null || !session.active() || !session.cancelled.compareAndSet(false, true)) return false;
+        session.status = SessionStatus.CANCELLATION_REQUESTED;
+        if (session.leases.get() == 0) terminate(session, SessionStatus.CANCELLED);
+        return true;
+    }
+    boolean acquire(ManagedSession session) { if (!session.active() || session.cancelled.get()) return false; session.leases.incrementAndGet(); return true; }
+    void release(ManagedSession session, Throwable error) {
+        if (error != null) { terminate(session, SessionStatus.FAILED); return; }
+        int remaining = session.leases.decrementAndGet();
+        if (remaining < 0) throw new KuudraException("Session lease underflow: " + session.id);
+        if (remaining == 0) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED);
+    }
+    void completeIfIdle(ManagedSession session) { if (session.leases.get() == 0) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED); }
+    private void terminate(ManagedSession session, SessionStatus terminal) {
+        if (!session.terminal.compareAndSet(false, true)) return;
+        session.status = terminal; terminalListener.accept(session);
+        synchronized (monitor) { monitor.notifyAll(); }
+    }
+    void cancelAll() { snapshots().stream().filter(s -> s.status() == SessionStatus.ACTIVE || s.status() == SessionStatus.CANCELLATION_REQUESTED).forEach(s -> cancel(s.id())); }
+    void awaitDrained(long millis) throws InterruptedException {
+        long end = System.currentTimeMillis() + millis;
+        synchronized (monitor) { while (sessions.values().stream().anyMatch(ManagedSession::active) && System.currentTimeMillis() < end) monitor.wait(Math.max(1, end - System.currentTimeMillis())); }
+    }
+
+    static final class ManagedSession {
+        final UUID id; final String flowId; final long revision; final String ingressId; final String groupKey;
+        final AtomicValueContext context; final Executor executor; final AtomicBoolean cancelled = new AtomicBoolean();
+        final AtomicBoolean terminal = new AtomicBoolean(); final AtomicInteger leases = new AtomicInteger();
+        volatile SessionStatus status = SessionStatus.ACTIVE;
+        private java.util.concurrent.CompletableFuture<Void> serial = java.util.concurrent.CompletableFuture.completedFuture(null);
+        ManagedSession(UUID id, String flowId, long revision, String ingressId, String groupKey, AtomicValueContext context, Executor executor) {
+            this.id=id; this.flowId=flowId; this.revision=revision; this.ingressId=ingressId; this.groupKey=groupKey; this.context=context; this.executor=executor;
+        }
+        boolean active() { return !terminal.get(); }
+        synchronized void submit(Runnable task) { serial = serial.handle((v,e)->null).thenRunAsync(task, executor); }
+        SessionReference reference() { return new SessionReference(id, flowId); }
+        SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, status, cancelled.get(), leases.get()); }
+    }
+
+    static final class AtomicValueContext implements SessionContext, FlowContext, GlobalContext {
+        private final ContextCodec codec; private final AtomicReference<Map<String,Object>> values;
+        AtomicValueContext(ContextCodec codec, Map<String,Object> initial) {
+            this.codec=codec; Map<String,Object> encoded=new LinkedHashMap<>(); initial.forEach((k,v)->encoded.put(k,codec.encode(v))); values=new AtomicReference<>(Map.copyOf(encoded));
+        }
+        @Override public ContextCodec codec() { return codec; }
+        public Map<String,Object> snapshot() { return values.get(); }
+        public boolean compareAndSet(Map<String,Object> expected,Map<String,Object> replacement){return values.compareAndSet(expected,Map.copyOf(replacement));}
+        public Map<String,Object> update(java.util.function.UnaryOperator<Map<String,Object>> operation){while(true){Map<String,Object> current=values.get();Map<String,Object> next=Map.copyOf(operation.apply(current));if(values.compareAndSet(current,next))return next;}}
+    }
+}

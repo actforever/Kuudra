@@ -12,10 +12,17 @@ public record EventLineage(Set<UUID> parentEventIds, Set<UUID> parentSessionIds,
         if (hops < 0) throw new IllegalArgumentException("hops must not be negative");
     }
     public static EventLineage origin() { return new EventLineage(Set.of(), Set.of(), 0); }
-    public EventLineage descendFrom(Event event, boolean includeSession) {
+    public EventLineage descendFrom(KuudraEvent event) {
         Set<UUID> events = new LinkedHashSet<>(parentEventIds); events.add(event.id());
         Set<UUID> sessions = new LinkedHashSet<>(parentSessionIds); sessions.addAll(event.lineage().parentSessionIds());
-        if (includeSession && event.session() != null) sessions.add(event.session().id());
         return new EventLineage(events, sessions, Math.addExact(hops, 1));
     }
+
+    public EventLineage descendFrom(KuudraEvent event, SessionReference session) {
+        EventLineage descended = descendFrom(event);
+        Set<UUID> sessions = new LinkedHashSet<>(descended.parentSessionIds());
+        sessions.add(session.id());
+        return new EventLineage(descended.parentEventIds(), sessions, descended.hops());
+    }
+
 }

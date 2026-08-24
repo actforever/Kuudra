@@ -10,13 +10,13 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 
 ## 首期资源
 
-首期实现 `event-source` 的资源查询、启动和停止。它适合首批纳入控制面的原因是事件源通常持有监听器、定时器或设备句柄，且其注册／解除注册已是明确的生命周期边界。Adapter、Processor、Actor 仍由 App 装配和插件生命周期管理，暂不支持单组件热卸载。
+首期实现 `event-source` 的资源查询、启动和停止。Interpreter、Adapter、Ingress、Handler 和 Egress 仍由 App 装配及插件生命周期管理，暂不支持单组件热卸载。
 
 未来新增资源种类时，应沿用同一身份、状态和 App API，而不是为 CLI 或 Web 单独发明控制逻辑。
 
 ## 跨 Flow 组件复用方向
 
-当前 EventSource 资源身份仍是 `(flowId, type, id)`，因此两个 Flow 声明同一个插件组件引用时会创建两个实例。这对持有全局键盘钩子、端口或设备句柄的事件源并不理想；把大量不相关 Actor 塞进同一个 Flow 也不是可接受的长期替代方案。
+Component 资源是 App 所有的命名实例；满足 `shareable` 与 `threadSafe` 约束时，同一个 EventSource 可被多个 FlowBinding 复用并扇出 RAW 事件。
 
 后续应引入“组件定义、命名实例、Flow 绑定”三层模型，而不是按 Java 类型或插件组件引用隐式全局单例：
 
@@ -31,7 +31,7 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 - App 启动共享实例一次，并在全部绑定解除或 App 停止时停止一次；Flow 启停仍不隐式改变资源生命周期；
 - 未显式引用同一实例的组件保持 Flow 级多例，不能仅因组件引用相同就自动合并。
 
-Actor 同样采用显式复用。插件作者单方面声明 `singleton` 不足以决定部署语义，因为同一 Actor 可能需要不同 options，且内部状态未必适合并发共享。更合理的约束是：插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类底层稀缺对象，插件也可以把 Robot 封装成插件生命周期内的共享服务，而让轻量 Actor 实例继续保持隔离。
+EventHandler 同样采用显式复用。插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类稀缺对象，可把 Robot 封装成插件生命周期内的共享服务，让轻量 Handler 实例保持隔离。
 
 这套模型尚未进入当前 YAML schema。本节定义演进方向，实施时需要同步修改配置模型、App 资源身份、Runtime 的一对多 EventSource 注册、生命周期回滚和资源 API，不能先加入基于类型的实例缓存。目标清单格式、实例约束、调谐 API、家目录和迁移步骤见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
 

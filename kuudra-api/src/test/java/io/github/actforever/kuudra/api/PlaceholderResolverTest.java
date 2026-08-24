@@ -14,7 +14,7 @@ class PlaceholderResolverTest {
 
     @Test
     void resolvesEventSessionGlobalAndFlowScopesWithoutStringifyingWholeValues() {
-        Event event = Event.of("input.press", EventData.of("input", Map.of("key", "A")));
+        KuudraEvent event = KuudraEvent.of("input.press", EventData.of("input", Map.of("key", "A")));
         EventContext context = new EventContext("demo", new SessionReference(UUID.randomUUID(), "demo"), Map.of("mode", "hold"), null, () -> false,
                 Map.of("profile", "test"), Map.of());
         Map<String, Object> values = PlaceholderResolver.resolveMap(Map.of(
@@ -27,7 +27,7 @@ class PlaceholderResolverTest {
 
     @Test
     void rejectsMissingValuesInsteadOfSilentlyProducingInvalidConfiguration() {
-        Event event = Event.of("input", Map.of());
+        KuudraEvent event = KuudraEvent.of("input", Map.of());
         EventContext context = new EventContext("flow", null, Map.of(), null, () -> false);
         assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.resolve("${global.missing}", event, context));
         assertThrows(IllegalStateException.class, () -> PlaceholderResolver.resolve("${session.id}", event, context));
@@ -40,8 +40,8 @@ class PlaceholderResolverTest {
                 "nested", List.of(Map.of("label", "${flow.id}:${event.type}"))));
         EventContext context = new EventContext("demo", null, Map.of(), null, () -> false);
 
-        Map<String, Object> first = compiled.resolve(Event.of("first", EventData.of("input", Map.of("value", 7))), context);
-        Map<String, Object> second = compiled.resolve(Event.of("second", EventData.of("input", Map.of("value", true))), context);
+        Map<String, Object> first = compiled.resolve(KuudraEvent.of("first", EventData.of("input", Map.of("value", 7))), context);
+        Map<String, Object> second = compiled.resolve(KuudraEvent.of("second", EventData.of("input", Map.of("value", true))), context);
 
         assertEquals(7, first.get("value"));
         assertEquals(true, second.get("value"));
@@ -59,7 +59,7 @@ class PlaceholderResolverTest {
 
     @Test
     void preservesNativeLiteralsAndParsesJsonObjectAndArrayStrings() {
-        Event event = Event.of("input", EventData.of("input", Map.of("key", "A")));
+        KuudraEvent event = KuudraEvent.of("input", EventData.of("input", Map.of("key", "A")));
         EventContext context = new EventContext("flow", null, Map.of(), null, () -> false);
 
         Map<String, Object> values = PlaceholderResolver.resolveMap(Map.of(
@@ -84,6 +84,13 @@ class PlaceholderResolverTest {
     void rejectsMalformedStructuredJsonLiteral() {
         EventContext context = new EventContext("flow", null, Map.of(), null, () -> false);
         assertThrows(IllegalArgumentException.class,
-                () -> PlaceholderResolver.resolve("{not-json}", Event.of("input", Map.of()), context));
+                () -> PlaceholderResolver.resolve("{not-json}", KuudraEvent.of("input", Map.of()), context));
+    }
+
+    @Test
+    void rawCompilationRejectsSessionScopeBeforeExecution() {
+        assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
+                Map.of("illegal", "${session#mode}"), EventDomain.RAW));
+        PlaceholderResolver.compileMap(Map.of("legal", "${event#type}"), EventDomain.RAW);
     }
 }

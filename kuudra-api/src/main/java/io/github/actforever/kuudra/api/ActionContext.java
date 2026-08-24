@@ -25,7 +25,7 @@ public record ActionContext(UUID sessionId, String flowId,
     }
 
     /** Emits a derived Event immediately. The Runtime supplies the current Session and lineage. */
-    public boolean emit(Event event) { return emitter.emit(event); }
+    public boolean emit(KuudraEvent event) { return emitter.emit(event); }
     public <T> T configuration(String key, Class<T> type) {
         Object value = configuration.get(key);
         if (value == null) throw new IllegalArgumentException("Component configuration is missing: " + key);

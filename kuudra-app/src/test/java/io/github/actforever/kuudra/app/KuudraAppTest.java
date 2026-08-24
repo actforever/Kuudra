@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.github.actforever.kuudra.api.EventEmitter;
 import io.github.actforever.kuudra.api.EventSource;
+import io.github.actforever.kuudra.api.EventDomain;
+import io.github.actforever.kuudra.api.KuudraException;
 import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
@@ -45,7 +47,7 @@ class KuudraAppTest {
             @Override public java.util.concurrent.CompletionStage<Void> stop() { stops.incrementAndGet(); return CompletableFuture.completedFuture(null); }
         };
         try (KuudraApp app = new KuudraApp(8, 1)) {
-            app.registerFlow(new KuudraFlow("flow", Map.of("sink", new FlowNode.AdapterNode("sink", (event, context) -> java.util.List.of(event))), Map.of()));
+            app.registerFlow(new KuudraFlow("flow", Map.of("sink", new FlowNode.AdapterNode("sink", (event, context) -> java.util.List.of(event), EventDomain.RAW)), Map.of()));
             assertEquals("STOPPED", app.declareEventSource("flow", "input", source, "sink").status());
             assertEquals("RUNNING", app.startEventSource("flow", "input").status());
             assertEquals("STOPPED", app.stopEventSource("flow", "input").status());
@@ -156,6 +158,6 @@ class KuudraAppTest {
         Path plugins = Files.createDirectories(directory.resolve(".kuudra/plugins"));
         Files.writeString(plugins.resolve("not-a-kuudra-plugin.jar"), "invalid jar");
 
-        assertThrows(IllegalStateException.class, () -> KuudraApp.createFromDefaultLocations(directory));
+        assertThrows(KuudraException.class, () -> KuudraApp.createFromDefaultLocations(directory));
     }
 }

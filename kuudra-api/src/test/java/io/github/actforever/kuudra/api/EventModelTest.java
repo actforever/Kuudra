@@ -18,10 +18,13 @@ class EventModelTest {
         assertThrows(UnsupportedOperationException.class, () -> data.namespace("input").put("key", "B"));
     }
     @Test
-    void detachingSessionRetainsParentSessionInLineage() {
+    void wrappersMakeExecutionDomainExplicitAndPreserveCausalLineage() {
         UUID sessionId = UUID.randomUUID();
-        Event bound = Event.of("actor.output", EventData.empty()).withSession(new SessionReference(sessionId, "flow"));
-        Event detached = bound.withoutSession();
-        assertFalse(detached.hasSession()); assertTrue(detached.lineage().parentSessionIds().contains(sessionId));
+        KuudraEvent event = KuudraEvent.of("handler.output", EventData.empty());
+        SessionEventWrapper bound = new SessionEventWrapper(event, new SessionReference(sessionId, "flow"));
+        KuudraEvent exported = event.withLineage(event.lineage().descendFrom(event, bound.session()));
+        RawEventWrapper raw = new RawEventWrapper(exported);
+        assertEquals(EventDomain.SESSION, bound.domain()); assertEquals(EventDomain.RAW, raw.domain());
+        assertTrue(raw.event().lineage().parentSessionIds().contains(sessionId));
     }
 }

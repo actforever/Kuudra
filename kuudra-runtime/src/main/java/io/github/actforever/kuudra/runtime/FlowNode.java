@@ -1,44 +1,41 @@
 package io.github.actforever.kuudra.runtime;
 
-import io.github.actforever.kuudra.api.Actor;
-import io.github.actforever.kuudra.api.Event;
-import io.github.actforever.kuudra.api.EventAdapter;
-import io.github.actforever.kuudra.api.EventContext;
-import io.github.actforever.kuudra.api.EventProcessor;
-import io.github.actforever.kuudra.api.SessionSpec;
-
-import java.util.List;
+import io.github.actforever.kuudra.api.*;
+import java.util.Map;
 import java.util.Objects;
-import io.github.actforever.kuudra.api.EventEmitter;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 
-/** A node in an Event graph. SessionAllocator is a core node, never a plugin SPI. */
-public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.ProcessorNode, FlowNode.AllocatorNode, FlowNode.ActorNode {
+/** Compiled Flow node. Ingress and Egress are the only domain-changing nodes. */
+public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.InterpreterNode,
+        FlowNode.IngressNode, FlowNode.HandlerNode, FlowNode.EgressNode {
     String id();
+    Map<String, Object> configuration();
 
-    record AdapterNode(String id, EventAdapter adapter, java.util.Map<String, Object> configuration) implements FlowNode {
-        public AdapterNode { requireId(id); Objects.requireNonNull(adapter, "adapter"); configuration = java.util.Map.copyOf(configuration); }
-        public AdapterNode(String id, EventAdapter adapter) { this(id, adapter, java.util.Map.of()); }
-        CompletionStage<List<Event>> apply(Event event, EventContext context) { return CompletableFuture.completedFuture(adapter.adapt(event, context)); }
+    record AdapterNode(String id, EventAdapter adapter, EventDomain domain, Map<String, Object> configuration) implements FlowNode {
+        public AdapterNode { requireId(id); Objects.requireNonNull(adapter); Objects.requireNonNull(domain); configuration = Map.copyOf(configuration); }
+        public AdapterNode(String id, EventAdapter adapter, EventDomain domain) { this(id, adapter, domain, Map.of()); }
     }
-    record ProcessorNode(String id, EventProcessor processor, java.util.Map<String, Object> configuration) implements FlowNode {
-        public ProcessorNode { requireId(id); Objects.requireNonNull(processor, "processor"); configuration = java.util.Map.copyOf(configuration); }
-        public ProcessorNode(String id, EventProcessor processor) { this(id, processor, java.util.Map.of()); }
-        CompletionStage<List<Event>> apply(Event event, EventContext context) { return CompletableFuture.completedFuture(processor.process(event, context)); }
+    record InterpreterNode(String id, RawEventInterpreter interpreter, Map<String, Object> configuration) implements FlowNode {
+        public InterpreterNode { requireId(id); Objects.requireNonNull(interpreter); configuration = Map.copyOf(configuration); }
     }
-    record AllocatorNode(String id, SessionSpec sessionSpec) implements FlowNode {
-        public AllocatorNode { requireId(id); Objects.requireNonNull(sessionSpec, "sessionSpec"); }
+    record IngressNode(String id, Ingress ingress, IngressConfiguration scheduling, Map<String, Object> configuration) implements FlowNode {
+        public IngressNode { requireId(id); Objects.requireNonNull(ingress); Objects.requireNonNull(scheduling); configuration = Map.copyOf(configuration); }
     }
-    record ActorNode(String id, Actor actor, java.util.Map<String, Object> configuration) implements FlowNode {
-        public ActorNode { requireId(id); Objects.requireNonNull(actor, "actor"); configuration = java.util.Map.copyOf(configuration); }
-        public ActorNode(String id, Actor actor) { this(id, actor, java.util.Map.of()); }
-        CompletionStage<Void> apply(Event event, EventContext context, EventEmitter emitter) {
-            if (!event.hasSession()) return CompletableFuture.failedFuture(new IllegalArgumentException("Actor requires a session-bound Event"));
-            return actor.act(event, new io.github.actforever.kuudra.api.ActionContext(event.session().id(), event.session().flowId(),
-                    context.sessionValues(), context.sessionContext(), context.flowValues(), context.flowContext(),
-                    context.cancellationToken(), emitter, context.globalValues(), context.globalContext(), context.configuration()));
-        }
+    record HandlerNode(String id, EventHandler handler, Map<String, Object> configuration) implements FlowNode {
+        public HandlerNode { requireId(id); Objects.requireNonNull(handler); configuration = Map.copyOf(configuration); }
     }
-    private static void requireId(String id) { if (id == null || id.isBlank()) throw new IllegalArgumentException("node id must not be blank"); }
+    record EgressNode(String id, Egress egress, Map<String, Object> configuration) implements FlowNode {
+        public EgressNode { requireId(id); Objects.requireNonNull(egress); configuration = Map.copyOf(configuration); }
+    }
+
+    default EventDomain inputDomain() {
+        if (this instanceof InterpreterNode || this instanceof IngressNode) return EventDomain.RAW;
+        if (this instanceof HandlerNode || this instanceof EgressNode) return EventDomain.SESSION;
+        return ((AdapterNode) this).domain();
+    }
+    default EventDomain outputDomain() {
+        if (this instanceof IngressNode) return EventDomain.SESSION;
+        if (this instanceof EgressNode) return EventDomain.RAW;
+        return inputDomain();
+    }
+    private static void requireId(String id) { if (id == null || id.isBlank()) throw new KuudraException("Flow node id must not be blank"); }
 }

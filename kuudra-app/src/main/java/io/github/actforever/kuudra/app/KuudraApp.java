@@ -3,17 +3,10 @@ package io.github.actforever.kuudra.app;
 import io.github.actforever.kuudra.api.AppLifecycle;
 import io.github.actforever.kuudra.api.AppSnapshot;
 import io.github.actforever.kuudra.api.AppStatus;
-import io.github.actforever.kuudra.api.Actor;
-import io.github.actforever.kuudra.api.Event;
-import io.github.actforever.kuudra.api.EventAdapter;
-import io.github.actforever.kuudra.api.EventProcessor;
-import io.github.actforever.kuudra.api.EventSource;
+import io.github.actforever.kuudra.api.*;
 import io.github.actforever.kuudra.api.FlowSnapshot;
 import io.github.actforever.kuudra.api.SessionSnapshot;
 import io.github.actforever.kuudra.api.SourceRegistration;
-import io.github.actforever.kuudra.api.SessionPolicy;
-import io.github.actforever.kuudra.api.SessionSpec;
-import io.github.actforever.kuudra.api.ParentTerminationPolicy;
 import io.github.actforever.kuudra.api.SystemEvent;
 import io.github.actforever.kuudra.api.SystemEventBus;
 import io.github.actforever.kuudra.plugin.DefaultPluginManager;
@@ -157,7 +150,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             releaseResources();
             status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); closeLogSession(); throw failure;
         } catch (IOException failure) {
-            status = AppStatus.FAILED; detail = failure.toString(); closeLogSession(); throw new IllegalStateException("Failed to initialize Kuudra logging", failure);
+            status = AppStatus.FAILED; detail = failure.toString(); closeLogSession(); throw new KuudraException("Failed to initialize Kuudra logging", failure);
         }
     }
 
@@ -227,7 +220,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public Optional<Session> session(UUID sessionId) { return requireRuntime().session(sessionId).map(KuudraApp::session); }
     public boolean cancelSession(UUID sessionId) { return requireRuntime().cancel(sessionId); }
     public void registerFlow(KuudraFlow flow) { requireRuntime().registerFlow(flow); }
-    public boolean publish(String flowId, String targetNodeId, Event event) { return requireRuntime().publish(flowId, targetNodeId, event); }
+    public boolean publish(String flowId, String targetNodeId, KuudraEvent event) { return requireRuntime().publish(flowId, targetNodeId, event); }
     public boolean awaitNoActiveSessions(Duration timeout) throws InterruptedException { return requireRuntime().awaitNoActiveSessions(timeout); }
 
     public synchronized void loadPlugin(Path archive) throws IOException {
@@ -246,12 +239,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return requireRuntime().registerSource(flowId, targetNodeId, source);
     }
 
-    private KuudraRuntime requireRuntime() { synchronized (this) { if (status != AppStatus.RUNNING || runtime == null) throw new IllegalStateException("App is not running: " + status); return runtime; } }
-    private DefaultPluginManager requirePlugins() { synchronized (this) { if (status != AppStatus.RUNNING || plugins == null) throw new IllegalStateException("App is not running: " + status); return plugins; } }
+    private KuudraRuntime requireRuntime() { synchronized (this) { if (status != AppStatus.RUNNING || runtime == null) throw new KuudraException("App is not running: " + status); return runtime; } }
+    private DefaultPluginManager requirePlugins() { synchronized (this) { if (status != AppStatus.RUNNING || plugins == null) throw new KuudraException("App is not running: " + status); return plugins; } }
     private void publish(String type) { events.publish(SystemEvent.of(type, java.util.Map.of("status", status.name(), "detail", detail))); }
     @Override public void close() { stop(); }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.status().name(), snapshot.activeSessions(), snapshot.deferredTasks()); }
-    private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.name(), snapshot.admissionKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.parentSessionIds()); }
+    private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
     public record Health(String status, int queuedTasks, int flows) { }
     public record Status(AppSnapshot app, List<Flow> flows, int activeSessions) {
         public Status { flows = List.copyOf(flows); }
@@ -284,7 +277,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             startPlugins().toCompletableFuture().join();
             applyManifests(config.manifests());
         } catch (IOException | RuntimeException error) {
-            throw new IllegalStateException("Failed to apply Kuudra configuration", error);
+            throw KuudraException.wrap("Failed to apply Kuudra configuration", error);
         }
     }
 
@@ -315,9 +308,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Object instance = switch (component.type()) {
                 case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class);
                 case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class);
-                case "event-processor" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventProcessor.class);
-                case "actor" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), Actor.class);
-                case "session-allocator" -> component;
+                case "raw-event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), RawEventInterpreter.class);
+                case "event-handler" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventHandler.class);
+                case "ingress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Ingress.class);
+                case "egress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Egress.class);
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
             manifestInstances.put(component.id(), instance);
@@ -352,10 +346,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Object instance = manifestInstances.get(component.id());
             FlowNode node = switch (component.type()) {
                 case "event-source" -> null;
-                case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, component.options());
-                case "event-processor" -> new FlowNode.ProcessorNode(imported.getKey(), (EventProcessor) instance, component.options());
-                case "actor" -> new FlowNode.ActorNode(imported.getKey(), (Actor) instance, component.options());
-                case "session-allocator" -> new FlowNode.AllocatorNode(imported.getKey(), sessionSpec(imported.getKey(), component.options()));
+                case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, domain(component.options()), component.options());
+                case "raw-event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (RawEventInterpreter) instance, component.options());
+                case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
+                case "ingress" -> new FlowNode.IngressNode(imported.getKey(), ingress(component, instance), ingressConfiguration(component.options()), component.options());
+                case "egress" -> new FlowNode.EgressNode(imported.getKey(), egress(component, instance), component.options());
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
             if (node != null) nodes.put(imported.getKey(), node);
@@ -376,7 +371,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private void validateManifestPolicies(KuudraManifest.Resources resources) {
         Map<String, Integer> appCounts = new LinkedHashMap<>();
         for (KuudraManifest.Component component : resources.components().values()) {
-            if (component.type().equals("session-allocator")) continue;
+            if (core(component)) continue;
             String reference = componentReference(component.type(), component.component());
             PluginComponentDefinition definition = requirePlugins().components().find(reference)
                     .orElseThrow(() -> new IllegalArgumentException("Unknown component: " + reference));
@@ -391,7 +386,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Map<String, Integer> flowCounts = new LinkedHashMap<>();
             for (KuudraManifest.ResourceReference reference : flow.imports().values()) {
                 KuudraManifest.Component component = resources.components().get(reference.id());
-                if (component == null || component.type().equals("session-allocator")) continue;
+                if (component == null || core(component)) continue;
                 PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
                 usages.merge(component.id(), 1, Integer::sum);
                 if (definition.instancePolicy().limitScope() == ComponentLimitScope.FLOW) {
@@ -408,13 +403,19 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
 
-    private static SessionSpec sessionSpec(String id, Map<String, Object> options) {
-        String name = text(options.getOrDefault("name", id));
-        String admissionKey = text(options.getOrDefault("admission-key", "default"));
-        SessionPolicy policy = SessionPolicy.valueOf(text(options.getOrDefault("policy", SessionPolicy.PARALLEL.name())));
-        ParentTerminationPolicy parent = ParentTerminationPolicy.valueOf(text(options.getOrDefault("parent-termination-policy", ParentTerminationPolicy.NONE.name())));
-        return new SessionSpec(name, admissionKey, policy, parent);
+    private static EventDomain domain(Map<String,Object> options) { return EventDomain.valueOf(text(options.getOrDefault("domain", "RAW")).toUpperCase(java.util.Locale.ROOT)); }
+    private static Ingress ingress(KuudraManifest.Component component, Object instance) {
+        if (!core(component)) return (Ingress) instance;
+        return (event, context) -> IngressDecision.accept(text(context.configuration().getOrDefault("groupKey", context.configuration().getOrDefault("group-key", event.type()))), event);
     }
+    private static Egress egress(KuudraManifest.Component component, Object instance) { return core(component) ? (event, context) -> List.of(event) : (Egress) instance; }
+    private static IngressConfiguration ingressConfiguration(Map<String,Object> options) {
+        return new IngressConfiguration(SessionSchedulingPolicy.valueOf(text(options.getOrDefault("policy", "PARALLEL")).toUpperCase(java.util.Locale.ROOT)),
+                SessionGroupScope.valueOf(text(options.getOrDefault("groupScope", options.getOrDefault("group-scope", "FLOW_BINDING"))).toUpperCase(java.util.Locale.ROOT)),
+                Integer.parseInt(text(options.getOrDefault("maxParallelSessions", options.getOrDefault("max-parallel-sessions", 64)))),
+                Integer.parseInt(text(options.getOrDefault("queueCapacity", options.getOrDefault("queue-capacity", 256)))));
+    }
+    private static boolean core(KuudraManifest.Component component) { return (component.type().equals("ingress") || component.type().equals("egress")) && component.component().equals("core/default"); }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     private static String componentReference(String type, String component) {
         if (component.startsWith(type + "/")) return component; // Compatibility with the former full reference syntax.
@@ -423,7 +424,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return type + "/" + component;
     }
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
-    public record Session(UUID id, String flowId, String name, String admissionKey, String status, boolean cancellationRequested, java.util.Set<UUID> parentSessionIds) { }
+    public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
     private ManagedEventSource requireEventSource(String flowId, String resourceId) {
         ManagedEventSource source = eventSources.get(new ResourceKey(flowId, resourceId));

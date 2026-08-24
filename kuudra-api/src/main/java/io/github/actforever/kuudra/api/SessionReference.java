@@ -2,7 +2,7 @@ package io.github.actforever.kuudra.api;
 
 import java.util.UUID;
 
-/** Immutable identity of the active execution Session carried by an Event. */
+/** Immutable identity carried only by a SessionEventWrapper. */
 public record SessionReference(UUID id, String flowId) {
     public SessionReference {
         if (id == null) throw new IllegalArgumentException("session id must not be null");

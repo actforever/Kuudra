@@ -2,7 +2,7 @@ package io.github.actforever.kuudra.runtime;
 
 import io.github.actforever.kuudra.api.ActionContext;
 import io.github.actforever.kuudra.api.ActionResult;
-import io.github.actforever.kuudra.api.Event;
+import io.github.actforever.kuudra.api.KuudraEvent;
 import io.github.actforever.kuudra.api.SessionContext;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +21,7 @@ class ActionActorTest {
         var first = (io.github.actforever.kuudra.api.Action) call -> { calls.add("first"); return CompletableFuture.completedFuture(ActionResult.empty()); };
         var second = (io.github.actforever.kuudra.api.Action) call -> { calls.add("second"); return CompletableFuture.completedFuture(ActionResult.empty()); };
         ActionActor actor = new ActionActor(List.of(new ActionActor.Binding(event -> true, first, Map.of()), new ActionActor.Binding(event -> true, second, Map.of())));
-        actor.act(Event.of("input", Map.of()), context()).toCompletableFuture().join();
+        actor.handle(KuudraEvent.of("input", Map.of()), context()).toCompletableFuture().join();
         assertEquals(List.of("first", "second"), calls);
     }
     private static ActionContext context() {

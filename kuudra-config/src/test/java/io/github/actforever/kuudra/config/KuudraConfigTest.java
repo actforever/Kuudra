@@ -75,13 +75,13 @@ class KuudraConfigTest {
                       kind: Component
                       namespace: input
                       name: keyboard
-                    actor:
+                    handler:
                       kind: Component
                       namespace: actions
                       name: printer
                   edges:
                     - from: input
-                      to: actor
+                      to: handler
                 """);
 
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
@@ -101,7 +101,7 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Component
                 metadata: {namespace: default, name: duplicate}
-                spec: {type: actor, component: demo/actor}
+                spec: {type: event-handler, component: demo/handler}
                 """;
         Files.writeString(manifests.resolve("one.yaml"), component);
         Files.writeString(directory.resolve(".kuudra/manifests/b/two.yaml"), component);

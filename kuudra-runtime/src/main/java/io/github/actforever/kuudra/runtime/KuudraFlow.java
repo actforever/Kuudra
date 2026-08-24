@@ -1,23 +1,29 @@
 package io.github.actforever.kuudra.runtime;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
+import java.util.stream.Collectors;
 
-/** Immutable Event graph; EventSource bindings choose their initial target node. */
-public record KuudraFlow(String id, Map<String, FlowNode> nodes, Map<String, List<String>> edges) {
+/** Immutable, domain-checked event graph. Source bindings target RAW nodes. */
+public record KuudraFlow(String id, long revision, Map<String, FlowNode> nodes, Map<String, List<String>> edges) {
+    public KuudraFlow(String id, Map<String, FlowNode> nodes, Map<String, List<String>> edges) { this(id, 1, nodes, edges); }
     public KuudraFlow {
-        if (id == null || id.isBlank()) throw new IllegalArgumentException("id must not be blank");
-        nodes = Map.copyOf(Objects.requireNonNull(nodes, "nodes"));
-        if (nodes.isEmpty()) throw new IllegalArgumentException("flow must contain nodes");
-        edges = edges.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> List.copyOf(entry.getValue())));
+        if (id == null || id.isBlank()) throw new io.github.actforever.kuudra.api.KuudraException("Flow id must not be blank");
+        if (revision < 1) throw new io.github.actforever.kuudra.api.KuudraException("Flow revision must be positive");
+        nodes = Map.copyOf(Objects.requireNonNull(nodes));
+        if (nodes.isEmpty()) throw new io.github.actforever.kuudra.api.KuudraException("Flow must contain nodes");
+        edges = edges.entrySet().stream().collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, e -> List.copyOf(e.getValue())));
         for (Map.Entry<String, List<String>> edge : edges.entrySet()) {
-            if (!nodes.containsKey(edge.getKey())) throw new IllegalArgumentException("unknown source node: " + edge.getKey());
-            for (String target : edge.getValue()) if (!nodes.containsKey(target)) throw new IllegalArgumentException("unknown target node: " + target);
+            FlowNode source = require(nodes, edge.getKey(), "source");
+            for (String targetId : edge.getValue()) {
+                FlowNode target = require(nodes, targetId, "target");
+                if (source.outputDomain() != target.inputDomain())
+                    throw new io.github.actforever.kuudra.api.KuudraException("Flow domain mismatch: " + source.id() + "(" + source.outputDomain() + ") -> " + target.id() + "(" + target.inputDomain() + ")");
+            }
         }
     }
     public List<String> next(String nodeId) { return edges.getOrDefault(nodeId, List.of()); }
-    public FlowNode node(String nodeId) {
-        FlowNode node = nodes.get(nodeId); if (node == null) throw new IllegalArgumentException("unknown flow node: " + nodeId); return node;
+    public FlowNode node(String nodeId) { return require(nodes, nodeId, "node"); }
+    private static FlowNode require(Map<String, FlowNode> nodes, String id, String role) {
+        FlowNode node = nodes.get(id); if (node == null) throw new io.github.actforever.kuudra.api.KuudraException("Unknown " + role + " node: " + id); return node;
     }
 }

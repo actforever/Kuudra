@@ -13,11 +13,11 @@ public final class PlaceholderResolver {
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^}]+)}");
     private PlaceholderResolver() { }
 
-    public static Map<String, Object> resolveMap(Map<String, Object> template, Event event, EventContext context) {
+    public static Map<String, Object> resolveMap(Map<String, Object> template, KuudraEvent event, EventContext context) {
         return compileMap(template).resolve(event, context);
     }
 
-    public static Object resolve(Object template, Event event, EventContext context) {
+    public static Object resolve(Object template, KuudraEvent event, EventContext context) {
         return compile(template).resolve(event, context);
     }
 
@@ -25,6 +25,30 @@ public final class PlaceholderResolver {
     public static CompiledMap compileMap(Map<String, Object> template) {
         Objects.requireNonNull(template, "template");
         return new CompiledMap(compile(template));
+    }
+
+    /** Compiles and rejects explicit scopes unavailable in the selected execution domain. */
+    public static CompiledMap compileMap(Map<String, Object> template, EventDomain domain) {
+        Objects.requireNonNull(domain, "domain");
+        validateScopes(template, domain);
+        return compileMap(template);
+    }
+
+    private static void validateScopes(Object value, EventDomain domain) {
+        if (value instanceof String text) {
+            Matcher matcher = PLACEHOLDER.matcher(text);
+            while (matcher.find()) {
+                String expression = matcher.group(1);
+                int separator = expression.indexOf('#');
+                if (separator < 0) continue;
+                String scope = expression.substring(0, separator);
+                if (!java.util.Set.of("event", "session", "flow", "global").contains(scope))
+                    throw new IllegalArgumentException("Unknown placeholder scope: " + scope);
+                if (domain == EventDomain.RAW && scope.equals("session"))
+                    throw new IllegalArgumentException("RAW-domain configuration cannot reference session scope: ${" + expression + "}");
+            }
+        } else if (value instanceof Map<?, ?> map) map.values().forEach(item -> validateScopes(item, domain));
+        else if (value instanceof List<?> list) list.forEach(item -> validateScopes(item, domain));
     }
 
     private static Template compile(Object template) {
@@ -93,7 +117,7 @@ public final class PlaceholderResolver {
         private final Template template;
         private CompiledMap(Template template) { this.template = template; }
         @SuppressWarnings("unchecked")
-        public Map<String, Object> resolve(Event event, EventContext context) {
+        public Map<String, Object> resolve(KuudraEvent event, EventContext context) {
             Objects.requireNonNull(event, "event");
             Objects.requireNonNull(context, "context");
             return (Map<String, Object>) template.resolve(event, context);
@@ -101,16 +125,16 @@ public final class PlaceholderResolver {
     }
 
     @FunctionalInterface
-    private interface Template { Object resolve(Event event, EventContext context); }
-    private sealed interface Segment permits Literal, Expression { Object resolve(Event event, EventContext context); }
+    private interface Template { Object resolve(KuudraEvent event, EventContext context); }
+    private sealed interface Segment permits Literal, Expression { Object resolve(KuudraEvent event, EventContext context); }
     private record Literal(String value) implements Segment {
-        @Override public Object resolve(Event event, EventContext context) { return value; }
+        @Override public Object resolve(KuudraEvent event, EventContext context) { return value; }
     }
     private record Expression(String[] parts) implements Segment {
-        @Override public Object resolve(Event event, EventContext context) { return lookup(parts, event, context); }
+        @Override public Object resolve(KuudraEvent event, EventContext context) { return lookup(parts, event, context); }
     }
 
-    private static Object lookup(String[] parts, Event event, EventContext context) {
+    private static Object lookup(String[] parts, KuudraEvent event, EventContext context) {
         String expression = String.join(".", parts);
         int scopeSeparator = parts[0].indexOf('#');
         if (scopeSeparator >= 0) {
@@ -131,7 +155,7 @@ public final class PlaceholderResolver {
             default -> throw unresolved(expression);
         };
     }
-    private static Object scoped(String scope, String[] path, Event event, EventContext context, String expression) {
+    private static Object scoped(String scope, String[] path, KuudraEvent event, EventContext context, String expression) {
         Lookup result = switch (scope) {
             case "event" -> eventLookup(path, event);
             case "session" -> context.session() == null ? Lookup.missing() : nestedFind(context.sessionValues(), path, 0);
@@ -145,7 +169,7 @@ public final class PlaceholderResolver {
         }
         return result.value;
     }
-    private static Object automatic(String[] path, Event event, EventContext context, String expression) {
+    private static Object automatic(String[] path, KuudraEvent event, EventContext context, String expression) {
         for (Lookup result : List.of(eventLookup(path, event),
                 context.session() == null ? Lookup.missing() : nestedFind(context.sessionValues(), path, 0),
                 nestedFind(context.flowValues(), path, 0), nestedFind(context.globalValues(), path, 0))) {
@@ -153,7 +177,7 @@ public final class PlaceholderResolver {
         }
         throw unresolved(expression);
     }
-    private static Lookup eventLookup(String[] path, Event event) {
+    private static Lookup eventLookup(String[] path, KuudraEvent event) {
         if (path.length == 1) {
             Lookup metadata = switch (path[0]) {
                 case "id" -> Lookup.found(event.id().toString());
@@ -173,7 +197,7 @@ public final class PlaceholderResolver {
         if (path[0].equals("data")) return nestedFind(event.data().namespaces(), path, 1);
         return nestedFind(event.data().namespaces(), path, 0);
     }
-    private static Object eventValue(String[] parts, Event event, String expression) {
+    private static Object eventValue(String[] parts, KuudraEvent event, String expression) {
         if (parts.length == 2) return switch (parts[1]) {
             case "id" -> event.id().toString(); case "type" -> event.type(); case "occurredAt" -> event.occurredAt().toString(); default -> throw unresolved(expression);
         };

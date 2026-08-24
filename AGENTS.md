@@ -17,10 +17,10 @@ The tracked Maven reactor is:
 
 | Module | Responsibility |
 | --- | --- |
-| `kuudra-api` | Shared public contracts: Event, component interfaces, session and App snapshots. |
+| `kuudra-api` | Shared public contracts: KuudraEvent wrappers, component interfaces, session and App snapshots. |
 | `kuudra-config` | Format-neutral configuration model and YAML loader. |
 | `kuudra-plugin` | Plugin metadata, ClassLoader archive loader, annotations, component registry, dependency-aware lifecycle manager. |
-| `kuudra-runtime` | Event task queue, Flow graph, session allocation/lifecycle, asynchronous Actor scheduling. |
+| `kuudra-runtime` | Dual-domain Flow graph, task queue, SessionManager, SessionCoordinator and asynchronous EventHandler scheduling. |
 | `kuudra-app` | Framework-independent façade that owns a Runtime and applies external configuration. |
 | `kuudra-web` | The sole HTTP REST/SSE adapter. It exposes **App**, never Runtime. |
 | `kuudra-logging` | Spring-independent colored console logging, SystemEvent projection, and per-run file archival. |
@@ -31,19 +31,20 @@ For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins
 
 ## Architecture decisions already made
 
-- The domain is event-driven. Main extension points are `EventSource`, `EventAdapter`, `EventProcessor`, and `Actor`.
-- `Event` is the common message model. `EventData` is immutable and namespace-keyed to prevent payload collisions between plugins.
-- Runtime data has four scopes: immutable derived Event data, mutable Session context, mutable Flow context shared across sessions, and mutable Global context shared across flows. Configuration placeholders are read-only: `${path}` searches Event -> Session -> Flow -> Global, while `${event#path}`, `${session#path}`, `${flow#path}`, and `${global#path}` are strict. Components write through context APIs, never through YAML.
+- The domain is event-driven. Extension points are `EventSource`, `RawEventInterpreter`, `EventAdapter`, `Ingress`, `EventHandler`, and `Egress`.
+- `KuudraEvent` is the immutable business message. Runtime uses the sealed `KuudraEventWrapper` hierarchy (`RawEventWrapper`/`SessionEventWrapper`) to make execution domains explicit; never add a nullable Session back to the event entity.
+- Runtime data has four logical scopes: immutable Event data, mutable Session context, mutable Flow context and mutable Global context. RAW nodes may read Event/Flow/Global; SESSION nodes additionally read Session. `${path}` searches only currently available scopes, while `${event#path}`, `${session#path}`, `${flow#path}`, and `${global#path}` are strict. There is no `rawEvent#` scope.
 - Context writes use the extensible `ContextCodec`; the default JSON codec stores an immutable JSON-compatible tree and typed `get(..., Class<T>)` performs conversion on demand. Shared plugin POJOs must be defined by a declared dependency so dependents resolve the same `Class<?>`; do not store raw plugin object references in runtime contexts.
-- `SessionAllocator` is the only Flow node that creates sessions. Events without a session must pass it before reaching an Actor.
-- Actor-originated Events normally inherit their session when routed directly to another Actor. Routing an event back to an EventProcessor or SessionAllocator detaches its session and records lineage, so a new child session can be allocated.
-- Component references must use `type/namespace/name`, for example `event-source/hello-world/loop-emitter` and `actor/hello-world/console-printer`.
+- Ingress is the only RAW-to-SESSION boundary and Egress the only SESSION-to-RAW boundary. Ingress computes admission/grouping only; Runtime-owned `SessionManager` creates sessions and owns leases, while `SessionCoordinator` owns bounded group scheduling.
+- Session has no parent-child lifecycle. Egress preserves causal `EventLineage`; a later Ingress creates an independent Session.
+- Component references use `type/namespace/name`, for example `event-source/hello-world/loop-emitter` and `event-handler/hello-world/console-printer`.
 - A `KuudraFlow` is the runtime scheduling unit. A single `KuudraRuntime` is owned by the active `KuudraApp`.
-- Actors execute asynchronously. `Actor.act` returns `CompletionStage<Void>` and may call `ActionContext.emit(Event)` at any point; Runtime automatically applies the current Session and lineage. Ordering is preserved within one session by default; independent sessions may proceed in parallel.
+- EventHandlers execute asynchronously. `EventHandler.handle` returns `CompletionStage<Void>` and may call `ActionContext.emit(KuudraEvent)` until that stage completes. Runtime preserves the current Session and lineage. Runtime work leases, not business events, determine Session completion.
 - Plugin archives use `META-INF/kuudra-plugin/metadata.toml`, dependency-aware ClassLoaders, annotation-discovered components, and declared dependency ordering. Every JAR in `<home-directory>/plugins` is loaded; a dependency plugin's classes and resource enumeration are visible to its dependents, and invalid archives, cycles, duplicate IDs and missing dependencies are errors. Successful starts are recorded incrementally so a later dependent failure cleans itself and rolls back already-active dependencies. Annotation-created instances may implement `PluginComponentLifecycle`; their `initialize` runs after plugin activation and their reverse-order `destroy` runs before plugin shutdown. Plugin Actions remain Java-based for now; cross-language execution is a future bridge concern.
 - Flow registration precompiles node option placeholder syntax into immutable `PlaceholderResolver.CompiledMap` instances. Event execution performs only dynamic four-scope lookup and result assembly. Keep regex scanning and expression path splitting out of the Runtime event hot path.
 - Node options preserve native YAML numbers, booleans, maps and lists. Quoted strings shaped as JSON objects/arrays are parsed through the active `ContextCodec`; static JSON is parsed at Flow registration, while JSON containing placeholders is parsed after event-time interpolation. Numeric/boolean strings remain strings.
 - `kuudra-web` is an adapter only. Its lifecycle is conceptually independent from App lifecycle: stopping App closes Runtime/plugins but must not make HTTP lifecycle endpoints disappear.
+- Runtime/App kernel failures exposed across module boundaries use the unchecked `KuudraException` and retain their cause. Keep environment/config-format/IO exceptions distinct until they cross the kernel boundary.
 - Kuudra Web OpenAPI is split into stable `app-lifecycle`, `flows`, `event-sources`, `sessions`, and `system-events` groups. Keep Chinese tags/operation summaries synchronized when endpoints change; grouping must not change REST paths or expose Runtime.
 - Runtime, plugin and App lifecycle observability is expressed as `SystemEvent`; do not inject concrete loggers into those modules for ordinary lifecycle messages. `kuudra-logging` owns a private Logback context and exposes framework-neutral `KuudraLogConfiguration`/`KuudraLogLevel` APIs. Root `logging.level`, `logging.console-enabled`, and `logging.file-enabled` settings control the App log session; the log directory remains fixed. With file output enabled, it writes `<home-directory>/logs/latest.log` and archives it as `yyyy-MM-dd-N.log.gz` on normal kernel stop. The stopped run remains readable as `latest.log` until the next kernel start deletes that file and creates a new one. Home initialization must ensure `logs/` exists even when file output is disabled.
 
@@ -60,12 +61,12 @@ kuudra-web
   -> plugin JAR scan
   -> metadata/dependency resolution and plugin startup
   -> Flow compilation and EventSource registration
-  -> Event -> SessionAllocator -> Actor
+  -> RawEventWrapper -> Ingress -> SessionEventWrapper -> EventHandler -> optional Egress
 ```
 
 - App configuration is owned entirely by `KuudraApp`; Web does not source Kuudra settings from Spring. Configuration is deeply merged in ascending priority: packaged `kuudra-app/src/main/resources/config.yaml`, `<home-directory>/config.yaml`, then an explicit `KuudraConfigResource` or configuration path passed while creating the App. For packaged Web, relative paths use the executable JAR directory as their base; standalone App defaults to the working directory.
 - Global YAML contains root `home-directory`, runtime queue/worker settings, logging level/output switches and `global-context`. App config keys use lowercase kebab-case; K8s-style resource manifests use standard camelCase fields such as `apiVersion` and `desiredState`. App initialization ensures fixed `plugins/`, `manifests/`, `logs/`, and `state/` directories exist and restores a missing home `config.yaml` from packaged defaults. Do not recreate a top-level `flows/` directory.
-- Each Flow YAML uses Compose-style `components` and `routes`. An `event-source` component is a separately controlled resource; other node types currently supported by the compiler are `event-adapter`, `event-processor`, `session-allocator`, and `actor`. The component `type` is declared by the node and `component` uses `namespace/component-id` (for example `hello-world/loop-emitter`), not the former duplicated type-prefixed form.
+- Each Flow imports Component resources and declares `edges`. Supported component types are `event-source`, `raw-event-interpreter`, `event-adapter`, `ingress`, `event-handler`, and `egress`. Core boundaries use `core/default`. An EventAdapter declares its deployment `domain` (`RAW` or `SESSION`) and cannot change it.
 - Flow is a scope for component names, routing and sessions; starting, pausing or stopping a Flow changes its routing/session gate and does not implicitly start or stop its resources. Event sources are queried and controlled through App resource APIs and `/api/v1/app/flows/{flowId}/resources/event-sources/...`.
 - Cross-Flow reuse is explicit: plugin definitions provide instance constraints, Component manifests define named App-owned instances, and Flow manifests import them. Sharing requires `shareable` and `threadSafe`; one EventSource can fan out to multiple Flow targets and starts/stops once.
 - K8s-style resources use camelCase keys (`apiVersion`, `desiredState`) under recursively discovered `<home>/manifests/`. Both Component and Flow are resource kinds, but dependency direction is strict: Flow `spec.imports` references Component identities; Component resources never reference Flow. Startup validates identities, references, kinds, limits and sharing safety. There is no legacy Flow schema or separate Flow configuration directory.
@@ -73,7 +74,7 @@ kuudra-web
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 - Logging event coverage, isolation and file rotation are documented in `docs/kuudra-logging.md`.
 
-Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, `kuudra.system.*` Event handling, and cross-language bridges remain future work. All Flows are peers; do not reintroduce a control-plane Flow without an explicit architecture decision. YAML preserves placeholder templates; Runtime compiles their syntax at Flow registration and resolves values against Event, Session, global and Flow scopes for each execution. Supported syntax, performance model and limitations are documented in `docs/kuudra-bootstrap.md`; do not change them without matching tests.
+Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, static cycle diagnostics, `kuudra.system.*` handling, and cross-language bridges remain future work. All Flows are peers. Runtime compiles placeholders with the node input domain at Flow registration; keep parsing out of the event hot path and match changes with tests.
 
 ## Build and verification
 
