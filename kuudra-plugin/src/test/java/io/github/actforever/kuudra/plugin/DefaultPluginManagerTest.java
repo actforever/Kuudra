@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
@@ -156,7 +157,8 @@ class DefaultPluginManagerTest {
                 new RecordingPlugin("component", List.of(), calls),
                 List.of(new PluginComponentDefinition("component", "test-plugin", PluginComponentKind.EVENT_SOURCE, "managed", ManagedTestSource.class))));
         manager.startAll().toCompletableFuture().join();
-        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.EventSource.class);
+        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.EventSource.class,
+                Map.of("intervalMillis", 250));
         manager.close();
         assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);
     }
@@ -221,6 +223,7 @@ class DefaultPluginManagerTest {
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> initialize(PluginComponentContext context) {
             assertTrue(Files.isDirectory(context.plugin().home()));
+            assertEquals(250, context.configuration("intervalMillis", Integer.class));
             calls.add("component.component.initialize");
             return CompletableFuture.completedFuture(null);
         }

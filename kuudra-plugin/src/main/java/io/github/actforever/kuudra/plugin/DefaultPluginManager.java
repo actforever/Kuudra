@@ -97,6 +97,11 @@ public final class DefaultPluginManager implements AutoCloseable {
 
     /** Creates and initializes a Flow-owned component after its plugin is active. */
     public <T> T createComponent(String reference, Class<T> expectedType) {
+        return createComponent(reference, expectedType, Map.of());
+    }
+
+    /** Creates a component and exposes its immutable manifest options during component initialization. */
+    public <T> T createComponent(String reference, Class<T> expectedType, Map<String, Object> configuration) {
         PluginComponentDefinition definition = componentRegistry.find(reference)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown component: " + reference));
         final PluginContext context;
@@ -111,7 +116,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         if (instance instanceof PluginComponentLifecycle lifecycle) {
             try {
                 event("plugin.component.initializing", Map.of("pluginId", definition.pluginId(), "component", reference));
-                lifecycle.initialize(new PluginComponentContext(reference, context)).toCompletableFuture().join();
+                lifecycle.initialize(new PluginComponentContext(reference, context, configuration)).toCompletableFuture().join();
                 synchronized (this) { managedComponents.add(lifecycle); }
                 event("plugin.component.initialized", Map.of("pluginId", definition.pluginId(), "component", reference));
             } catch (RuntimeException error) {

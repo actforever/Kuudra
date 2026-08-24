@@ -307,12 +307,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         validateManifestPolicies(resources);
         for (KuudraManifest.Component component : resources.components().values()) {
             Object instance = switch (component.type()) {
-                case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class);
-                case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class);
-                case "raw-event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), RawEventInterpreter.class);
-                case "event-handler" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventHandler.class);
-                case "ingress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Ingress.class);
-                case "egress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Egress.class);
+                case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class, component.options());
+                case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class, component.options());
+                case "raw-event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), RawEventInterpreter.class, component.options());
+                case "event-handler" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventHandler.class, component.options());
+                case "ingress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Ingress.class, component.options());
+                case "egress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Egress.class, component.options());
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
             manifestInstances.put(component.id(), instance);
