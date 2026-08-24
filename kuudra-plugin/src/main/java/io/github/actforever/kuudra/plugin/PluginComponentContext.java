@@ -17,9 +17,15 @@ public record PluginComponentContext(String componentReference, PluginContext pl
 
     public java.nio.file.Path pluginHome() { return plugin.pluginHome(); }
 
+    public io.github.actforever.kuudra.api.TypedValueMap configurationValues() {
+        return io.github.actforever.kuudra.api.TypedValueMap.of(configuration);
+    }
+
     public <T> T configuration(String key, Class<T> type) {
-        Object value = configuration.get(key);
-        if (value == null) throw new IllegalArgumentException("Missing component configuration: " + key);
-        return io.github.actforever.kuudra.api.ContextCodecs.defaultCodec().decode(value, type);
+        return io.github.actforever.kuudra.api.TypedValueMap.get(configuration, key, type);
+    }
+
+    public <T> T configuration(String key, Class<T> type, T fallback) {
+        return io.github.actforever.kuudra.api.TypedValueMap.getOrDefault(configuration, key, type, fallback);
     }
 }

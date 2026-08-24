@@ -26,9 +26,11 @@ public record ActionContext(UUID sessionId, String flowId,
 
     /** Emits a derived Event immediately. The Runtime supplies the current Session and lineage. */
     public boolean emit(KuudraEvent event) { return emitter.emit(event); }
+    public TypedValueMap configurationValues() { return TypedValueMap.of(configuration); }
     public <T> T configuration(String key, Class<T> type) {
-        Object value = configuration.get(key);
-        if (value == null) throw new IllegalArgumentException("Component configuration is missing: " + key);
-        return ContextCodecs.defaultCodec().decode(value, type);
+        return TypedValueMap.get(configuration, key, type);
+    }
+    public <T> T configuration(String key, Class<T> type, T fallback) {
+        return TypedValueMap.getOrDefault(configuration, key, type, fallback);
     }
 }

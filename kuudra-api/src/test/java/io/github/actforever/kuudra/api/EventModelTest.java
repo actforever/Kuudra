@@ -27,4 +27,13 @@ class EventModelTest {
         assertEquals(EventDomain.SESSION, bound.domain()); assertEquals(EventDomain.RAW, raw.domain());
         assertTrue(raw.event().lineage().parentSessionIds().contains(sessionId));
     }
+
+    @Test
+    void typedValueMapCentralizesConversionAndDefaults() {
+        TypedValueMap values = TypedValueMap.of(Map.of("intervalMillis", 25, "enabled", true));
+        assertEquals(25L, values.get("intervalMillis", Long.class));
+        assertTrue(values.get("enabled", Boolean.class));
+        assertEquals(1000L, values.getOrDefault("missing", Long.class, 1000L));
+        assertThrows(IllegalArgumentException.class, () -> values.get("missing", String.class));
+    }
 }

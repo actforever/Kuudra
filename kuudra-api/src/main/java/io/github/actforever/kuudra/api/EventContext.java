@@ -25,9 +25,11 @@ public record EventContext(String flowId, SessionReference session,
         this(flowId, session, sessionValues, sessionContext, cancellationToken, Map.of(), Map.of());
     }
     public Optional<UUID> sessionId() { return session == null ? Optional.empty() : Optional.of(session.id()); }
+    public TypedValueMap configurationValues() { return TypedValueMap.of(configuration); }
     public <T> T configuration(String key, Class<T> type) {
-        Object value = configuration.get(key);
-        if (value == null) throw new IllegalArgumentException("Component configuration is missing: " + key);
-        return ContextCodecs.defaultCodec().decode(value, type);
+        return TypedValueMap.get(configuration, key, type);
+    }
+    public <T> T configuration(String key, Class<T> type, T fallback) {
+        return TypedValueMap.getOrDefault(configuration, key, type, fallback);
     }
 }

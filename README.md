@@ -51,7 +51,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 
 所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和依赖；依赖插件的类与资源对下游插件可见。Component 和 Flow 资源统一放在 `manifests/`，Flow 通过 `spec.imports` 引用 Component。
 
-当前 Component type 为：`event-source`、`event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时读取 Component `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
+当前 Component type 为：`event-source`、`event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时通过统一的 `TypedValueMap` 读取并转换 Component `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
 
 ```powershell
 mvn test -DskipTests=false
