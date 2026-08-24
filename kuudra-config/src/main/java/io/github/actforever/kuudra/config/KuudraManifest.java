@@ -47,11 +47,11 @@ public final class KuudraManifest {
         }
     }
 
-    public record Flow(ResourceId id, Metadata metadata, String desiredState,
+    public record Flow(ResourceId id, Metadata metadata,
                        Map<String, ResourceReference> imports, List<KuudraConfig.EdgeConfig> edges) {
         public Flow {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
-            requireText(desiredState, "spec.desiredState"); imports = Map.copyOf(imports); edges = List.copyOf(edges);
+            imports = Map.copyOf(imports); edges = List.copyOf(edges);
             if (imports.isEmpty()) throw new IllegalArgumentException("Flow imports must not be empty");
             for (ResourceReference reference : imports.values()) {
                 if (!COMPONENT_KINDS.containsKey(reference.kind())) throw new IllegalArgumentException("Flow import kind must be a concrete component kind: " + reference.kind());

@@ -33,6 +33,10 @@ class AppController {
     @PostMapping("/start") AppSnapshot start() { app.start(); return app.snapshot(); }
     @Operation(summary = "停止 App 内核", tags = "App 生命周期")
     @PostMapping("/stop") AppSnapshot stop() { app.stop(); return app.snapshot(); }
+    @Operation(summary = "暂停 App 内核", tags = "App 生命周期")
+    @PostMapping("/pause") AppSnapshot pause() { app.pause(); return app.snapshot(); }
+    @Operation(summary = "恢复 App 内核", tags = "App 生命周期")
+    @PostMapping("/resume") AppSnapshot resume() { app.resume(); return app.snapshot(); }
     @Operation(summary = "重启 App 内核", tags = "App 生命周期")
     @PostMapping("/restart") AppSnapshot restart() { app.restart(); return app.snapshot(); }
     @Operation(summary = "列出全部 Flow", tags = "Flow 管理")
@@ -46,34 +50,6 @@ class AppController {
             @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
         return app.flow(namespace, name).orElseThrow(() -> notFound("Flow", namespace + "/" + name));
     }
-    @Operation(summary = "启动命名空间内的 Flow", tags = "Flow 管理")
-    @PostMapping("/namespaces/{namespace}/flows/{name}/start") KuudraApp.Flow startNamespacedFlow(
-            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
-        app.activateFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
-    }
-    @Operation(summary = "暂停命名空间内的 Flow", tags = "Flow 管理")
-    @PostMapping("/namespaces/{namespace}/flows/{name}/pause") KuudraApp.Flow pauseNamespacedFlow(
-            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
-        app.pauseFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
-    }
-    @Operation(summary = "恢复命名空间内的 Flow", tags = "Flow 管理")
-    @PostMapping("/namespaces/{namespace}/flows/{name}/resume") KuudraApp.Flow resumeNamespacedFlow(
-            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
-        app.resumeFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
-    }
-    @Operation(summary = "停止命名空间内的 Flow", tags = "Flow 管理")
-    @PostMapping("/namespaces/{namespace}/flows/{name}/stop") KuudraApp.Flow stopNamespacedFlow(
-            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
-        app.stopFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
-    }
-    @Operation(summary = "启动 Flow", tags = "Flow 管理")
-    @PostMapping("/flows/{flowId}/start") KuudraApp.Flow startFlow(@PathVariable("flowId") String flowId) { app.activateFlow(flowId); return flow(flowId); }
-    @Operation(summary = "暂停 Flow", tags = "Flow 管理")
-    @PostMapping("/flows/{flowId}/pause") KuudraApp.Flow pauseFlow(@PathVariable("flowId") String flowId) { app.pauseFlow(flowId); return flow(flowId); }
-    @Operation(summary = "恢复 Flow", tags = "Flow 管理")
-    @PostMapping("/flows/{flowId}/resume") KuudraApp.Flow resumeFlow(@PathVariable("flowId") String flowId) { app.resumeFlow(flowId); return flow(flowId); }
-    @Operation(summary = "停止 Flow", tags = "Flow 管理")
-    @PostMapping("/flows/{flowId}/stop") KuudraApp.Flow stopFlow(@PathVariable("flowId") String flowId) { app.stopFlow(flowId); return flow(flowId); }
     @Operation(summary = "列出全部 EventSource 资源", tags = "EventSource 资源")
     @GetMapping("/resources/event-sources") List<KuudraApp.Resource> eventSources() { return app.eventSources(); }
     @Operation(summary = "列出 Flow 的 EventSource 资源", tags = "EventSource 资源")
@@ -109,6 +85,12 @@ class AppController {
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
     @Operation(summary = "请求取消 Session", tags = "Session 管理")
     @PostMapping("/sessions/{sessionId}/cancel") Map<String, Object> cancel(@PathVariable("sessionId") UUID sessionId) { if (!app.cancelSession(sessionId)) throw notFound("active session", sessionId.toString()); return Map.of("sessionId", sessionId.toString(), "cancellationRequested", true); }
+    @Operation(summary = "暂停 Session", tags = "Session 管理")
+    @PostMapping("/sessions/{sessionId}/pause") KuudraApp.Session pauseSession(@PathVariable("sessionId") UUID sessionId) { if (!app.pauseSession(sessionId)) throw notFound("active session", sessionId.toString()); return session(sessionId); }
+    @Operation(summary = "恢复 Session", tags = "Session 管理")
+    @PostMapping("/sessions/{sessionId}/resume") KuudraApp.Session resumeSession(@PathVariable("sessionId") UUID sessionId) { if (!app.resumeSession(sessionId)) throw notFound("paused session", sessionId.toString()); return session(sessionId); }
+    @Operation(summary = "查询资源调谐状态", tags = "Component 资源")
+    @GetMapping("/resources/state") List<io.github.actforever.kuudra.state.ResourceStateStore.ResourceState> resourceStates() { return app.resourceStates(); }
     @Operation(summary = "列出已加载插件", tags = "插件与组件")
     @GetMapping("/plugins") List<KuudraApp.Plugin> plugins() { return app.plugins(); }
     @Operation(summary = "获取插件及其组件", tags = "插件与组件")

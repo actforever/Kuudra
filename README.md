@@ -47,7 +47,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
   plugins/
   manifests/
   logs/
-  state/                     # 预留给未来 SQLite StateStore，当前未使用
+  state/kuudra.db            # 资源期望/观测状态与 generation
 ```
 
 所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`，Flow 只能导入同 namespace 资源。
@@ -71,6 +71,6 @@ Flow 注册时预编译模板并校验作用域，事件热路径只执行查值
 
 ## 当前边界与方向
 
-当前版本聚焦可运行的最小内核：严格插件加载、双域路由、声明式资源、会话调度、App 生命周期和 Web 管理接口。后续演进方向包括资源版本迁移与热重载、插件依赖版本约束、显式跨 Flow 绑定、状态持久化、`kuudractl` 以及多语言组件桥接。
+当前版本聚焦可运行的最小内核：严格插件加载、双域路由、声明式资源、SQLite 状态调谐、可暂停的 App/Session、会话调度和 Web 管理接口。Flow 只是路由声明，不拥有状态机。后续演进方向包括资源版本迁移与热重载、持续调谐、`kuudractl` 以及多语言组件桥接。
 
 更多信息见 [架构设计](docs/kuudra-architecture.md)、[启动与配置](docs/kuudra-bootstrap.md)、[插件布局](docs/kuudra-plugin-layout.md)、[App 管理](docs/kuudra-app-management.md) 和 [日志](docs/kuudra-logging.md)。

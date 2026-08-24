@@ -33,7 +33,27 @@ public final class SessionManager {
         ManagedSession session = require(id);
         if (session == null || !session.active() || !session.cancelled.compareAndSet(false, true)) return false;
         session.status = SessionStatus.CANCELLATION_REQUESTED;
+        synchronized (session.pauseMonitor) { session.paused = false; session.pauseMonitor.notifyAll(); }
         if (session.leases.get() == 0) terminate(session, SessionStatus.CANCELLED);
+        return true;
+    }
+    public boolean pause(UUID id) {
+        ManagedSession session = require(id);
+        if (session == null || !session.active() || session.cancelled.get()) return false;
+        synchronized (session.pauseMonitor) {
+            if (session.paused) return true;
+            session.paused = true; session.status = SessionStatus.PAUSED;
+        }
+        return true;
+    }
+    public boolean resume(UUID id) {
+        ManagedSession session = require(id);
+        if (session == null || !session.active() || session.cancelled.get()) return false;
+        synchronized (session.pauseMonitor) {
+            if (!session.paused) return true;
+            session.paused = false; session.status = SessionStatus.ACTIVE; session.pauseMonitor.notifyAll();
+        }
+        if (session.leases.get() == 0) terminate(session, SessionStatus.COMPLETED);
         return true;
     }
     boolean acquire(ManagedSession session) { if (!session.active() || session.cancelled.get() || session.failure.get() != null) return false; session.leases.incrementAndGet(); return true; }
@@ -41,10 +61,10 @@ public final class SessionManager {
         if (error != null) session.failure.compareAndSet(null, error);
         int remaining = session.leases.decrementAndGet();
         if (remaining < 0) throw new KuudraException("Session lease underflow: " + session.id);
-        if (remaining == 0) terminate(session, session.failure.get() != null ? SessionStatus.FAILED
+        if (remaining == 0 && !session.paused) terminate(session, session.failure.get() != null ? SessionStatus.FAILED
                 : session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED);
     }
-    void completeIfIdle(ManagedSession session) { if (session.leases.get() == 0) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED); }
+    void completeIfIdle(ManagedSession session) { if (session.leases.get() == 0 && !session.paused) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED); }
     private void terminate(ManagedSession session, SessionStatus terminal) {
         if (!session.terminal.compareAndSet(false, true)) return;
         session.status = terminal; terminalListener.accept(session);
@@ -62,11 +82,13 @@ public final class SessionManager {
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicBoolean terminal = new AtomicBoolean(); final AtomicInteger leases = new AtomicInteger();
         volatile SessionStatus status = SessionStatus.ACTIVE;
+        final Object pauseMonitor = new Object(); volatile boolean paused;
         private java.util.concurrent.CompletableFuture<Void> serial = java.util.concurrent.CompletableFuture.completedFuture(null);
         ManagedSession(UUID id, String flowId, long revision, String ingressId, String groupKey, AtomicValueContext context, Executor executor) {
             this.id=id; this.flowId=flowId; this.revision=revision; this.ingressId=ingressId; this.groupKey=groupKey; this.context=context; this.executor=executor;
         }
         boolean active() { return !terminal.get(); }
+        void awaitResumed() throws InterruptedException { synchronized (pauseMonitor) { while (paused && !terminal.get() && !cancelled.get()) pauseMonitor.wait(); } }
         synchronized void submit(Runnable task) { serial = serial.handle((v,e)->null).thenRunAsync(task, executor); }
         SessionReference reference() { return new SessionReference(id, flowId); }
         SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, status, cancelled.get(), leases.get()); }

@@ -87,3 +87,8 @@ Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `Context
 当前资源 API 版本为 `kuudra.io/v1alpha1`。后续资源独立版本、热重载、revision 迁移、静态循环诊断、持久化 Session 状态和更丰富的 Handler 执行策略，都必须保持上述域转换、租约和控制面边界。
 
 Runtime 和 App 内核边界产生的失败统一以运行时异常 `KuudraException` 对外传播并保留 cause，使 Web、宿主框架和插件能够把内核拒绝与普通 IO、JDK 或容器环境异常区分开。
+# 暂停与控制平面
+
+Flow 是静态路由声明，不拥有生命周期。暂停由 Runtime 在两个层级实现：App 暂停关闭新 RAW Event 准入，并在执行安全点冻结所有后续路由；Session 暂停只冻结携带该 Session 的 Event。暂停不调用组件 `stop/destroy`，也不清除组件内部状态、上下文或队列。已经进入一次 `EventHandler.handle` 的调用允许协作式完成，其后续事件在安全点等待恢复，避免线程强杀破坏插件状态。
+
+官方内置组件 `event-handler/kuudra-official/system-control` 通过 `PluginRuntimeServices` 的窄控制端口提交 `PAUSE_KERNEL`、`RESUME_KERNEL`、`STOP_KERNEL`、`PAUSE_SESSION`、`RESUME_SESSION` 或 `CANCEL_SESSION`，因此快捷键等业务事件可以被映射为控制请求，而插件无需依赖 App。内核整体暂停后，恢复命令必须来自仍可工作的控制平面（HTTP 或插件直接持有的控制端口）；普通数据 Flow 已被冻结，不能承担自恢复通道。

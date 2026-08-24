@@ -33,15 +33,13 @@ Component 资源是 App 所有的命名实例；满足 `shareable` 与 `threadSa
 
 EventHandler 同样采用显式复用。插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类稀缺对象，可把 Robot 封装成插件生命周期内的共享服务，让轻量 Handler 实例保持隔离。
 
-这套三层模型已经进入当前 YAML schema：插件注册定义，具体 kind 清单声明 App 级命名实例，Flow 通过 import 建立绑定。持续调谐写 API、热卸载和持久化状态仍是后续工作。完整格式见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
+这套三层模型已经进入当前 YAML schema：插件注册定义，具体 kind 清单声明 App 级命名实例，Flow 通过 import 建立绑定。SQLite 已持久化启动期调谐状态；运行期写 API、后台持续调谐和热卸载仍是后续工作。完整格式见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
 
 ## 状态语义
 
 - `RUNNING`：事件源已在 Runtime 注册，允许向目标节点投递 Event。
 - `STOPPED`：事件源未注册；其外部监听或循环应随 `stop` 释放。
-- Flow 的 `ACTIVE`、`PAUSED`、`STOPPING` 等状态只决定 Flow 的路由／会话闸门，不改变资源状态。
-
-因此，暂停或停止 Flow 后，事件源可能仍显示 `RUNNING`；这是有意的可观测状态，调用方可以随后显式停止该资源。反之，启动 Flow 也不会自动重启已停止的事件源。
+- Flow 是路由声明，没有状态机。App 暂停会冻结全部后续路由，Session 暂停只冻结对应会话；两者都保留组件实例、上下文、状态和已排队事件。
 
 ## 配置与控制
 

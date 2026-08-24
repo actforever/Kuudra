@@ -25,6 +25,11 @@
         </dependency>
         <dependency>
             <groupId>io.github.actforever</groupId>
+            <artifactId>kuudra-state</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.actforever</groupId>
             <artifactId>kuudra-plugin</artifactId>
             <version>${project.version}</version>
         </dependency>

@@ -1,3 +1,3 @@
 package io.github.actforever.kuudra.api;
 
-public record FlowSnapshot(String flowId, FlowStatus status, int activeSessions, int deferredTasks) { }
+public record FlowSnapshot(String flowId, int activeSessions, int deferredTasks) { }

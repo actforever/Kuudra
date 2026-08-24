@@ -89,11 +89,11 @@ spec:
 
 `kind` 直接决定资源类型，支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；不再存在 `kind: Component` 或 `spec.type`。`spec.component` 指向插件组件定义。options 只属于资源实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
 
-当前 `desiredState` 是启动装配阶段的一次性目标，而不是后台持续运行的控制器：
+Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶段收敛：
 
 - `EventSource`：`running` 会注册并启动事件源，`stopped` 只物化资源、不启动事件生产；
 - `EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`：`active` 会物化并允许 Flow 导入，`inactive` 不物化且不能被 Flow 导入；
-- `Flow`：支持 `active`、`paused`、`stopped`，App 注册路由后把闸门切换到目标状态。
+- `Flow` 是纯路由声明，不接受 `desiredState`。
 
 其他状态会令启动失败。当前没有监听文件/API 变更的持续调谐循环，运行期间的专用 start/stop API 也尚未写回持久期望状态。
 
@@ -106,7 +106,6 @@ metadata:
   namespace: macros
   name: combat
 spec:
-  desiredState: active
   imports:
     keyboard:
       kind: EventSource
@@ -127,7 +126,7 @@ spec:
       to: robot
 ```
 
-同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。任一 Flow 暂停或停止时只关闭自己的路由闸门，不停止共享 EventSource。
+同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。Flow 本身没有生命周期；暂停发生在 App 或 Session 层。
 
 Ingress 必须显式声明为 `kind: Ingress` 资源。官方默认实现来自已加载的 `kuudra-official/default` 插件；加载插件本身不会隐式创建任何资源实例。
 
@@ -209,13 +208,11 @@ GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 
 start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 App、Flow、EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
 
-`kuudractl apply -f xxx.yaml` 将同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。持久化期望状态需要 ResourceRepository/StateStore；在该能力完成前，CLI apply 必须明确标记为仅当前进程有效，不能暗示重启后仍存在。
+未来 `kuudractl apply -f xxx.yaml` 会把同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。当前 App 启动已经使用相同的 SQLite 持久模型，但运行期 apply/后台监听尚未开放。
 
-### `state/` 与未来 SQLite StateStore
+### `state/` 与 SQLite StateStore
 
-当前实现只在启动时确保 `.kuudra/state/` 目录存在，没有任何代码读写该目录，也没有 SQLite 依赖、数据库文件、ResourceRepository 或后台调谐循环。因此它目前只是为后续状态存储预留的目录，不能视为已经实现的 etcd。
-
-未来推荐在该目录使用嵌入式 SQLite 实现单机 `StateStore`，保存规范资源身份、完整期望 spec、generation、observedGeneration、实际状态与 condition。资源清单和未来 `kuudractl apply` 是写入期望状态的入口；SQLite 是内核唯一持久事实源；调谐器观察数据库中的 generation 并把实际状态收敛后更新 observed 状态。Session、事件负载和插件自行持久化的数据不应进入该状态库。
+当前实现使用 `.kuudra/state/kuudra.db` 保存规范资源身份、完整期望 spec、generation、observedGeneration、phase 和 message。启动导入清单时使用事务：新增资源 generation 为 1，spec 改变时递增，未改变则保持，清单删除的资源也从期望集合移除。App 随后从数据库读取期望资源完成装配，成功后将 observedGeneration 追平并标记 `READY`。Session、事件负载和插件自行持久化的数据不进入该状态库。
 
 ## 家目录目标结构
 
@@ -233,7 +230,7 @@ start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，
       combat.yaml
   plugins/                  # 插件 JAR 与插件运行时家目录
   logs/
-  state/                    # 预留给未来 SQLite StateStore；当前为空且未使用
+  state/kuudra.db           # SQLite 期望/观测资源状态
 ```
 
 不用 `conf/`，因为它难以区分 App 配置与资源对象；不用顶层 `flows/`，因为 Flow 已经只是多种资源之一。`manifests/` 递归扫描 `.yaml/.yml`，子目录只服务人类整理，资源身份完全由 metadata 决定。未知 kind、重复身份、损坏文件或引用缺失都应使本次期望状态导入失败。

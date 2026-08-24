@@ -23,6 +23,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraAppTest {
+    @Test void pauseAndResumePreserveTheRunningKernel() {
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            app.pause(); assertEquals("PAUSED", app.snapshot().status().name());
+            assertTrue(app.plugins().stream().anyMatch(plugin -> plugin.id().equals("default")));
+            app.resume(); assertEquals("RUNNING", app.snapshot().status().name());
+        }
+    }
     @TempDir Path directory;
 
     @Test
@@ -176,7 +183,6 @@ class KuudraAppTest {
                 kind: Flow
                 metadata: {namespace: test, name: pipeline}
                 spec:
-                  desiredState: active
                   imports:
                     ingress: {kind: Ingress, namespace: test, name: ingress}
                     egress: {kind: Egress, namespace: test, name: egress}
