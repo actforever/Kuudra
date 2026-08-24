@@ -138,9 +138,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             status = AppStatus.STARTING; publish("app.starting");
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
-            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext);
+            int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
+            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext, maxEventHops);
             runtimeEvents = runtime.systemEvents().subscribe(events::publish);
-            events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads)));
+            events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads, "maxEventHops", maxEventHops)));
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
             plugins = new DefaultPluginManager(homes, runtime::registerSource, events);
             status = AppStatus.RUNNING;
@@ -349,7 +350,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, domain(component.options()), component.options());
                 case "raw-event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (RawEventInterpreter) instance, component.options());
                 case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
-                case "ingress" -> new FlowNode.IngressNode(imported.getKey(), ingress(component, instance), ingressConfiguration(component.options()), component.options());
+                case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.id().qualifiedName(), ingress(component, instance), ingressConfiguration(component.options()), component.options());
                 case "egress" -> new FlowNode.EgressNode(imported.getKey(), egress(component, instance), component.options());
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
@@ -409,11 +410,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return (event, context) -> IngressDecision.accept(text(context.configuration().getOrDefault("groupKey", context.configuration().getOrDefault("group-key", event.type()))), event);
     }
     private static Egress egress(KuudraManifest.Component component, Object instance) { return core(component) ? (event, context) -> List.of(event) : (Egress) instance; }
-    private static IngressConfiguration ingressConfiguration(Map<String,Object> options) {
-        return new IngressConfiguration(SessionSchedulingPolicy.valueOf(text(options.getOrDefault("policy", "PARALLEL")).toUpperCase(java.util.Locale.ROOT)),
-                SessionGroupScope.valueOf(text(options.getOrDefault("groupScope", options.getOrDefault("group-scope", "FLOW_BINDING"))).toUpperCase(java.util.Locale.ROOT)),
-                Integer.parseInt(text(options.getOrDefault("maxParallelSessions", options.getOrDefault("max-parallel-sessions", 64)))),
-                Integer.parseInt(text(options.getOrDefault("queueCapacity", options.getOrDefault("queue-capacity", 256)))));
+    private IngressConfiguration ingressConfiguration(Map<String,Object> options) {
+        KuudraConfig.SessionCoordinatorSettings defaults = bootstrapConfig == null
+                ? new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 64, 256)
+                : bootstrapConfig.runtime().sessionCoordinator();
+        return new IngressConfiguration(SessionSchedulingPolicy.valueOf(text(options.getOrDefault("policy", defaults.defaultPolicy())).replace('-', '_').toUpperCase(java.util.Locale.ROOT)),
+                SessionGroupScope.valueOf(text(options.getOrDefault("groupScope", options.getOrDefault("group-scope", defaults.defaultGroupScope()))).replace('-', '_').toUpperCase(java.util.Locale.ROOT)),
+                Integer.parseInt(text(options.getOrDefault("maxParallelSessions", options.getOrDefault("max-parallel-sessions", defaults.maxParallelSessions())))),
+                Integer.parseInt(text(options.getOrDefault("queueCapacity", options.getOrDefault("queue-capacity", defaults.queueCapacity())))));
     }
     private static boolean core(KuudraManifest.Component component) { return (component.type().equals("ingress") || component.type().equals("egress")) && component.component().equals("core/default"); }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }

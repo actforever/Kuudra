@@ -6,10 +6,20 @@ App 按优先级深度合并：初始化时显式配置、`<home-directory>/conf
 
 ```yaml
 home-directory: .kuudra
-runtime: {queue-capacity: 1024, worker-threads: 2}
+runtime:
+  queue-capacity: 1024
+  worker-threads: 2
+  max-event-hops: 256
+  session-coordinator:
+    default-policy: parallel
+    default-group-scope: flow-binding
+    max-parallel-sessions: 64
+    queue-capacity: 256
 logging: {level: info, console-enabled: true, file-enabled: true}
 global-context: {}
 ```
+
+`max-event-hops` 是单个事件谱系允许的最大路由跳数，用于阻断跨 Egress 或图内循环。`session-coordinator` 为所有 Ingress 提供默认调度参数；Component `options` 中的同名参数只覆盖该 Ingress，未声明的字段继续继承根配置。
 
 App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 ID、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase。
 
@@ -51,9 +61,9 @@ YAML 原生数字、布尔、Map、List 保持类型。JSON 对象/数组字符�
 | 参数 | 含义 |
 | --- | --- |
 | `policy` | `PARALLEL`、`SERIAL`、`IGNORE`、`CANCEL_AND_REPLACE_PENDING`、`CANCEL_AND_KEEP_PENDING`、`TOGGLE` |
-| `groupScope` | `FLOW_BINDING`（默认）或 `INGRESS` |
+| `groupScope` | `FLOW_BINDING`（默认）或 `INGRESS`；后者按 Component 资源身份跨 Flow 共享调度组 |
 | `maxParallelSessions` | PARALLEL 组内上限，默认 64 |
 | `queueCapacity` | 有界等待容量，默认 256 |
 | `groupKey` | 默认 Ingress 分组表达式，默认事件 type |
 
-Ingress 只计算准入与组键；SessionManager 创建会话并维护工作租约，SessionCoordinator 管理调度状态和队列。
+Ingress 只计算准入与组键；SessionManager 创建会话并维护工作租约，SessionCoordinator 管理调度状态和队列。失败或取消只会阻止新工作，已有租约全部归还后才发布唯一终态并启动组内后继任务。

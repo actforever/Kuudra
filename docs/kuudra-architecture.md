@@ -46,7 +46,7 @@ Runtime 另外保留最大 256 跳的硬限制。静态循环分析适合在后�
 
 Ingress 返回 `IngressDecision`：拒绝，或接受并给出 `groupKey`、输出事件和初始 Session context。它不创建、复用、停止或排队 Session。
 
-Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingress 身份和 `groupKey` 组成；scope 可为跨 Flow binding 的 `INGRESS`，或默认隔离到具体 Flow revision 的 `FLOW_BINDING`。当前调度策略为：
+Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingress Component 资源身份和 `groupKey` 组成；scope 可为跨 Flow binding 的 `INGRESS`，或默认隔离到具体 Flow revision 的 `FLOW_BINDING`。Flow 内的 import 别名不参与 `INGRESS` 身份计算，避免同一实例跨 Flow 导入后被错误拆组。当前调度策略为：
 
 - `PARALLEL`：有界并行，达到 `maxParallelSessions` 后拒绝；
 - `SERIAL`：每组单活跃会话，其余进入有界队列；

@@ -17,7 +17,7 @@ public final class SessionCoordinator {
             case IGNORE -> !busy && launch(state, launch);
             case CANCEL_AND_REPLACE_PENDING -> !busy ? launch(state, launch) : cancelAndQueue(state, launch, cancel, true);
             case CANCEL_AND_KEEP_PENDING -> !busy ? launch(state, launch) : cancelAndQueue(state, launch, cancel, false);
-            case TOGGLE -> { if (busy) { state.active.forEach(cancel); yield false; } yield launch(state, launch); }
+            case TOGGLE -> { if (busy) { List.copyOf(state.active).forEach(cancel); yield false; } yield launch(state, launch); }
         };
     }
     private boolean launch(State state, Runnable launch) { state.launching++; launch.run(); return true; }
@@ -27,8 +27,9 @@ public final class SessionCoordinator {
         state.pending.addLast(launch); return true;
     }
     private boolean cancelAndQueue(State state, Runnable launch, Consumer<UUID> cancel, boolean replace) {
-        state.active.forEach(cancel);
-        return enqueue(state, launch, 1, replace);
+        boolean accepted = enqueue(state, launch, 1, replace);
+        if (accepted) List.copyOf(state.active).forEach(cancel);
+        return accepted;
     }
     synchronized void activated(Group group, UUID sessionId) {
         State state = groups.get(group); if (state == null) return;

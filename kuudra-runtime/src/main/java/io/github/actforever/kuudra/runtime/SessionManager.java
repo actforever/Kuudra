@@ -36,12 +36,13 @@ public final class SessionManager {
         if (session.leases.get() == 0) terminate(session, SessionStatus.CANCELLED);
         return true;
     }
-    boolean acquire(ManagedSession session) { if (!session.active() || session.cancelled.get()) return false; session.leases.incrementAndGet(); return true; }
+    boolean acquire(ManagedSession session) { if (!session.active() || session.cancelled.get() || session.failure.get() != null) return false; session.leases.incrementAndGet(); return true; }
     void release(ManagedSession session, Throwable error) {
-        if (error != null) { terminate(session, SessionStatus.FAILED); return; }
+        if (error != null) session.failure.compareAndSet(null, error);
         int remaining = session.leases.decrementAndGet();
         if (remaining < 0) throw new KuudraException("Session lease underflow: " + session.id);
-        if (remaining == 0) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED);
+        if (remaining == 0) terminate(session, session.failure.get() != null ? SessionStatus.FAILED
+                : session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED);
     }
     void completeIfIdle(ManagedSession session) { if (session.leases.get() == 0) terminate(session, session.cancelled.get() ? SessionStatus.CANCELLED : SessionStatus.COMPLETED); }
     private void terminate(ManagedSession session, SessionStatus terminal) {
@@ -58,6 +59,7 @@ public final class SessionManager {
     static final class ManagedSession {
         final UUID id; final String flowId; final long revision; final String ingressId; final String groupKey;
         final AtomicValueContext context; final Executor executor; final AtomicBoolean cancelled = new AtomicBoolean();
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicBoolean terminal = new AtomicBoolean(); final AtomicInteger leases = new AtomicInteger();
         volatile SessionStatus status = SessionStatus.ACTIVE;
         private java.util.concurrent.CompletableFuture<Void> serial = java.util.concurrent.CompletableFuture.completedFuture(null);

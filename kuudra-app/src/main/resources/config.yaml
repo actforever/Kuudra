@@ -3,6 +3,12 @@ home-directory: .kuudra
 runtime:
   queue-capacity: 1024
   worker-threads: 2
+  max-event-hops: 256
+  session-coordinator:
+    default-policy: parallel
+    default-group-scope: flow-binding
+    max-parallel-sessions: 64
+    queue-capacity: 256
 
 logging:
   level: info

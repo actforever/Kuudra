@@ -16,12 +16,19 @@ class KuudraConfigTest {
     @Test
     void loadsFrameworkNeutralConfigurationResource() throws Exception {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(new KuudraConfigResource(Map.of(
-                "runtime", Map.of("queue-capacity", 48, "worker-threads", 3),
+                "runtime", Map.of("queue-capacity", 48, "worker-threads", 3, "max-event-hops", 99,
+                        "session-coordinator", Map.of("default-policy", "serial", "default-group-scope", "ingress",
+                                "max-parallel-sessions", 7, "queue-capacity", 11)),
                 "home-directory", "custom-home",
                 "global-context", Map.of("profile", "host")), directory, "host configuration"));
 
         assertEquals(48, config.runtime().queueCapacity());
         assertEquals(3, config.runtime().workerThreads());
+        assertEquals(99, config.runtime().maxEventHops());
+        assertEquals(io.github.actforever.kuudra.api.SessionSchedulingPolicy.SERIAL, config.runtime().sessionCoordinator().defaultPolicy());
+        assertEquals(io.github.actforever.kuudra.api.SessionGroupScope.INGRESS, config.runtime().sessionCoordinator().defaultGroupScope());
+        assertEquals(7, config.runtime().sessionCoordinator().maxParallelSessions());
+        assertEquals(11, config.runtime().sessionCoordinator().queueCapacity());
         assertEquals("INFO", config.logging().level());
         assertEquals(true, config.logging().consoleEnabled());
         assertEquals(true, config.logging().fileEnabled());

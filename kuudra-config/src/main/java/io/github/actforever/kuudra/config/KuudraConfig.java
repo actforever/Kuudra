@@ -1,5 +1,8 @@
 package io.github.actforever.kuudra.config;
 
+import io.github.actforever.kuudra.api.SessionGroupScope;
+import io.github.actforever.kuudra.api.SessionSchedulingPolicy;
+
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -19,8 +22,20 @@ public final class KuudraConfig {
             globalContext = Map.copyOf(globalContext);
         }
     }
-    public record RuntimeSettings(int queueCapacity, int workerThreads) {
-        public RuntimeSettings { if (queueCapacity < 1 || workerThreads < 1) throw new IllegalArgumentException("runtime capacities must be positive"); }
+    public record RuntimeSettings(int queueCapacity, int workerThreads, int maxEventHops,
+                                  SessionCoordinatorSettings sessionCoordinator) {
+        public RuntimeSettings {
+            if (queueCapacity < 1 || workerThreads < 1 || maxEventHops < 1) throw new IllegalArgumentException("runtime capacities and maxEventHops must be positive");
+            if (sessionCoordinator == null) throw new IllegalArgumentException("sessionCoordinator must not be null");
+        }
+    }
+    public record SessionCoordinatorSettings(SessionSchedulingPolicy defaultPolicy,
+                                             SessionGroupScope defaultGroupScope,
+                                             int maxParallelSessions, int queueCapacity) {
+        public SessionCoordinatorSettings {
+            if (defaultPolicy == null || defaultGroupScope == null) throw new IllegalArgumentException("session coordinator defaults must not be null");
+            if (maxParallelSessions < 1 || queueCapacity < 0) throw new IllegalArgumentException("invalid session coordinator capacities");
+        }
     }
     public record LoggingSettings(String level, boolean consoleEnabled, boolean fileEnabled) {
         public LoggingSettings {

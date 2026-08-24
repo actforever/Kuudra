@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -54,11 +55,97 @@ class KuudraRuntimeTest {
     }
 
     @Test
+    void ingressScopeUsesStableComponentIdentityAcrossFlows() throws Exception {
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch bothCompleted = new CountDownLatch(2);
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        Ingress ingress = (event, context) -> IngressDecision.accept("same", event);
+        IngressConfiguration serial = new IngressConfiguration(SessionSchedulingPolicy.SERIAL,
+                SessionGroupScope.INGRESS, 1, 4);
+        EventHandler handler = (event, context) -> CompletableFuture.runAsync(() -> {
+            int current = running.incrementAndGet();
+            peak.accumulateAndGet(current, Math::max);
+            firstStarted.countDown();
+            try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            running.decrementAndGet();
+            bothCompleted.countDown();
+        });
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.registerFlow(new KuudraFlow("flow-a", Map.of(
+                    "entry-a", new FlowNode.IngressNode("entry-a", "demo/shared-ingress", ingress, serial, Map.of()),
+                    "handler-a", new FlowNode.HandlerNode("handler-a", handler, Map.of())
+            ), Map.of("entry-a", List.of("handler-a"))));
+            runtime.registerFlow(new KuudraFlow("flow-b", Map.of(
+                    "entry-b", new FlowNode.IngressNode("entry-b", "demo/shared-ingress", ingress, serial, Map.of()),
+                    "handler-b", new FlowNode.HandlerNode("handler-b", handler, Map.of())
+            ), Map.of("entry-b", List.of("handler-b"))));
+            assertTrue(runtime.publish("flow-a", "entry-a", KuudraEvent.of("one", Map.of())));
+            assertTrue(runtime.publish("flow-b", "entry-b", KuudraEvent.of("two", Map.of())));
+            assertTrue(firstStarted.await(1, TimeUnit.SECONDS));
+            Thread.sleep(100);
+            assertEquals(1, peak.get());
+            release.countDown();
+            assertTrue(bothCompleted.await(2, TimeUnit.SECONDS));
+            assertEquals(1, peak.get());
+        }
+    }
+
+    @Test
     void sourceCanOnlyBindRawNode() {
         EventSource source=new EventSource(){public void setEmitter(EventEmitter emitter){}public CompletionStage<Void> start(){return CompletableFuture.completedFuture(null);}public CompletionStage<Void> stop(){return CompletableFuture.completedFuture(null);}};
         try(KuudraRuntime runtime=new KuudraRuntime(8,1)){
             runtime.registerFlow(new KuudraFlow("flow",Map.of("handler",new FlowNode.HandlerNode("handler",(e,c)->CompletableFuture.completedFuture(null),Map.of())),Map.of()));
             assertThrows(KuudraException.class,()->runtime.registerSource("flow","handler",source));
         }
+    }
+
+    @Test
+    void configuredHopLimitRejectsBeforeQueueing() {
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1, Map.of(), 1)) {
+            runtime.registerFlow(new KuudraFlow("flow", Map.of("raw", new FlowNode.AdapterNode(
+                    "raw", (event, context) -> List.of(event), EventDomain.RAW)), Map.of()));
+            KuudraEvent exhausted = new KuudraEvent(UUID.randomUUID(), "input", java.time.Instant.now(),
+                    EventData.empty(), new EventLineage(Set.of(), Set.of(), 1));
+            assertFalse(runtime.publish("flow", "raw", exhausted));
+            assertEquals(0, runtime.queuedTasks());
+        }
+    }
+
+    @Test
+    void failedSessionDrainsEveryLeaseBeforePublishingTerminalState() throws Exception {
+        AtomicReference<UUID> sessionId = new AtomicReference<>();
+        CountDownLatch created = new CountDownLatch(1);
+        IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 2, 2);
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 1)) {
+            runtime.registerFlow(new KuudraFlow("flow", Map.of(
+                    "in", new FlowNode.IngressNode("in", (event, context) -> IngressDecision.accept("group", event), scheduling, Map.of()),
+                    "emit", new FlowNode.HandlerNode("emit", (event, context) -> { sessionId.set(context.sessionId()); created.countDown(); context.emit(event); return CompletableFuture.completedFuture(null); }, Map.of()),
+                    "fail", new FlowNode.HandlerNode("fail", (event, context) -> CompletableFuture.failedFuture(new IllegalStateException("boom")), Map.of()),
+                    "skipped", new FlowNode.HandlerNode("skipped", (event, context) -> CompletableFuture.completedFuture(null), Map.of())
+            ), Map.of("in", List.of("emit"), "emit", List.of("fail", "skipped"))));
+            runtime.publish("flow", "in", KuudraEvent.of("input", Map.of()));
+            assertTrue(created.await(1, TimeUnit.SECONDS));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+            SessionSnapshot snapshot = runtime.session(sessionId.get()).orElseThrow();
+            assertEquals(SessionStatus.FAILED, snapshot.status());
+            assertEquals(0, snapshot.activeLeases());
+        }
+    }
+
+    @Test
+    void replacementPolicyQueuesBeforeSynchronousCancellationCallback() {
+        SessionCoordinator coordinator = new SessionCoordinator();
+        SessionCoordinator.Group group = new SessionCoordinator.Group("scope", "ingress", "key");
+        IngressConfiguration configuration = new IngressConfiguration(SessionSchedulingPolicy.CANCEL_AND_REPLACE_PENDING,
+                SessionGroupScope.FLOW_BINDING, 1, 1);
+        AtomicReference<UUID> active = new AtomicReference<>();
+        AtomicInteger launches = new AtomicInteger();
+        Runnable launch = () -> { UUID id = UUID.randomUUID(); active.set(id); launches.incrementAndGet(); coordinator.activated(group, id); };
+        assertTrue(coordinator.admit(group, configuration, launch, ignored -> { }));
+        assertTrue(coordinator.admit(group, configuration, launch, id -> coordinator.terminal(group, id)));
+        assertEquals(2, launches.get());
+        assertNotNull(active.get());
     }
 }
