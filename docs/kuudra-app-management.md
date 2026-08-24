@@ -18,6 +18,9 @@ NEW → STARTING → RUNNING → STOPPING → STOPPED
 | `GET` | `/api/v1/app/plugins/{pluginId}/components` | 查询指定插件的结构化组件文档。 |
 | `GET` | `/api/v1/app/components` | 列出所有已注册插件组件。 |
 | `GET` | `/api/v1/app/components/{type}/{namespace}/{name}` | 按完整组件引用查询用途、示例、生命周期和输出事件。 |
+| `GET` | `/api/v1/app/resources/components` | 列出清单声明的全部 Component 实例及实际状态。 |
+| `GET` | `/api/v1/app/resources/components/{type}` | 按六类组件类型过滤资源实例。 |
+| `GET` | `/api/v1/app/resources/components/{type}/{namespace}/{name}` | 查询具体资源实例、期望/实际状态、导入它的 Flow 和生命周期能力。 |
 | `POST` | `/api/v1/app/start` | 创建并启动内核。 |
 | `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
 | `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |

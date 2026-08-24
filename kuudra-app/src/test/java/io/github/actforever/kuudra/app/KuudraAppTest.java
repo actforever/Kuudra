@@ -162,4 +162,45 @@ class KuudraAppTest {
 
         assertThrows(KuudraException.class, () -> KuudraApp.createFromDefaultLocations(directory));
     }
+
+    @Test
+    void exposesEveryManifestComponentResourceTypeNotOnlyEventSources() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("ingress", "ingress", "core/default"));
+        Files.writeString(manifests.resolve("egress.yaml"), component("egress", "egress", "core/default"));
+        Files.writeString(manifests.resolve("flow.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: test, name: pipeline}
+                spec:
+                  desiredState: active
+                  imports:
+                    ingress: {kind: Component, namespace: test, name: ingress}
+                    egress: {kind: Component, namespace: test, name: egress}
+                  edges:
+                    - {from: ingress, to: egress}
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals(2, app.componentResources().size());
+            KuudraApp.ComponentResource ingress = app.componentResource("ingress", "test", "ingress").orElseThrow();
+            assertEquals("MATERIALIZED", ingress.status());
+            assertEquals(java.util.List.of("test/pipeline"), ingress.importedBy());
+            assertEquals(1, app.componentResources("egress").size());
+            assertTrue(app.componentResources("event-handler").isEmpty());
+        }
+    }
+
+    private static String component(String type, String name, String implementation) {
+        return """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Component
+                metadata: {namespace: test, name: %s}
+                spec:
+                  type: %s
+                  component: %s
+                  desiredState: active
+                  options: {}
+                """.formatted(name, type, implementation);
+    }
 }

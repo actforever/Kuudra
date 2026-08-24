@@ -1,6 +1,8 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义并记录 Kuudra 的资源与编排模型。当前版本只从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。通用资源 API 与持续调谐仍是后续工作。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本只从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。通用资源写 API 与持续调谐仍是后续工作。
+
+当前 App/Web 已能以统一只读接口查询所有清单 Component 实例，而不只查询 EventSource：`GET /api/v1/app/resources/components` 返回类型、插件组件引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型或 `type/namespace/name` 定位。EventSource 原有专用 start/stop API 暂时保留；其他组件只公开其实际的 materialize/destroy 能力，在通用调谐写接口完成前不伪造 start/stop 操作。
 
 ## 设计目标
 

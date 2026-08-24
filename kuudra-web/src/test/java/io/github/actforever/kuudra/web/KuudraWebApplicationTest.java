@@ -33,6 +33,8 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/app/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/v1/app/resources/components"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }
 
     @Test
@@ -44,6 +46,7 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$.urls[?(@.name == 'app-lifecycle')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'flows')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'event-sources')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == 'component-resources')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'sessions')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'system-events')]").exists());
 
@@ -55,6 +58,10 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/event-sources"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/resources/event-sources']").exists());
+        mvc.perform(get("/v3/api-docs/component-resources"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/app/resources/components']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/resources/components/{type}/{namespace}/{name}']").exists());
         mvc.perform(get("/v3/api-docs/flows"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/flows']").exists());

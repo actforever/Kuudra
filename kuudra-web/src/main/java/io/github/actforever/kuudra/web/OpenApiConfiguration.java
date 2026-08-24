@@ -16,6 +16,7 @@ class OpenApiConfiguration {
                 .addTagsItem(new Tag().name("App 生命周期").description("查询、启动、停止和重启 App 内核。"))
                 .addTagsItem(new Tag().name("Flow 管理").description("查询和控制 Flow 路由与会话闸门。"))
                 .addTagsItem(new Tag().name("EventSource 资源").description("查询和控制 Flow 绑定的事件源资源。"))
+                .addTagsItem(new Tag().name("Component 资源").description("查询清单声明的全部组件实例、运行状态、导入关系和生命周期能力。"))
                 .addTagsItem(new Tag().name("Session 管理").description("查询会话并请求协作式取消。"))
                 .addTagsItem(new Tag().name("插件与组件").description("查询已加载插件、组件能力及结构化文档。"))
                 .addTagsItem(new Tag().name("系统事件").description("订阅 App SystemEvent SSE 流。"));
@@ -51,6 +52,13 @@ class OpenApiConfiguration {
                 .pathsToMatch("/api/v1/app/resources/event-sources",
                         "/api/v1/app/flows/*/resources/event-sources",
                         "/api/v1/app/flows/*/resources/event-sources/**")
+                .build();
+    }
+
+    @Bean
+    GroupedOpenApi componentResourceApi() {
+        return GroupedOpenApi.builder().group("component-resources")
+                .pathsToMatch("/api/v1/app/resources/components/**")
                 .build();
     }
 

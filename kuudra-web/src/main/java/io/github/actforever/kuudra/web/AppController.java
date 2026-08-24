@@ -57,6 +57,18 @@ class AppController {
     @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/start") KuudraApp.Resource startEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.startEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
     @Operation(summary = "停止 EventSource 资源", tags = "EventSource 资源")
     @PostMapping("/flows/{flowId}/resources/event-sources/{resourceId}/stop") KuudraApp.Resource stopEventSource(@PathVariable("flowId") String flowId, @PathVariable("resourceId") String resourceId) { return call(() -> app.stopEventSource(flowId, resourceId), "EventSource", flowId + "/" + resourceId); }
+    @Operation(summary = "列出全部 Component 资源实例", tags = "Component 资源")
+    @GetMapping("/resources/components") List<KuudraApp.ComponentResource> componentResources() { return app.componentResources(); }
+    @Operation(summary = "按类型列出 Component 资源实例", tags = "Component 资源")
+    @GetMapping("/resources/components/{type}") List<KuudraApp.ComponentResource> componentResources(
+            @PathVariable("type") String type) { return app.componentResources(type); }
+    @Operation(summary = "获取 Component 资源实例", tags = "Component 资源")
+    @GetMapping("/resources/components/{type}/{namespace}/{name}") KuudraApp.ComponentResource componentResource(
+            @PathVariable("type") String type, @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        return app.componentResource(type, namespace, name)
+                .orElseThrow(() -> notFound("Component resource", type + "/" + namespace + "/" + name));
+    }
     @Operation(summary = "获取 Session", tags = "Session 管理")
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }
     @Operation(summary = "请求取消 Session", tags = "Session 管理")
