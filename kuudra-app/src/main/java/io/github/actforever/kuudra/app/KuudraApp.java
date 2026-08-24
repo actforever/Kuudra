@@ -309,7 +309,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Object instance = switch (component.type()) {
                 case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class, component.options());
                 case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class, component.options());
-                case "raw-event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), RawEventInterpreter.class, component.options());
+                case "event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventInterpreter.class, component.options());
                 case "event-handler" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventHandler.class, component.options());
                 case "ingress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Ingress.class, component.options());
                 case "egress" -> core(component) ? component : requirePlugins().createComponent(componentReference(component.type(), component.component()), Egress.class, component.options());
@@ -348,7 +348,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             FlowNode node = switch (component.type()) {
                 case "event-source" -> null;
                 case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, domain(component.options()), component.options());
-                case "raw-event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (RawEventInterpreter) instance, component.options());
+                case "event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (EventInterpreter) instance, component.options());
                 case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
                 case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.id().qualifiedName(), ingress(component, instance), ingressConfiguration(component.options()), component.options());
                 case "egress" -> new FlowNode.EgressNode(imported.getKey(), egress(component, instance), component.options());

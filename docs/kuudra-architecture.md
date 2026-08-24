@@ -18,13 +18,13 @@ Wrapper 是 Runtime 路由状态，不是插件应写入上下文的数据。Flo
 | 组件 | 输入域 | 输出域 | 状态与职责 |
 | --- | --- | --- | --- |
 | `EventSource` | 外部 | RAW | 生命周期组件，采集键盘、计时器、网络等原始输入 |
-| `RawEventInterpreter` | RAW | RAW | 可维护状态机、窗口和计时器，进行跨事件解释 |
+| `EventInterpreter` | RAW | RAW | 可维护状态机、窗口和计时器，进行进入会话前的跨事件解释 |
 | `EventAdapter` | RAW 或 SESSION | 同输入域 | 通常无状态，过滤、分类和重映射事件 |
 | `Ingress` | RAW | SESSION | 判断准入，计算会话组键和初始 Session context |
 | `EventHandler` | SESSION | SESSION | 异步业务处理，输出继承同一 Session，支持协作式取消 |
 | `Egress` | SESSION | RAW | 唯一出域边界，解除 Session/Flow 执行绑定并保留谱系 |
 
-`EventAdapter` 在 Component options 中声明绑定域，不能改变域。`RawEventInterpreter` 与 Adapter 不合并：前者表达持有资源和跨事件状态的解释过程，后者表达局部映射。Flow 不引入 port；需要分支时使用 Adapter，Handler 通过 `ActionContext.emit` 显式输出业务阶段事件。
+`EventAdapter` 在 Component options 中声明绑定域，不能改变域。`EventInterpreter` 与 Adapter 不合并：前者表达持有资源和跨事件状态的解释过程，后者表达局部映射。组件名不携带 Raw/Session 域前缀；执行域只由 Runtime Wrapper 表达。Flow 不引入 port；需要分支时使用 Adapter，Handler 通过 `ActionContext.emit` 显式输出业务阶段事件。
 
 插件可注册以上组件。常见 Ingress/Egress 使用 `core/default`；`SessionManager` 和 `SessionCoordinator` 只能由 Runtime 提供，不属于资源清单或路由节点。
 

@@ -31,6 +31,17 @@ class PluginArchiveLoaderTest {
                             public static String message() { return "from-parent"; }
                         }
                         """,
+                "base.ParentInterpreter", """
+                        package base;
+                        @io.github.actforever.kuudra.plugin.annotation.EventInterpreter("parent-interpreter")
+                        public final class ParentInterpreter implements io.github.actforever.kuudra.api.EventInterpreter {
+                            public java.util.List<io.github.actforever.kuudra.api.KuudraEvent> interpret(
+                                    io.github.actforever.kuudra.api.KuudraEvent event,
+                                    io.github.actforever.kuudra.api.EventContext context) {
+                                return java.util.List.of(event);
+                            }
+                        }
+                        """,
                 "base.BasePlugin", pluginSource("base", "BasePlugin", "base")), List.of());
         Path baseJar = jar("base.jar", baseClasses, metadata("base", "base.BasePlugin", List.of()),
                 Map.of("base-resource.txt", "parent-resource"));
@@ -64,6 +75,8 @@ class PluginArchiveLoaderTest {
             PluginArchiveLoader.LoadedArchive base = byId.get("base");
             PluginArchiveLoader.LoadedArchive child = byId.get("child");
 
+            assertTrue(base.plugin().components().stream().anyMatch(component ->
+                    component.reference().equals("event-interpreter/base/parent-interpreter")));
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));
             Object restored = child.plugin().instance().getClass().getMethod("roundTrip").invoke(child.plugin().instance());

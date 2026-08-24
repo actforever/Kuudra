@@ -17,11 +17,11 @@ dependencies = []
 ```text
 event-source/hello-world/loop-emitter
 event-adapter/<namespace>/<name>
-raw-event-interpreter/<namespace>/<name>
+event-interpreter/<namespace>/<name>
 event-handler/<namespace>/<name>
 ```
 
-插件可声明 `@EventSource`、`@RawEventInterpreter`、`@EventAdapter`、`@Ingress`、`@EventHandler`、`@Egress` 与 `@Action`。SessionManager 和 SessionCoordinator 由 Runtime 提供，插件不能注册或替换。`EventData` 是不可变的命名空间容器，插件应以自身 namespace 读写属性。
+插件可声明 `@EventSource`、`@EventInterpreter`、`@EventAdapter`、`@Ingress`、`@EventHandler`、`@Egress` 与 `@Action`。SessionManager 和 SessionCoordinator 由 Runtime 提供，插件不能注册或替换。`EventData` 是不可变的命名空间容器，插件应以自身 namespace 读写属性。
 
 插件在 `initialize(PluginContext)` 前由内核创建专属家目录，路径通过 `PluginContext.home()` 获得。该目录固定为 `<home-directory>/plugins/<plugin-id>/`，只有对应插件真正被加载并初始化时才创建。插件可通过 `PluginContext.resources()` 注册需要在卸载时关闭的资源。
 

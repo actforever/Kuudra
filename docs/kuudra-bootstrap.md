@@ -25,7 +25,7 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 ## Component 与 Flow
 
-支持的 Component type 为 `event-source`、`raw-event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。默认 Ingress/Egress 使用 `core/default`。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
+支持的 Component type 为 `event-source`、`event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。默认 Ingress/Egress 使用 `core/default`。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
 
 插件组件实现 `PluginComponentLifecycle` 后，会在 `initialize(PluginComponentContext)` 阶段收到当前 Component 清单的不可变 `options`。EventSource 等没有事件执行上下文的有状态资源，应在这里读取并校验启动参数；运行阶段不再重复解释 YAML。
 

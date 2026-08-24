@@ -27,7 +27,7 @@ final class PluginComponentScanner {
 
     private java.util.Optional<PluginComponentDefinition> definition(String pluginId, String namespace, Class<?> type) {
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventSource.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventSource.class); return component(pluginId, namespace, PluginComponentKind.EVENT_SOURCE, annotation.value(), type, annotation.instancePolicy()); }
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.RawEventInterpreter.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.RawEventInterpreter.class); return component(pluginId, namespace, PluginComponentKind.RAW_EVENT_INTERPRETER, annotation.value(), type, annotation.instancePolicy()); }
+        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventInterpreter.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventInterpreter.class); return component(pluginId, namespace, PluginComponentKind.EVENT_INTERPRETER, annotation.value(), type, annotation.instancePolicy()); }
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventAdapter.class); return component(pluginId, namespace, PluginComponentKind.EVENT_ADAPTER, annotation.value(), type, annotation.instancePolicy()); }
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Ingress.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Ingress.class); return component(pluginId, namespace, PluginComponentKind.INGRESS, annotation.value(), type, annotation.instancePolicy()); }
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventHandler.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventHandler.class); return component(pluginId, namespace, PluginComponentKind.EVENT_HANDLER, annotation.value(), type, annotation.instancePolicy()); }
@@ -40,7 +40,7 @@ final class PluginComponentScanner {
                                                                      io.github.actforever.kuudra.plugin.annotation.InstancePolicy policy) {
         Class<?> expected = switch (kind) {
             case EVENT_SOURCE -> io.github.actforever.kuudra.api.EventSource.class;
-            case RAW_EVENT_INTERPRETER -> io.github.actforever.kuudra.api.RawEventInterpreter.class;
+            case EVENT_INTERPRETER -> io.github.actforever.kuudra.api.EventInterpreter.class;
             case EVENT_ADAPTER -> io.github.actforever.kuudra.api.EventAdapter.class;
             case INGRESS -> io.github.actforever.kuudra.api.Ingress.class;
             case EVENT_HANDLER -> io.github.actforever.kuudra.api.EventHandler.class;
