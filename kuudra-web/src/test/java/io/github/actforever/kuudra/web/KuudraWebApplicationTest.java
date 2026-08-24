@@ -33,6 +33,11 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/app/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/v1/app/plugins/default"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.namespace").value("kuudra-official"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+        mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.pluginId").value("default"));
         mvc.perform(get("/api/v1/app/resources/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }
@@ -61,10 +66,13 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/component-resources"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/resources/components']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/app/resources/components/{type}/{namespace}/{name}']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/app/resources/components/{type}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/resources/{kind}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/namespaces/{namespace}/resources']").exists());
         mvc.perform(get("/v3/api-docs/flows"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/app/flows']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/app/flows']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/namespaces/{namespace}/flows/{name}']").exists());
         mvc.perform(get("/v3/api-docs/sessions"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/sessions/{sessionId}']").exists());

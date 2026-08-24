@@ -48,13 +48,12 @@
 
 生命周期使用同一依赖拓扑：提供方先 `initialize/start`，依赖方后启动；停止时顺序反转。每个成功启动的插件会立即记录到启动顺序中，而不是等整个图成功后才记录。若中途某个依赖方启动失败，该插件会执行 `destroy` 并关闭已注册资源，随后 App 回滚时会逆序停止此前已成功启动的依赖插件。因此归档、ClassLoader、生命周期和失败清理形成闭环。
 
-Flow 组件用节点 `type` 指定类别，组件引用只写 `namespace/component-id`：
+资源清单用具体 `kind` 指定类别，插件组件引用只写 `namespace/component-id`：
 
 ```yaml
-components:
-  input:
-    type: event-source
-    component: hello-world/loop-emitter
+kind: EventSource
+spec:
+  component: hello-world/loop-emitter
 ```
 
-内核据此组成内部完整引用 `event-source/hello-world/loop-emitter`，避免在 YAML 中重复类别信息。
+内核据此组成内部完整引用 `event-source/hello-world/loop-emitter`。资源的规范身份则独立使用 `EventSource/<resource-namespace>/<resource-name>`。

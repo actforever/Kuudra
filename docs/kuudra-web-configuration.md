@@ -8,7 +8,7 @@ Web 创建 `KuudraApp` 时，将可执行 JAR 所在目录作为 App 的配置�
 2. `<home-directory>/config.yaml`；
 3. `kuudra-app` 包内的 `classpath:/config.yaml`。
 
-内置配置声明 `home-directory: .kuudra`，因此打包部署时用户配置默认为 `<jar-directory>/.kuudra/config.yaml`，插件 JAR 固定放在 `<jar-directory>/.kuudra/plugins/`，Component 与 Flow 资源固定放在 `<jar-directory>/.kuudra/manifests/`。
+内置配置声明 `home-directory: .kuudra`，因此打包部署时用户配置默认为 `<jar-directory>/.kuudra/config.yaml`，插件 JAR 固定放在 `<jar-directory>/.kuudra/plugins/`，具体组件 kind 与 Flow 资源固定放在 `<jar-directory>/.kuudra/manifests/`。
 
 首次启动时，Web 会通过 App 自动创建 `.kuudra/`、`.kuudra/plugins/`、`.kuudra/manifests/`、`.kuudra/logs/` 和 `.kuudra/state/`，并在缺少 `.kuudra/config.yaml` 时复制包内默认配置。现有配置不会被覆盖；配置损坏时可删除该文件并重启以恢复默认值。
 

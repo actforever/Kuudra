@@ -44,10 +44,10 @@ event-handler/<namespace>/<name>
 
 ## HelloWorld 到 Logging 的最小 Flow
 
-`kuudra-official/hello-world` EventSource 产生 RAW 事件，而 `kuudra-official/event-logger` EventHandler 只能在 SESSION 域执行，因此两者之间必须存在 Ingress。内核已经提供无需插件 JAR 的 `core/default` Ingress；无需为这个基础链路增加 `kuudra-ingress-plugin`。最小路由为：
+`kuudra-official/hello-world` EventSource 产生 RAW 事件，而 `kuudra-official/event-logger` EventHandler 只能在 SESSION 域执行，因此两者之间必须存在 Ingress。核心 reactor 的 `kuudra-default-plugin` 默认以 `kuudra-official/default` 插件身份加载；只有清单声明 `kind: Ingress` 并引用 `kuudra-official/default` 时才构建实例。最小路由为：
 
 ```text
-EventSource -> core/default Ingress -> EventHandler
+EventSource -> ingress/kuudra-official/default -> EventHandler
 ```
 
 完整的三份 Component 清单和一份 Flow 清单位于 `kuudra-plugin-demos/examples/hello-world-logging/`。其中默认 Ingress 使用 `${event#hello-world.message}` 作为组键并选择 `SERIAL` 策略；它只计算准入和分组，Session 创建与串行调度由 Runtime 完成。Logging Handler 再通过插件 Logger 发布 `plugin.log` SystemEvent，由 `kuudra-logging` 统一打印。

@@ -57,14 +57,13 @@ class KuudraConfigTest {
         Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
         Files.writeString(manifests.resolve("source.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
-                kind: Component
+                kind: EventSource
                 metadata:
                   namespace: input
                   name: keyboard
                   labels:
                     device: keyboard
                 spec:
-                  type: event-source
                   component: native-input/keyboard
                   desiredState: stopped
                   options:
@@ -74,17 +73,17 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
                 metadata:
-                  namespace: macros
+                  namespace: input
                   name: demo
                 spec:
                   imports:
                     input:
-                      kind: Component
+                      kind: EventSource
                       namespace: input
                       name: keyboard
                     handler:
-                      kind: Component
-                      namespace: actions
+                      kind: EventHandler
+                      namespace: input
                       name: printer
                   edges:
                     - from: input
@@ -93,7 +92,7 @@ class KuudraConfigTest {
 
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(directory.resolve("config.yaml"));
         KuudraManifest.Component source = config.manifests().components().get(
-                new KuudraManifest.ResourceId("Component", "input", "keyboard"));
+                new KuudraManifest.ResourceId("EventSource", "input", "keyboard"));
         assertEquals("stopped", source.desiredState());
         assertEquals(false, source.options().get("mouseEnabled"));
         assertEquals("keyboard", config.manifests().flows().values().iterator().next().imports().get("input").name());
@@ -106,13 +105,43 @@ class KuudraConfigTest {
         Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
         String component = """
                 apiVersion: kuudra.io/v1alpha1
-                kind: Component
+                kind: EventHandler
                 metadata: {namespace: default, name: duplicate}
-                spec: {type: event-handler, component: demo/handler}
+                spec: {component: demo/handler}
                 """;
         Files.writeString(manifests.resolve("one.yaml"), component);
         Files.writeString(directory.resolve(".kuudra/manifests/b/two.yaml"), component);
 
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+    }
+
+    @Test
+    void rejectsLegacyComponentKindAndCrossNamespaceImports() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Files.writeString(manifests.resolve("handler.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventHandler
+                metadata: {namespace: shared, name: handler}
+                spec: {component: demo/handler}
+                """);
+        Files.writeString(manifests.resolve("flow.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: isolated, name: flow}
+                spec:
+                  imports:
+                    handler: {kind: EventHandler, namespace: shared, name: handler}
+                  edges: []
+                """);
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+
+        Files.writeString(manifests.resolve("handler.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Component
+                metadata: {namespace: isolated, name: legacy}
+                spec: {type: event-handler, component: demo/handler}
+                """);
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
     }
 }

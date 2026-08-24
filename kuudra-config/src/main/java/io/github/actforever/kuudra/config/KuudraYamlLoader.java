@@ -101,23 +101,23 @@ public final class KuudraYamlLoader {
                 }
                 Map<String, Object> spec = mapping(required(root, "spec"), file + ".spec");
                 try {
-                    switch (kind) {
-                        case "Component" -> {
+                    if (KuudraManifest.COMPONENT_KINDS.containsKey(kind)) {
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
-                            Object type = required(spec, "type");
+                            String type = KuudraManifest.COMPONENT_KINDS.get(kind);
+                            if (spec.containsKey("type")) throw new IllegalArgumentException("spec.type has been removed; use kind: " + kind);
                             KuudraManifest.Component component = new KuudraManifest.Component(id, metadata,
-                                    string(type, file + ".spec.type"), string(required(spec, "component"), file + ".spec.component"),
+                                    type, string(required(spec, "component"), file + ".spec.component"),
                                     string(spec.getOrDefault("desiredState", defaultComponentState(type)), file + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
                                     optionalMapping(spec, "options"));
                             if (components.putIfAbsent(id, component) != null) throw new IOException("Duplicate resource identity: " + id);
-                        }
+                    } else switch (kind) {
                         case "Flow" -> {
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
                             Map<String, KuudraManifest.ResourceReference> imports = new LinkedHashMap<>();
                             for (Map.Entry<String, Object> entry : mapping(required(spec, "imports"), file + ".spec.imports").entrySet()) {
                                 Map<String, Object> reference = mapping(entry.getValue(), file + ".spec.imports." + entry.getKey());
                                 imports.put(entry.getKey(), new KuudraManifest.ResourceReference(
-                                        string(reference.getOrDefault("kind", "Component"), "reference.kind"),
+                                        string(required(reference, "kind"), "reference.kind"),
                                         string(reference.getOrDefault("namespace", namespace), "reference.namespace"),
                                         string(required(reference, "name"), "reference.name")));
                             }

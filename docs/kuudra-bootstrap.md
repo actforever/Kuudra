@@ -23,19 +23,18 @@ global-context: {}
 
 App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 ID、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase。
 
-## Component 与 Flow
+## 具体组件资源与 Flow
 
-支持的 Component type 为 `event-source`、`event-interpreter`、`event-adapter`、`ingress`、`event-handler`、`egress`。默认 Ingress/Egress 使用 `core/default`。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
+支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。内置 `kuudra-default-plugin` 作为 `kuudra-official/default` 插件默认加载，但默认 Ingress/Egress 仍须由清单显式声明。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
 
 插件组件实现 `PluginComponentLifecycle` 后，会在 `initialize(PluginComponentContext)` 阶段收到当前 Component 清单的不可变 `options`。EventSource 等没有事件执行上下文的有状态资源，应在这里读取并校验启动参数；运行阶段不再重复解释 YAML。`PluginComponentContext`、`EventContext` 与 `ActionContext` 统一通过 `TypedValueMap` 提供 `configuration(key, Type)` 和带默认值的读取接口，查找、缺失值处理及 `ContextCodec` 类型转换不需要由插件重复实现。
 
 ```yaml
 apiVersion: kuudra.io/v1alpha1
-kind: Component
+kind: Ingress
 metadata: {namespace: demo, name: ingress}
 spec:
-  type: ingress
-  component: core/default
+  component: kuudra-official/default
   desiredState: active
   options:
     groupKey: ${event#input.key}

@@ -20,16 +20,26 @@ public final class PluginArchiveLoader {
 
     /** Loads one dependency graph so dependent plugin classes are visible through declared metadata dependencies. */
     public List<LoadedArchive> loadAll(List<Path> archives, ClassLoader parent) throws IOException {
+        return loadAll(archives, parent, List.of());
+    }
+
+    /** Loads archives while accepting code-level plugins already visible from the parent ClassLoader. */
+    public List<LoadedArchive> loadAll(List<Path> archives, ClassLoader parent, List<PluginMetadata> providedPlugins) throws IOException {
         Objects.requireNonNull(parent, "parent");
+        LinkedHashMap<String, PluginMetadata> provided = new LinkedHashMap<>();
+        for (PluginMetadata metadata : providedPlugins) {
+            if (provided.putIfAbsent(metadata.id(), metadata) != null) throw new IOException("Duplicate provided plugin id: " + metadata.id());
+        }
         LinkedHashMap<String, ArchiveDefinition> definitions = new LinkedHashMap<>();
         for (Path archive : archives) {
             Path normalized = normalizedArchive(archive);
             PluginMetadata metadata = readMetadata(normalized);
+            if (provided.containsKey(metadata.id())) throw new IOException("Plugin id conflicts with provided plugin: " + metadata.id());
             if (definitions.putIfAbsent(metadata.id(), new ArchiveDefinition(normalized, metadata)) != null) {
                 throw new IOException("Duplicate plugin id in archives: " + metadata.id());
             }
         }
-        validateDependencies(definitions);
+        validateDependencies(definitions, provided);
         LinkedHashMap<String, LoadedArchive> loaded = new LinkedHashMap<>();
         try {
             for (String id : definitions.keySet()) load(id, definitions, loaded, new ArrayList<>(), parent);
@@ -78,18 +88,19 @@ public final class PluginArchiveLoader {
         if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) throw new IOException("Plugin archive must be a readable JAR: " + normalized);
         return normalized;
     }
-    private static void validateDependencies(Map<String, ArchiveDefinition> definitions) throws IOException {
+    private static void validateDependencies(Map<String, ArchiveDefinition> definitions, Map<String, PluginMetadata> provided) throws IOException {
         for (ArchiveDefinition owner : definitions.values()) for (PluginDependency dependency : owner.metadata.dependencies()) {
             ArchiveDefinition target = definitions.get(dependency.pluginId());
-            if (target == null) {
+            PluginMetadata targetMetadata = target == null ? provided.get(dependency.pluginId()) : target.metadata;
+            if (targetMetadata == null) {
                 if (dependency.mandatory()) throw new IOException("Mandatory plugin dependency is missing: "
                         + owner.metadata.namespace() + "/" + owner.metadata.id() + " -> " + dependency.identity());
                 continue;
             }
-            if (!target.metadata.namespace().equals(dependency.namespace())) throw new IOException("Plugin dependency namespace mismatch: expected "
-                    + dependency.identity() + " but found " + target.metadata.namespace() + "/" + target.metadata.id());
-            if (!dependency.accepts(target.metadata.version())) throw new IOException("Plugin dependency version mismatch: "
-                    + dependency.identity() + " requires " + dependency.versionRange() + " but found " + target.metadata.version());
+            if (!targetMetadata.namespace().equals(dependency.namespace())) throw new IOException("Plugin dependency namespace mismatch: expected "
+                    + dependency.identity() + " but found " + targetMetadata.namespace() + "/" + targetMetadata.id());
+            if (!dependency.accepts(targetMetadata.version())) throw new IOException("Plugin dependency version mismatch: "
+                    + dependency.identity() + " requires " + dependency.versionRange() + " but found " + targetMetadata.version());
         }
     }
     private static PluginMetadata readMetadata(Path archive) throws IOException {

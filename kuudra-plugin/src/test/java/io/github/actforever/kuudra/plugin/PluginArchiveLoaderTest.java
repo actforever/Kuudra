@@ -121,6 +121,25 @@ class PluginArchiveLoaderTest {
         loaded.forEach(archive -> { try { archive.close(); } catch (IOException error) { throw new RuntimeException(error); } });
     }
 
+    @Test
+    void resolvesDependenciesProvidedByCodeLevelPlugins() throws Exception {
+        Path childClasses = compile("provided-child", Map.of(
+                "child.ProvidedPlugin", pluginSource("child", "ProvidedPlugin", "child")), List.of());
+        PluginDependency dependency = new PluginDependency("kuudra-official", "default", true, "[0.1.0,0.2.0)");
+        Path childJar = jar("provided-child.jar", childClasses,
+                metadata("child", "child.ProvidedPlugin", "demo", "1.0.0", List.of(dependency)), Map.of());
+        PluginMetadata provided = new PluginMetadata(
+                "default", "kuudra-official", "0.1.0", "provided.by.parent.ClassLoader", List.of());
+
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
+                List.of(childJar), PluginArchiveLoaderTest.class.getClassLoader(), List.of(provided));
+        try {
+            assertEquals("child", loaded.get(0).plugin().metadata().id());
+        } finally {
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) archive.close();
+        }
+    }
+
     private Path compile(String name, Map<String, String> sources, List<Path> dependencies) throws IOException {
         Path sourceRoot = Files.createDirectories(directory.resolve(name + "-src"));
         Path classes = Files.createDirectories(directory.resolve(name + "-classes"));

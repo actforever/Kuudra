@@ -39,6 +39,33 @@ class AppController {
     @GetMapping("/flows") List<KuudraApp.Flow> flows() { return app.flows(); }
     @Operation(summary = "获取 Flow", tags = "Flow 管理")
     @GetMapping("/flows/{flowId}") KuudraApp.Flow flow(@PathVariable("flowId") String flowId) { return app.flow(flowId).orElseThrow(() -> notFound("Flow", flowId)); }
+    @Operation(summary = "列出命名空间内的 Flow", tags = "Flow 管理")
+    @GetMapping("/namespaces/{namespace}/flows") List<KuudraApp.Flow> namespacedFlows(@PathVariable("namespace") String namespace) { return app.flows(namespace); }
+    @Operation(summary = "获取命名空间内的 Flow", tags = "Flow 管理")
+    @GetMapping("/namespaces/{namespace}/flows/{name}") KuudraApp.Flow namespacedFlow(
+            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
+        return app.flow(namespace, name).orElseThrow(() -> notFound("Flow", namespace + "/" + name));
+    }
+    @Operation(summary = "启动命名空间内的 Flow", tags = "Flow 管理")
+    @PostMapping("/namespaces/{namespace}/flows/{name}/start") KuudraApp.Flow startNamespacedFlow(
+            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
+        app.activateFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
+    }
+    @Operation(summary = "暂停命名空间内的 Flow", tags = "Flow 管理")
+    @PostMapping("/namespaces/{namespace}/flows/{name}/pause") KuudraApp.Flow pauseNamespacedFlow(
+            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
+        app.pauseFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
+    }
+    @Operation(summary = "恢复命名空间内的 Flow", tags = "Flow 管理")
+    @PostMapping("/namespaces/{namespace}/flows/{name}/resume") KuudraApp.Flow resumeNamespacedFlow(
+            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
+        app.resumeFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
+    }
+    @Operation(summary = "停止命名空间内的 Flow", tags = "Flow 管理")
+    @PostMapping("/namespaces/{namespace}/flows/{name}/stop") KuudraApp.Flow stopNamespacedFlow(
+            @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
+        app.stopFlow(namespace + "/" + name); return namespacedFlow(namespace, name);
+    }
     @Operation(summary = "启动 Flow", tags = "Flow 管理")
     @PostMapping("/flows/{flowId}/start") KuudraApp.Flow startFlow(@PathVariable("flowId") String flowId) { app.activateFlow(flowId); return flow(flowId); }
     @Operation(summary = "暂停 Flow", tags = "Flow 管理")
@@ -68,6 +95,15 @@ class AppController {
             @PathVariable("name") String name) {
         return app.componentResource(type, namespace, name)
                 .orElseThrow(() -> notFound("Component resource", type + "/" + namespace + "/" + name));
+    }
+    @Operation(summary = "列出命名空间内的资源", tags = "Component 资源")
+    @GetMapping("/namespaces/{namespace}/resources") List<KuudraApp.ComponentResource> namespacedResources(
+            @PathVariable("namespace") String namespace) { return app.resourcesInNamespace(namespace); }
+    @Operation(summary = "按 kind/namespace/name 获取资源", tags = "Component 资源")
+    @GetMapping("/resources/{kind}/{namespace}/{name}") KuudraApp.ComponentResource resource(
+            @PathVariable("kind") String kind, @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        return app.resource(kind, namespace, name).orElseThrow(() -> notFound("Resource", kind + "/" + namespace + "/" + name));
     }
     @Operation(summary = "获取 Session", tags = "Session 管理")
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }

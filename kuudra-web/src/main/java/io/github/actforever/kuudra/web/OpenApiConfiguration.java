@@ -42,7 +42,8 @@ class OpenApiConfiguration {
         return GroupedOpenApi.builder().group("flows")
                 .pathsToMatch("/api/v1/app/flows", "/api/v1/app/flows/*",
                         "/api/v1/app/flows/*/start", "/api/v1/app/flows/*/pause",
-                        "/api/v1/app/flows/*/resume", "/api/v1/app/flows/*/stop")
+                        "/api/v1/app/flows/*/resume", "/api/v1/app/flows/*/stop",
+                        "/api/v1/app/namespaces/*/flows/**")
                 .build();
     }
 
@@ -58,7 +59,8 @@ class OpenApiConfiguration {
     @Bean
     GroupedOpenApi componentResourceApi() {
         return GroupedOpenApi.builder().group("component-resources")
-                .pathsToMatch("/api/v1/app/resources/components/**")
+                .pathsToMatch("/api/v1/app/resources/components/**", "/api/v1/app/resources/*/*/*",
+                        "/api/v1/app/namespaces/*/resources")
                 .build();
     }
 

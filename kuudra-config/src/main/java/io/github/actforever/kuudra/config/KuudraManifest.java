@@ -7,6 +7,10 @@ import java.util.Objects;
 /** Format-neutral K8s-style resource manifests discovered under the Kuudra home. */
 public final class KuudraManifest {
     public static final String API_VERSION = "kuudra.io/v1alpha1";
+    public static final Map<String, String> COMPONENT_KINDS = Map.of(
+            "EventSource", "event-source", "EventInterpreter", "event-interpreter",
+            "EventAdapter", "event-adapter", "Ingress", "ingress",
+            "EventHandler", "event-handler", "Egress", "egress");
 
     private KuudraManifest() { }
 
@@ -37,7 +41,8 @@ public final class KuudraManifest {
                             String desiredState, Map<String, Object> options) {
         public Component {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
-            requireText(type, "spec.type"); requireText(component, "spec.component"); requireText(desiredState, "spec.desiredState");
+            requireText(type, "component type"); requireText(component, "spec.component"); requireText(desiredState, "spec.desiredState");
+            if (!type.equals(COMPONENT_KINDS.get(id.kind()))) throw new IllegalArgumentException("Resource kind does not match component type: " + id.kind());
             options = Map.copyOf(options);
         }
     }
@@ -48,6 +53,11 @@ public final class KuudraManifest {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
             requireText(desiredState, "spec.desiredState"); imports = Map.copyOf(imports); edges = List.copyOf(edges);
             if (imports.isEmpty()) throw new IllegalArgumentException("Flow imports must not be empty");
+            for (ResourceReference reference : imports.values()) {
+                if (!COMPONENT_KINDS.containsKey(reference.kind())) throw new IllegalArgumentException("Flow import kind must be a concrete component kind: " + reference.kind());
+                if (!reference.namespace().equals(metadata.namespace())) throw new IllegalArgumentException(
+                        "Cross-namespace Flow import is not allowed: " + metadata.namespace() + " -> " + reference.namespace());
+            }
             for (KuudraConfig.EdgeConfig edge : edges) {
                 if (!imports.containsKey(edge.from())) throw new IllegalArgumentException("Unknown Flow edge source import: " + edge.from());
                 if (!imports.containsKey(edge.to())) throw new IllegalArgumentException("Unknown Flow edge target import: " + edge.to());

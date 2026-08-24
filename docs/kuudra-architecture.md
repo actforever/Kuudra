@@ -26,7 +26,7 @@ Wrapper 是 Runtime 路由状态，不是插件应写入上下文的数据。Flo
 
 `EventAdapter` 在 Component options 中声明绑定域，不能改变域。`EventInterpreter` 与 Adapter 不合并：前者表达持有资源和跨事件状态的解释过程，后者表达局部映射。组件名不携带 Raw/Session 域前缀；执行域只由 Runtime Wrapper 表达。Flow 不引入 port；需要分支时使用 Adapter，Handler 通过 `ActionContext.emit` 显式输出业务阶段事件。
 
-插件可注册以上组件。常见 Ingress/Egress 使用 `core/default`；`SessionManager` 和 `SessionCoordinator` 只能由 Runtime 提供，不属于资源清单或路由节点。
+插件可注册以上组件。核心仓库的 `kuudra-default-plugin` 以 `kuudra-official/default` 身份显式注册，提供 `ingress/kuudra-official/default` 与 `egress/kuudra-official/default`；它们和外部插件组件一样，只有资源清单声明后才实例化。`SessionManager` 和 `SessionCoordinator` 只能由 Runtime 提供，不属于插件资源或路由节点。
 
 ## 3. FlowBinding 与静态校验
 

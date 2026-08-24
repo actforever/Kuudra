@@ -4,13 +4,13 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 
 ## 身份与边界
 
-资源的逻辑身份为 `(flowId, type, id)`。其中 Flow 提供命名空间、路由图和 Session 归属；`type` 标识资源种类；`id` 是 Flow YAML 中 `components` 的键。插件组件引用则是另一层身份，格式为 `type/namespace/name`，例如 `event-source/hello-world/loop-emitter`。
+资源的逻辑身份和规范路由地址为 `kind/namespace/name`，例如 `EventSource/macros/keyboard-hook`。`namespace` 是 App 内强制执行的资源隔离边界；Flow 只能导入同一 namespace 的资源，并在自身路由图中为它们分配局部别名。插件组件定义是另一层身份，格式为 `type/plugin-namespace/component-name`，例如 `event-source/hello-world/loop-emitter`。
 
 这两层身份必须区分：一个插件组件定义可被多个 Flow 声明为独立资源，而每个资源各自拥有启停状态和目标节点。
 
 ## 首期资源
 
-首期实现 `event-source` 的资源查询、启动和停止。Interpreter、Adapter、Ingress、Handler 和 Egress 仍由 App 装配及插件生命周期管理，暂不支持单组件热卸载。
+当前已经支持查询全部六类组件资源，EventSource 额外支持启动和停止。Interpreter、Adapter、Ingress、Handler 和 Egress 仍由 App 装配及插件生命周期管理，暂不支持单组件热卸载。
 
 未来新增资源种类时，应沿用同一身份、状态和 App API，而不是为 CLI 或 Web 单独发明控制逻辑。
 
@@ -33,7 +33,7 @@ Component 资源是 App 所有的命名实例；满足 `shareable` 与 `threadSa
 
 EventHandler 同样采用显式复用。插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类稀缺对象，可把 Robot 封装成插件生命周期内的共享服务，让轻量 Handler 实例保持隔离。
 
-这套模型尚未进入当前 YAML schema。本节定义演进方向，实施时需要同步修改配置模型、App 资源身份、Runtime 的一对多 EventSource 注册、生命周期回滚和资源 API，不能先加入基于类型的实例缓存。目标清单格式、实例约束、调谐 API、家目录和迁移步骤见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
+这套三层模型已经进入当前 YAML schema：插件注册定义，具体 kind 清单声明 App 级命名实例，Flow 通过 import 建立绑定。持续调谐写 API、热卸载和持久化状态仍是后续工作。完整格式见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
 
 ## 状态语义
 
@@ -45,4 +45,4 @@ EventHandler 同样采用显式复用。插件声明 `shareable/thread-safe` 能
 
 ## 配置与控制
 
-使用 `components.<id>.type: event-source` 声明资源，并通过 `enabled` 设置初始状态。App 的 REST 适配器提供列表、详情、`start`、`stop` API；未来 `kuudractl get event-source` 应直接调用这些 App API。
+使用资源清单的具体 `kind`（例如 `EventSource`）声明资源，以 `metadata.namespace/name` 隔离和命名，并通过 `spec.desiredState` 设置期望状态。App 的 REST 适配器提供列表、详情、`start`、`stop` API；未来 `kuudractl get event-source -n <namespace>` 应直接调用这些 App API。

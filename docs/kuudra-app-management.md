@@ -21,11 +21,16 @@ NEW → STARTING → RUNNING → STOPPING → STOPPED
 | `GET` | `/api/v1/app/resources/components` | 列出清单声明的全部 Component 实例及实际状态。 |
 | `GET` | `/api/v1/app/resources/components/{type}` | 按六类组件类型过滤资源实例。 |
 | `GET` | `/api/v1/app/resources/components/{type}/{namespace}/{name}` | 查询具体资源实例、期望/实际状态、导入它的 Flow 和生命周期能力。 |
+| `GET` | `/api/v1/app/resources/{kind}/{namespace}/{name}` | 按规范 `kind/namespace/name` 查询组件资源。 |
+| `GET` | `/api/v1/app/namespaces/{namespace}/resources` | 列出指定命名空间中的组件资源。 |
 | `POST` | `/api/v1/app/start` | 创建并启动内核。 |
 | `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
 | `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |
 | `GET` | `/api/v1/app/flows` | 列出 Flow。 |
 | `POST` | `/api/v1/app/flows/{id}/start|pause|resume|stop` | 管理 Flow。 |
+| `GET` | `/api/v1/app/namespaces/{namespace}/flows` | 列出指定命名空间中的 Flow。 |
+| `GET` | `/api/v1/app/namespaces/{namespace}/flows/{name}` | 按 namespace/name 查询 Flow。 |
+| `POST` | `/api/v1/app/namespaces/{namespace}/flows/{name}/start|pause|resume|stop` | 使用规范身份管理 Flow。 |
 | `GET` | `/api/v1/app/sessions/{id}` | 查询 Session。 |
 | `POST` | `/api/v1/app/sessions/{id}/cancel` | 请求协作式取消。 |
 | `GET` | `/api/v1/app/events` | SSE 系统事件流。 |

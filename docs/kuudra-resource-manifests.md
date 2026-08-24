@@ -1,6 +1,6 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义并记录 Kuudra 的资源与编排模型。当前版本只从 `<home-directory>/manifests/**/*.yaml` 加载 Component 与 Flow 两种资源；Flow 通过 `spec.imports` 引用 Component 并配置路由，Component 不引用 Flow。通用资源写 API 与持续调谐仍是后续工作。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用同命名空间的组件资源并配置路由，组件资源不引用 Flow。通用资源写 API 与持续调谐仍是后续工作。
 
 当前 App/Web 已能以统一只读接口查询所有清单 Component 实例，而不只查询 EventSource：`GET /api/v1/app/resources/components` 返回类型、插件组件引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型或 `type/namespace/name` 定位。EventSource 原有专用 start/stop API 暂时保留；其他组件只公开其实际的 materialize/destroy 能力，在通用调谐写接口完成前不伪造 start/stop 操作。
 
@@ -34,11 +34,11 @@ annotation/metadata   →   Component 实例   ← import/绑定 →   Flow + ed
 
 ### Component 资源
 
-Component 资源描述“创建哪个实例”。两个 Flow 只有导入相同资源身份时才共享同一 Java 实例。仅仅使用相同的 `spec.component` 不会触发复用。
+具体组件资源描述“创建哪个实例”。两个 Flow 只有导入相同 `kind/namespace/name` 资源身份时才共享同一 Java 实例。仅仅使用相同的 `spec.component` 不会触发复用。
 
 ### Flow 配置
 
-Flow 资源描述“实例如何连接”。它是 Component 资源的消费者：`imports` 为 Component 分配 Flow 内别名，`edges` 只引用这些别名。Component 不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。
+Flow 资源描述“实例如何连接”。它是具体组件资源的消费者：`imports` 以完整 kind/namespace/name 引用资源并分配 Flow 内别名，`edges` 只引用这些别名。资源不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。Flow 只能导入自身 namespace 内的资源，跨 namespace 引用在配置加载阶段失败。
 
 ## 清单格式
 
@@ -46,29 +46,29 @@ Flow 资源描述“实例如何连接”。它是 Component 资源的消费者�
 
 ```yaml
 apiVersion: kuudra.io/v1alpha1
-kind: Component
+kind: EventSource
 metadata:
-  namespace: input
+  namespace: macros
   name: keyboard-hook
   labels: {}
   annotations: {}
-spec: {}
+spec:
+  component: native-input/jnativehook-keyboard
 ```
 
-资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`。`metadata.namespace` 是资源命名空间，不等于插件 namespace、上下文 namespace 或实例互斥域；四者不可混用。缺省资源 namespace 可使用 `default`。
+资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`，规范路由地址为 `kind/namespace/name`。`metadata.namespace` 是内核强制执行的资源隔离边界，不等于插件 namespace、上下文 namespace 或实例互斥域；Flow 与被导入资源必须处于相同 namespace。缺省资源 namespace 可使用 `default`。
 
 一个文件可以包含一个对象；是否支持 YAML 多文档应在实现加载器时一次决定并补充测试。首版建议一个文件一个资源，便于原子更新、错误定位和未来 apply 持久化。
 
-### Component 示例
+### 具体组件资源示例
 
 ```yaml
 apiVersion: kuudra.io/v1alpha1
-kind: Component
+kind: EventSource
 metadata:
-  namespace: input
+  namespace: macros
   name: keyboard-hook
 spec:
-  type: event-source
   component: native-input/jnativehook-keyboard
   desiredState: running
   options:
@@ -77,18 +77,17 @@ spec:
 
 ```yaml
 apiVersion: kuudra.io/v1alpha1
-kind: Component
+kind: EventHandler
 metadata:
-  namespace: actions
+  namespace: macros
   name: keyboard-robot
 spec:
-  type: actor
   component: awt-input/keyboard-robot
   desiredState: active
   options: {}
 ```
 
-`spec.component` 仍指向插件组件定义。options 只属于 Component 实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
+`kind` 直接决定资源类型，支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；不再存在 `kind: Component` 或 `spec.type`。`spec.component` 指向插件组件定义。options 只属于资源实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
 
 ### Flow 示例
 
@@ -102,16 +101,16 @@ spec:
   desiredState: active
   imports:
     keyboard:
-      kind: Component
-      namespace: input
+      kind: EventSource
+      namespace: macros
       name: keyboard-hook
     allocate:
-      kind: Component
+      kind: Ingress
       namespace: macros
       name: combat-session
     robot:
-      kind: Component
-      namespace: actions
+      kind: EventHandler
+      namespace: macros
       name: keyboard-robot
   edges:
     - from: keyboard
@@ -120,9 +119,9 @@ spec:
       to: robot
 ```
 
-另一个 Flow 可以再次 import `input/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。任一 Flow 暂停或停止时只关闭自己的路由闸门，不停止共享 EventSource。
+同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。任一 Flow 暂停或停止时只关闭自己的路由闸门，不停止共享 EventSource。
 
-`SessionAllocator` 也应表示成 `Component` 资源，其 `spec.component` 指向内置的稳定引用，例如 `core/session-allocator`，从而避免 Flow schema 再次出现特殊内嵌节点。
+Ingress 必须显式声明为 `kind: Ingress` 资源。官方默认实现来自已加载的 `kuudra-official/default` 插件；加载插件本身不会隐式创建任何资源实例。
 
 ## 实例数量与互斥域
 
@@ -211,7 +210,7 @@ start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，
 ```text
 .kuudra/
   config.yaml               # 仅内核、日志等 App 设置
-  manifests/                # 用户声明的 Component、Flow 等资源
+  manifests/                # 用户声明的具体组件、Flow 等资源
     input/
       keyboard-hook.yaml
     actions/
