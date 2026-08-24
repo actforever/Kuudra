@@ -260,7 +260,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.status().name(), snapshot.activeSessions(), snapshot.deferredTasks()); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
     private static Plugin plugin(DefaultPluginManager.PluginView view) {
-        return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies(),
+        return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies().stream()
+                .map(dependency -> new Dependency(dependency.namespace(), dependency.pluginId(), dependency.mandatory(), dependency.versionRange())).toList(),
                 view.components().stream().map(KuudraApp::component).toList());
     }
     private static Component component(DefaultPluginManager.ComponentView view) {
@@ -457,10 +458,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Flow(String id, String status, int activeSessions, int deferredTasks) { }
     public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
-    public record Plugin(String id, String namespace, String version, String status, List<String> dependencies,
+    public record Plugin(String id, String namespace, String version, String status, List<Dependency> dependencies,
                          List<Component> components) {
         public Plugin { dependencies = List.copyOf(dependencies); components = List.copyOf(components); }
     }
+    public record Dependency(String namespace, String pluginId, boolean mandatory, String versionRange) { }
     public record Component(String reference, String pluginId, String namespace, String kind, String name,
                             String implementation, InstancePolicy instancePolicy, ComponentDocumentation documentation) { }
     public record InstancePolicy(int maxInstances, String limitScope, String exclusivityDomain,

@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginArchiveLoaderTest {
@@ -99,6 +100,27 @@ class PluginArchiveLoaderTest {
         }
     }
 
+    @Test
+    void validatesMandatoryIdentityAndVersionRangeBeforeLoadingClasses() throws Exception {
+        Path baseClasses = compile("version-base", Map.of("base.VersionPlugin", pluginSource("base", "VersionPlugin", "base")), List.of());
+        Path baseJar = jar("version-base.jar", baseClasses, metadata("base", "base.VersionPlugin", "official", "1.2.0", List.of()), Map.of());
+        Path childClasses = compile("version-child", Map.of("child.VersionPlugin", pluginSource("child", "VersionPlugin", "child")), List.of());
+        PluginDependency incompatible = new PluginDependency("official", "base", true, "[2.0.0,3.0.0)");
+        Path childJar = jar("version-child.jar", childClasses,
+                metadata("child", "child.VersionPlugin", "official", "1.0.0", List.of(incompatible)), Map.of());
+
+        IOException mismatch = assertThrows(IOException.class, () -> new PluginArchiveLoader().loadAll(
+                List.of(baseJar, childJar), PluginArchiveLoaderTest.class.getClassLoader()));
+        assertTrue(mismatch.getMessage().contains("version mismatch"));
+
+        PluginDependency optional = new PluginDependency("official", "absent", false, "[1.0.0,2.0.0)");
+        Path optionalJar = jar("optional.jar", childClasses,
+                metadata("child", "child.VersionPlugin", "official", "1.0.0", List.of(optional)), Map.of());
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
+                List.of(optionalJar), PluginArchiveLoaderTest.class.getClassLoader());
+        loaded.forEach(archive -> { try { archive.close(); } catch (IOException error) { throw new RuntimeException(error); } });
+    }
+
     private Path compile(String name, Map<String, String> sources, List<Path> dependencies) throws IOException {
         Path sourceRoot = Files.createDirectories(directory.resolve(name + "-src"));
         Path classes = Files.createDirectories(directory.resolve(name + "-classes"));
@@ -153,7 +175,17 @@ class PluginArchiveLoaderTest {
     }
 
     private static String metadata(String id, String entrypoint, List<String> dependencies) {
-        return "id = \"" + id + "\"\nnamespace = \"" + id + "\"\nversion = \"1.0.0\"\nentrypoint = \"" + entrypoint
-                + "\"\ndependencies = [" + dependencies.stream().map(value -> "\"" + value + "\"").collect(Collectors.joining(", ")) + "]\n";
+        return metadata(id, entrypoint, id, "1.0.0", dependencies.stream()
+                .map(value -> new PluginDependency(value, value, true, "[1.0.0,2.0.0)")).toList());
+    }
+
+    private static String metadata(String id, String entrypoint, String namespace, String version, List<PluginDependency> dependencies) {
+        StringBuilder result = new StringBuilder("id = \"").append(id).append("\"\nnamespace = \"").append(namespace)
+                .append("\"\nversion = \"").append(version).append("\"\nentrypoint = \"").append(entrypoint).append("\"\n");
+        for (PluginDependency dependency : dependencies) result.append("\n[[dependencies]]\nnamespace = \"")
+                .append(dependency.namespace()).append("\"\npluginId = \"").append(dependency.pluginId())
+                .append("\"\nmandatory = ").append(dependency.mandatory()).append("\nversionRange = \"")
+                .append(dependency.versionRange()).append("\"\n");
+        return result.toString();
     }
 }

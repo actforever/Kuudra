@@ -133,9 +133,13 @@ class DefaultPluginManagerTest {
                 namespace = "test-plugin"
                 version = "1.0.0"
                 entrypoint = "example.Plugin"
-                dependencies = ["base"]
+                [[dependencies]]
+                namespace = "base"
+                pluginId = "base"
+                mandatory = true
+                versionRange = "[0.9.0,2.0.0)"
                 """.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        assertEquals(List.of("base"), metadata.dependencies());
+        assertEquals(List.of(new PluginDependency("base", "base", true, "[0.9.0,2.0.0)")), metadata.dependencies());
         assertEquals("test-plugin", metadata.namespace());
         DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("annotated"));
         List<String> calls = new ArrayList<>();
@@ -145,6 +149,7 @@ class DefaultPluginManagerTest {
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
         assertEquals("annotated", manager.components().find("event-source/test-plugin/test-source").orElseThrow().pluginId());
+        assertEquals("[0.9.0,2.0.0)", manager.pluginView("annotated").dependencies().get(0).versionRange());
         assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.EventSource.class) instanceof TestSource);
     }
 

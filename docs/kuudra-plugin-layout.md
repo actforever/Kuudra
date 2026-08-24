@@ -32,7 +32,7 @@
 
 ## 插件依赖与类可见性
 
-`metadata.toml` 的 `dependencies` 使用插件 ID 声明直接依赖。归档加载器会先读取全部元数据，再以拓扑递归方式为依赖提供方创建 ClassLoader，最后创建依赖方 ClassLoader。每个插件的查找顺序固定为：
+`metadata.toml` 的 `[[dependencies]]` 使用 namespace、插件 ID、`mandatory` 和 `versionRange` 声明直接依赖。插件版本必须是点分隔的非负数字段，可带 `-prerelease` 或 `+build` 后缀且不能带前导 `v`；范围采用 Forge/Maven 风格的 `[a,b)`、`(,b]`、`[a,)` 或 `[a]`。归档加载器会先校验依赖身份、必需性和版本兼容性，再以拓扑递归方式为依赖提供方创建 ClassLoader，最后创建依赖方 ClassLoader。每个插件的查找顺序固定为：
 
 1. Kuudra 宿主 ClassLoader，保证 API 类型身份一致；
 2. `dependencies` 声明顺序中的依赖插件 ClassLoader；

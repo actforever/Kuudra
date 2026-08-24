@@ -9,8 +9,19 @@ id = "hello-world"
 namespace = "hello-world"
 version = "0.1.0"
 entrypoint = "io.github.actforever.kuudra.demo.hello.HelloWorldPlugin"
-dependencies = []
 ```
+
+无依赖插件省略 `dependencies`。存在依赖时，每项使用独立 TOML 表声明完整插件身份、是否强制以及接受的版本范围：
+
+```toml
+[[dependencies]]
+namespace = "kuudra-official"
+pluginId = "shared-contract"
+mandatory = true
+versionRange = "[0.1.0,0.3.5)"
+```
+
+插件版本由点分隔的非负数字段组成，可选 `-预发布标识` 和 `+构建标识`，例如 `1.2.0`、`1.2.0-alpha.2`、`1.2.0+20260824`；不接受前导 `v`。版本范围支持 `[a,b)`、`(,b]`、`[a,)` 和精确版本 `[a]`，方括号表示包含边界，圆括号表示排除边界。加载器在创建任何插件 ClassLoader 前校验依赖格式、重复声明、namespace/ID、强制依赖是否存在以及已安装版本是否落入范围；任一不合法都会中止 App 启动。非强制依赖可以缺失，但一旦存在仍必须满足身份与版本范围。
 
 `namespace` 是稳定的插件命名空间。注解扫描后的组件引用固定为：
 

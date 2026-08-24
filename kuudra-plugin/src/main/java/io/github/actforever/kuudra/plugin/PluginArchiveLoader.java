@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.jar.JarFile;
 
@@ -28,6 +29,7 @@ public final class PluginArchiveLoader {
                 throw new IOException("Duplicate plugin id in archives: " + metadata.id());
             }
         }
+        validateDependencies(definitions);
         LinkedHashMap<String, LoadedArchive> loaded = new LinkedHashMap<>();
         try {
             for (String id : definitions.keySet()) load(id, definitions, loaded, new ArrayList<>(), parent);
@@ -47,7 +49,10 @@ public final class PluginArchiveLoader {
         if (definition == null) throw new IOException("Declared plugin dependency archive is missing: " + id);
         visiting.add(id);
         List<DependencyPluginClassLoader> dependencies = new ArrayList<>();
-        for (String dependency : definition.metadata.dependencies()) dependencies.add((DependencyPluginClassLoader) load(dependency, definitions, loaded, visiting, parent).classLoader());
+        for (PluginDependency dependency : definition.metadata.dependencies()) {
+            if (definitions.containsKey(dependency.pluginId()))
+                dependencies.add((DependencyPluginClassLoader) load(dependency.pluginId(), definitions, loaded, visiting, parent).classLoader());
+        }
         visiting.remove(visiting.size() - 1);
         DependencyPluginClassLoader classLoader = new DependencyPluginClassLoader(definition.archive.toUri().toURL(), parent, dependencies);
         try {
@@ -72,6 +77,20 @@ public final class PluginArchiveLoader {
         Path normalized = Objects.requireNonNull(archive, "archive").toAbsolutePath().normalize();
         if (!Files.isRegularFile(normalized) || !normalized.getFileName().toString().endsWith(".jar")) throw new IOException("Plugin archive must be a readable JAR: " + normalized);
         return normalized;
+    }
+    private static void validateDependencies(Map<String, ArchiveDefinition> definitions) throws IOException {
+        for (ArchiveDefinition owner : definitions.values()) for (PluginDependency dependency : owner.metadata.dependencies()) {
+            ArchiveDefinition target = definitions.get(dependency.pluginId());
+            if (target == null) {
+                if (dependency.mandatory()) throw new IOException("Mandatory plugin dependency is missing: "
+                        + owner.metadata.namespace() + "/" + owner.metadata.id() + " -> " + dependency.identity());
+                continue;
+            }
+            if (!target.metadata.namespace().equals(dependency.namespace())) throw new IOException("Plugin dependency namespace mismatch: expected "
+                    + dependency.identity() + " but found " + target.metadata.namespace() + "/" + target.metadata.id());
+            if (!dependency.accepts(target.metadata.version())) throw new IOException("Plugin dependency version mismatch: "
+                    + dependency.identity() + " requires " + dependency.versionRange() + " but found " + target.metadata.version());
+        }
     }
     private static PluginMetadata readMetadata(Path archive) throws IOException {
         try (JarFile jar = new JarFile(archive.toFile())) { return PluginMetadataToml.read(jar.getInputStream(jar.getJarEntry(PluginMetadataToml.PATH))); }

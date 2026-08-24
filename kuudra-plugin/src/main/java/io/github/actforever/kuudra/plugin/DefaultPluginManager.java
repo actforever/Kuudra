@@ -37,6 +37,7 @@ public final class DefaultPluginManager implements AutoCloseable {
     private final Map<String, String> versions = new LinkedHashMap<>();
     private final List<PluginComponentLifecycle> managedComponents = new ArrayList<>();
     private final Map<String, List<String>> dependencies = new LinkedHashMap<>();
+    private final Map<String, List<PluginDependency>> dependencyMetadata = new LinkedHashMap<>();
     private final PluginComponentRegistry componentRegistry = new PluginComponentRegistry();
     private List<String> startedOrder = List.of();
 
@@ -55,17 +56,23 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
 
     public synchronized void register(KuudraPlugin plugin) {
-        register(plugin, plugin.descriptor().requires(), List.of(), plugin.id(), "unspecified");
+        List<PluginDependency> declared = plugin.descriptor().requires().stream()
+                .map(id -> new PluginDependency(id, id, true, "[0,)" )).toList();
+        register(plugin, plugin.descriptor().requires(), declared, List.of(), plugin.id(), "unspecified");
     }
 
     /** Register a plugin loaded from metadata.toml; metadata dependencies are authoritative. */
     public synchronized void register(PluginArchiveLoader.LoadedPlugin loaded) {
         Objects.requireNonNull(loaded, "loaded");
         if (!loaded.instance().id().equals(loaded.metadata().id())) throw new IllegalArgumentException("Plugin id and metadata id must match");
-        register(loaded.instance(), loaded.metadata().dependencies(), loaded.components(), loaded.metadata().namespace(), loaded.metadata().version());
+        List<String> ordering = loaded.metadata().dependencies().stream()
+                .filter(dependency -> dependency.mandatory() || plugins.containsKey(dependency.pluginId()))
+                .map(PluginDependency::pluginId).toList();
+        register(loaded.instance(), ordering, loaded.metadata().dependencies(), loaded.components(), loaded.metadata().namespace(), loaded.metadata().version());
     }
 
-    private void register(KuudraPlugin plugin, List<String> required, List<PluginComponentDefinition> components, String namespace, String version) {
+    private void register(KuudraPlugin plugin, List<String> required, List<PluginDependency> declaredDependencies,
+                          List<PluginComponentDefinition> components, String namespace, String version) {
         Objects.requireNonNull(plugin, "plugin");
         PluginDescriptor descriptor = plugin.descriptor();
         if (!descriptor.id().equals(plugin.id())) {
@@ -78,6 +85,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         namespaces.put(plugin.id(), namespace);
         versions.put(plugin.id(), version);
         dependencies.put(plugin.id(), List.copyOf(required));
+        dependencyMetadata.put(plugin.id(), List.copyOf(declaredDependencies));
         states.put(plugin.id(), PluginState.REGISTERED);
         resources.put(plugin.id(), new ManagedResources());
         components.forEach(componentRegistry::register);
@@ -103,7 +111,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         List<ComponentView> components = componentRegistry.definitions().values().stream()
                 .filter(component -> component.pluginId().equals(pluginId)).map(DefaultPluginManager::view).toList();
         return new PluginView(pluginId, namespaces.get(pluginId), versions.get(pluginId), states.get(pluginId),
-                dependencies.get(pluginId), components);
+                dependencyMetadata.get(pluginId), components);
     }
     public synchronized List<ComponentView> componentViews() {
         return componentRegistry.definitions().values().stream().map(DefaultPluginManager::view).toList();
@@ -116,7 +124,7 @@ public final class DefaultPluginManager implements AutoCloseable {
                 definition.name(), definition.implementation().getName(), definition.instancePolicy(), definition.documentation());
     }
     public record PluginView(String id, String namespace, String version, PluginState state,
-                             List<String> dependencies, List<ComponentView> components) {
+                             List<PluginDependency> dependencies, List<ComponentView> components) {
         public PluginView { dependencies = List.copyOf(dependencies); components = List.copyOf(components); }
     }
     public record ComponentView(String reference, String pluginId, String namespace, PluginComponentKind kind,
