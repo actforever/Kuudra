@@ -30,7 +30,7 @@ class KuudraAppTest {
         try (KuudraApp app = new KuudraApp(8, 1)) {
             assertEquals("RUNNING", app.health().status());
             assertEquals(0, app.flows().size());
-            assertEquals("ACTIVE", app.plugin("default").orElseThrow().status());
+            assertEquals("ACTIVE", app.plugin("kuudra-official", "default").orElseThrow().status());
             assertTrue(app.pluginComponent("ingress/kuudra-official/default").isPresent());
             assertTrue(app.componentResources().isEmpty(), "Loading the built-in plugin must not create resources");
             app.stop();
@@ -194,6 +194,25 @@ class KuudraAppTest {
             assertEquals("Ingress", app.resource("Ingress", "test", "ingress").orElseThrow().kind());
             assertEquals(2, app.resourcesInNamespace("test").size());
             assertEquals(1, app.flows("test").size());
+        }
+    }
+
+    @Test
+    void leavesInactivePassiveResourcesUnmaterialized() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: dormant}
+                spec:
+                  component: kuudra-official/default
+                  desiredState: inactive
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            KuudraApp.ComponentResource resource = app.resource("Ingress", "test", "dormant").orElseThrow();
+            assertEquals("inactive", resource.desiredState());
+            assertEquals("ABSENT", resource.status());
         }
     }
 

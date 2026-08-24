@@ -33,7 +33,7 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/app/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
-        mvc.perform(get("/api/v1/app/plugins/default"))
+        mvc.perform(get("/api/v1/app/plugins/kuudra-official/default"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.namespace").value("kuudra-official"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
         mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default"))
@@ -82,6 +82,8 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/plugins"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/plugins']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/plugins/{namespace}/{pluginId}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/plugins/{namespace}/{pluginId}/components']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/components/{type}/{namespace}/{name}']").exists());
         mvc.perform(get("/v3/api-docs/all"))
                 .andExpect(status().isOk())

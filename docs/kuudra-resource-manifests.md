@@ -58,7 +58,7 @@ spec:
 
 资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`，规范路由地址为 `kind/namespace/name`。`metadata.namespace` 是内核强制执行的资源隔离边界，不等于插件 namespace、上下文 namespace 或实例互斥域；Flow 与被导入资源必须处于相同 namespace。缺省资源 namespace 可使用 `default`。
 
-一个文件可以包含一个对象；是否支持 YAML 多文档应在实现加载器时一次决定并补充测试。首版建议一个文件一个资源，便于原子更新、错误定位和未来 apply 持久化。
+一个文件既可以只包含一个资源，也可以像 Kubernetes 一样使用 `---` 分隔多个 YAML 文档。加载器会按“文件路径 + 文档序号”定位错误，并在全部文件和文档范围内检查重复资源身份。独立文件仍更便于原子更新和人工管理，但不再是格式限制。
 
 ### 具体组件资源示例
 
@@ -88,6 +88,14 @@ spec:
 ```
 
 `kind` 直接决定资源类型，支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；不再存在 `kind: Component` 或 `spec.type`。`spec.component` 指向插件组件定义。options 只属于资源实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
+
+当前 `desiredState` 是启动装配阶段的一次性目标，而不是后台持续运行的控制器：
+
+- `EventSource`：`running` 会注册并启动事件源，`stopped` 只物化资源、不启动事件生产；
+- `EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`：`active` 会物化并允许 Flow 导入，`inactive` 不物化且不能被 Flow 导入；
+- `Flow`：支持 `active`、`paused`、`stopped`，App 注册路由后把闸门切换到目标状态。
+
+其他状态会令启动失败。当前没有监听文件/API 变更的持续调谐循环，运行期间的专用 start/stop API 也尚未写回持久期望状态。
 
 ### Flow 示例
 
@@ -203,6 +211,12 @@ start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，
 
 `kuudractl apply -f xxx.yaml` 将同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。持久化期望状态需要 ResourceRepository/StateStore；在该能力完成前，CLI apply 必须明确标记为仅当前进程有效，不能暗示重启后仍存在。
 
+### `state/` 与未来 SQLite StateStore
+
+当前实现只在启动时确保 `.kuudra/state/` 目录存在，没有任何代码读写该目录，也没有 SQLite 依赖、数据库文件、ResourceRepository 或后台调谐循环。因此它目前只是为后续状态存储预留的目录，不能视为已经实现的 etcd。
+
+未来推荐在该目录使用嵌入式 SQLite 实现单机 `StateStore`，保存规范资源身份、完整期望 spec、generation、observedGeneration、实际状态与 condition。资源清单和未来 `kuudractl apply` 是写入期望状态的入口；SQLite 是内核唯一持久事实源；调谐器观察数据库中的 generation 并把实际状态收敛后更新 observed 状态。Session、事件负载和插件自行持久化的数据不应进入该状态库。
+
 ## 家目录目标结构
 
 建议目标结构为：
@@ -219,7 +233,7 @@ start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，
       combat.yaml
   plugins/                  # 插件 JAR 与插件运行时家目录
   logs/
-  state/                    # 内核管理的持久状态；用户不直接编辑
+  state/                    # 预留给未来 SQLite StateStore；当前为空且未使用
 ```
 
 不用 `conf/`，因为它难以区分 App 配置与资源对象；不用顶层 `flows/`，因为 Flow 已经只是多种资源之一。`manifests/` 递归扫描 `.yaml/.yml`，子目录只服务人类整理，资源身份完全由 metadata 决定。未知 kind、重复身份、损坏文件或引用缺失都应使本次期望状态导入失败。

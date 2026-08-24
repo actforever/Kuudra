@@ -35,16 +35,16 @@ class DefaultPluginManagerTest {
         manager.startAll().toCompletableFuture().join();
 
         assertEquals(List.of("base.initialize", "base.start", "feature.initialize", "feature.start"), calls);
-        assertEquals(PluginState.ACTIVE, manager.state("base"));
-        assertTrue(Files.isDirectory(temporaryDirectory.resolve("plugins/base")));
-        assertTrue(Files.isDirectory(temporaryDirectory.resolve("plugins/feature")));
+        assertEquals(PluginState.ACTIVE, manager.state("base", "base"));
+        assertTrue(Files.isDirectory(temporaryDirectory.resolve("plugins/base/base")));
+        assertTrue(Files.isDirectory(temporaryDirectory.resolve("plugins/feature/feature")));
 
         manager.stopAll().toCompletableFuture().join();
 
         assertEquals(List.of(
                 "base.initialize", "base.start", "feature.initialize", "feature.start",
                 "feature.stop", "feature.destroy", "base.stop", "base.destroy"), calls);
-        assertEquals(PluginState.STOPPED, manager.state("feature"));
+        assertEquals(PluginState.STOPPED, manager.state("feature", "feature"));
     }
 
     @Test
@@ -61,7 +61,7 @@ class DefaultPluginManagerTest {
             }
         });
         assertThrows(Exception.class, () -> brokenManager.startAll().toCompletableFuture().join());
-        assertEquals(PluginState.FAILED, brokenManager.state("broken"));
+        assertEquals(PluginState.FAILED, brokenManager.state("broken", "broken"));
     }
 
     @Test
@@ -100,8 +100,8 @@ class DefaultPluginManagerTest {
         assertEquals(List.of(
                 "base.initialize", "base.start", "child.initialize", "child.start", "child.destroy",
                 "base.stop", "base.destroy"), calls);
-        assertEquals(PluginState.FAILED, manager.state("child"));
-        assertEquals(PluginState.STOPPED, manager.state("base"));
+        assertEquals(PluginState.FAILED, manager.state("child", "child"));
+        assertEquals(PluginState.STOPPED, manager.state("base", "base"));
     }
 
     @Test
@@ -149,7 +149,7 @@ class DefaultPluginManagerTest {
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
         assertEquals("annotated", manager.components().find("event-source/test-plugin/test-source").orElseThrow().pluginId());
-        assertEquals("[0.9.0,2.0.0)", manager.pluginView("annotated").dependencies().get(0).versionRange());
+        assertEquals("[0.9.0,2.0.0)", manager.pluginView("test-plugin", "annotated").dependencies().get(0).versionRange());
         assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.EventSource.class) instanceof TestSource);
     }
 
@@ -197,10 +197,28 @@ class DefaultPluginManagerTest {
         assertEquals(temporaryDirectory.resolve("plugin-views/demo/sample").toAbsolutePath().normalize(), home.get());
         assertEquals("demo", logged.get().data().get("namespace"));
         assertEquals("sample", logged.get().data().get("pluginId"));
-        DefaultPluginManager.PluginView plugin = manager.pluginView("sample");
+        DefaultPluginManager.PluginView plugin = manager.pluginView("demo", "sample");
         assertEquals("1.2.3", plugin.version());
         assertEquals("periodically emits greetings", plugin.components().get(0).documentation().purpose());
         assertEquals("hello.tick", plugin.components().get(0).documentation().emittedEvents().get(0).eventType());
+        manager.close();
+    }
+
+    @Test
+    void isolatesEqualPluginIdsByNamespace() {
+        DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("isolated-identities"));
+        manager.register(new PluginArchiveLoader.LoadedPlugin(
+                new PluginMetadata("shared", "alpha", "1.0.0", "alpha.Plugin", List.of()),
+                new RecordingPlugin("shared", List.of(), new ArrayList<>()), List.of()));
+        manager.register(new PluginArchiveLoader.LoadedPlugin(
+                new PluginMetadata("shared", "beta", "1.0.0", "beta.Plugin", List.of()),
+                new RecordingPlugin("shared", List.of(), new ArrayList<>()), List.of()));
+
+        manager.startAll().toCompletableFuture().join();
+
+        assertEquals(PluginState.ACTIVE, manager.state("alpha", "shared"));
+        assertEquals(PluginState.ACTIVE, manager.state("beta", "shared"));
+        assertEquals(2, manager.pluginViews().size());
         manager.close();
     }
 

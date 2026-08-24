@@ -112,9 +112,15 @@ class AppController {
     @Operation(summary = "列出已加载插件", tags = "插件与组件")
     @GetMapping("/plugins") List<KuudraApp.Plugin> plugins() { return app.plugins(); }
     @Operation(summary = "获取插件及其组件", tags = "插件与组件")
-    @GetMapping("/plugins/{pluginId}") KuudraApp.Plugin plugin(@PathVariable("pluginId") String pluginId) { return app.plugin(pluginId).orElseThrow(() -> notFound("Plugin", pluginId)); }
+    @GetMapping("/plugins/{namespace}/{pluginId}") KuudraApp.Plugin plugin(
+            @PathVariable("namespace") String namespace, @PathVariable("pluginId") String pluginId) {
+        return app.plugin(namespace, pluginId).orElseThrow(() -> notFound("Plugin", namespace + "/" + pluginId));
+    }
     @Operation(summary = "列出插件组件", tags = "插件与组件")
-    @GetMapping("/plugins/{pluginId}/components") List<KuudraApp.Component> pluginComponents(@PathVariable("pluginId") String pluginId) { return call(() -> app.pluginComponents(pluginId), "Plugin", pluginId); }
+    @GetMapping("/plugins/{namespace}/{pluginId}/components") List<KuudraApp.Component> pluginComponents(
+            @PathVariable("namespace") String namespace, @PathVariable("pluginId") String pluginId) {
+        return call(() -> app.pluginComponents(namespace, pluginId), "Plugin", namespace + "/" + pluginId);
+    }
     @Operation(summary = "列出全部插件组件", tags = "插件与组件")
     @GetMapping("/components") List<KuudraApp.Component> components() { return app.components(); }
     @Operation(summary = "获取组件结构化文档", tags = "插件与组件")

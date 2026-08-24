@@ -21,7 +21,9 @@ global-context: {}
 
 `max-event-hops` 是单个事件谱系允许的最大路由跳数，用于阻断跨 Egress 或图内循环。`session-coordinator` 为所有 Ingress 提供默认调度参数；Component `options` 中的同名参数只覆盖该 Ingress，未声明的字段继续继承根配置。
 
-App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 ID、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase。
+App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 `namespace/pluginId` 身份、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase；一个文件可使用 `---` 声明多个资源。
+
+`state/` 目前仅作为未来 SQLite StateStore 的预留目录，启动时会创建但不会读写。当前 `desiredState` 只在启动装配时应用一次，不存在后台持续调谐或状态持久化。
 
 ## 具体组件资源与 Flow
 

@@ -47,7 +47,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
   plugins/
   manifests/
   logs/
-  state/
+  state/                     # 预留给未来 SQLite StateStore，当前未使用
 ```
 
 所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`，Flow 只能导入同 namespace 资源。

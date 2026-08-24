@@ -15,7 +15,7 @@
 
 插件组件可通过 `@ComponentDoc` 声明用途、配置示例和生命周期阶段，并通过一个或多个 `@EventEmission` 描述可能输出的事件类型、输出阶段与数据示例。归档扫描时，这些信息会和组件定义一起进入注册表，而不是从 README 文本中临时解析。
 
-插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。组件是否真正具有生命周期还会根据其接口实现自动识别。
+插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{namespace}/{pluginId}`、`/api/v1/app/plugins/{namespace}/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。插件始终以 `namespace/pluginId` 隔离，同 ID、不同 namespace 的插件可以同时加载。组件是否真正具有生命周期还会根据其接口实现自动识别。
 
 插件代码不直接依赖 Logback。`PluginContext.logger()` 和 `PluginComponentContext.logger()` 返回绑定 namespace 与插件 ID 的 `PluginLogger`；日志先作为 `plugin.log` 系统事件进入 App 总线，再由 `kuudra-logging` 按内核日志配置输出。
 

@@ -140,6 +140,28 @@ class PluginArchiveLoaderTest {
         }
     }
 
+    @Test
+    void loadsEqualPluginIdsFromDifferentNamespaces() throws Exception {
+        Path alphaClasses = compile("alpha-shared", Map.of(
+                "alpha.SharedPlugin", pluginSource("alpha", "SharedPlugin", "shared")), List.of());
+        Path betaClasses = compile("beta-shared", Map.of(
+                "beta.SharedPlugin", pluginSource("beta", "SharedPlugin", "shared")), List.of());
+        Path alpha = jar("alpha-shared.jar", alphaClasses,
+                metadata("shared", "alpha.SharedPlugin", "alpha", "1.0.0", List.of()), Map.of());
+        Path beta = jar("beta-shared.jar", betaClasses,
+                metadata("shared", "beta.SharedPlugin", "beta", "1.0.0", List.of()), Map.of());
+
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
+                List.of(alpha, beta), PluginArchiveLoaderTest.class.getClassLoader());
+        try {
+            assertEquals(java.util.Set.of("alpha/shared", "beta/shared"), loaded.stream()
+                    .map(item -> item.plugin().metadata().namespace() + "/" + item.plugin().metadata().id())
+                    .collect(java.util.stream.Collectors.toSet()));
+        } finally {
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) archive.close();
+        }
+    }
+
     private Path compile(String name, Map<String, String> sources, List<Path> dependencies) throws IOException {
         Path sourceRoot = Files.createDirectories(directory.resolve(name + "-src"));
         Path classes = Files.createDirectories(directory.resolve(name + "-classes"));

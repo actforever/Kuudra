@@ -28,15 +28,16 @@ public final class PluginArchiveLoader {
         Objects.requireNonNull(parent, "parent");
         LinkedHashMap<String, PluginMetadata> provided = new LinkedHashMap<>();
         for (PluginMetadata metadata : providedPlugins) {
-            if (provided.putIfAbsent(metadata.id(), metadata) != null) throw new IOException("Duplicate provided plugin id: " + metadata.id());
+            if (provided.putIfAbsent(identity(metadata), metadata) != null) throw new IOException("Duplicate provided plugin identity: " + identity(metadata));
         }
         LinkedHashMap<String, ArchiveDefinition> definitions = new LinkedHashMap<>();
         for (Path archive : archives) {
             Path normalized = normalizedArchive(archive);
             PluginMetadata metadata = readMetadata(normalized);
-            if (provided.containsKey(metadata.id())) throw new IOException("Plugin id conflicts with provided plugin: " + metadata.id());
-            if (definitions.putIfAbsent(metadata.id(), new ArchiveDefinition(normalized, metadata)) != null) {
-                throw new IOException("Duplicate plugin id in archives: " + metadata.id());
+            String identity = identity(metadata);
+            if (provided.containsKey(identity)) throw new IOException("Plugin identity conflicts with provided plugin: " + identity);
+            if (definitions.putIfAbsent(identity, new ArchiveDefinition(normalized, metadata)) != null) {
+                throw new IOException("Duplicate plugin identity in archives: " + identity);
             }
         }
         validateDependencies(definitions, provided);
@@ -60,8 +61,8 @@ public final class PluginArchiveLoader {
         visiting.add(id);
         List<DependencyPluginClassLoader> dependencies = new ArrayList<>();
         for (PluginDependency dependency : definition.metadata.dependencies()) {
-            if (definitions.containsKey(dependency.pluginId()))
-                dependencies.add((DependencyPluginClassLoader) load(dependency.pluginId(), definitions, loaded, visiting, parent).classLoader());
+            if (definitions.containsKey(dependency.identity()))
+                dependencies.add((DependencyPluginClassLoader) load(dependency.identity(), definitions, loaded, visiting, parent).classLoader());
         }
         visiting.remove(visiting.size() - 1);
         DependencyPluginClassLoader classLoader = new DependencyPluginClassLoader(definition.archive.toUri().toURL(), parent, dependencies);
@@ -90,8 +91,8 @@ public final class PluginArchiveLoader {
     }
     private static void validateDependencies(Map<String, ArchiveDefinition> definitions, Map<String, PluginMetadata> provided) throws IOException {
         for (ArchiveDefinition owner : definitions.values()) for (PluginDependency dependency : owner.metadata.dependencies()) {
-            ArchiveDefinition target = definitions.get(dependency.pluginId());
-            PluginMetadata targetMetadata = target == null ? provided.get(dependency.pluginId()) : target.metadata;
+            ArchiveDefinition target = definitions.get(dependency.identity());
+            PluginMetadata targetMetadata = target == null ? provided.get(dependency.identity()) : target.metadata;
             if (targetMetadata == null) {
                 if (dependency.mandatory()) throw new IOException("Mandatory plugin dependency is missing: "
                         + owner.metadata.namespace() + "/" + owner.metadata.id() + " -> " + dependency.identity());
@@ -103,6 +104,7 @@ public final class PluginArchiveLoader {
                     + dependency.identity() + " requires " + dependency.versionRange() + " but found " + targetMetadata.version());
         }
     }
+    private static String identity(PluginMetadata metadata) { return metadata.namespace() + "/" + metadata.id(); }
     private static PluginMetadata readMetadata(Path archive) throws IOException {
         try (JarFile jar = new JarFile(archive.toFile())) { return PluginMetadataToml.read(jar.getInputStream(jar.getJarEntry(PluginMetadataToml.PATH))); }
         catch (NullPointerException missing) { throw new IOException("Missing " + PluginMetadataToml.PATH + " in " + archive, missing); }

@@ -186,13 +186,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
     public synchronized Map<String, Object> globalContext() { return globalContext; }
     public List<Plugin> plugins() { return requirePlugins().pluginViews().stream().map(KuudraApp::plugin).toList(); }
-    public Optional<Plugin> plugin(String pluginId) {
-        try { return Optional.of(plugin(requirePlugins().pluginView(pluginId))); }
+    public Optional<Plugin> plugin(String namespace, String pluginId) {
+        try { return Optional.of(plugin(requirePlugins().pluginView(namespace, pluginId))); }
         catch (IllegalArgumentException missing) { return Optional.empty(); }
     }
     public List<Component> components() { return requirePlugins().componentViews().stream().map(KuudraApp::component).toList(); }
-    public List<Component> pluginComponents(String pluginId) {
-        return plugin(pluginId).orElseThrow(() -> new IllegalArgumentException("Unknown plugin: " + pluginId)).components();
+    public List<Component> pluginComponents(String namespace, String pluginId) {
+        return plugin(namespace, pluginId).orElseThrow(() -> new IllegalArgumentException(
+                "Unknown plugin: " + namespace + "/" + pluginId)).components();
     }
     public Optional<Component> pluginComponent(String reference) {
         try { return Optional.of(component(requirePlugins().componentView(reference))); }
@@ -274,7 +275,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     public synchronized void loadPlugin(Path archive) throws IOException {
         events.publish(SystemEvent.of("plugin.archive.loading", Map.of("archive", archive.toAbsolutePath().normalize().toString())));
-        PluginArchiveLoader.LoadedArchive loaded = new PluginArchiveLoader().load(archive, KuudraApp.class.getClassLoader());
+        PluginArchiveLoader.LoadedArchive loaded = new PluginArchiveLoader().loadAll(List.of(archive),
+                KuudraApp.class.getClassLoader(), List.of(DefaultPluginBundle.metadata())).get(0);
         try {
             requirePlugins().register(loaded.plugin()); archives.add(loaded);
             events.publish(SystemEvent.of("plugin.archive.loaded", Map.of("archive", archive.toAbsolutePath().normalize().toString(), "pluginId", loaded.plugin().metadata().id())));
@@ -370,8 +372,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private void applyManifests(KuudraManifest.Resources resources) {
         if (resources.isEmpty()) return;
+        validateDesiredStates(resources);
         validateManifestPolicies(resources);
         for (KuudraManifest.Component component : resources.components().values()) {
+            if (!component.type().equals("event-source") && component.desiredState().equalsIgnoreCase("inactive")) continue;
             Object instance = switch (component.type()) {
                 case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class, component.options());
                 case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class, component.options());
@@ -387,7 +391,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         for (KuudraManifest.Flow flow : resources.flows().values()) {
             registerFlow(compile(flow, resources.components(), sourceTargets));
             switch (flow.desiredState().toLowerCase(java.util.Locale.ROOT)) {
-                case "active", "running" -> { }
+                case "active" -> { }
                 case "paused" -> pauseFlow(flow.id().qualifiedName());
                 case "stopped" -> stopFlow(flow.id().qualifiedName());
                 default -> throw new IllegalArgumentException("Unsupported Flow desiredState: " + flow.desiredState());
@@ -396,12 +400,35 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         for (Map.Entry<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> entry : sourceTargets.entrySet()) {
             KuudraManifest.Component component = resources.components().get(entry.getKey());
             String desired = component.desiredState().toLowerCase(java.util.Locale.ROOT);
-            if (desired.equals("stopped") || desired.equals("disabled")) continue;
-            if (!desired.equals("running") && !desired.equals("active")) throw new IllegalArgumentException("Unsupported EventSource desiredState: " + component.desiredState());
+            if (desired.equals("stopped")) continue;
             EventSource source = (EventSource) manifestInstances.get(entry.getKey());
             manifestSourceRegistrations.put(entry.getKey(), requireRuntime().registerSource(entry.getValue(), source).toCompletableFuture().join());
         }
         manifestResources = resources;
+    }
+
+    private static void validateDesiredStates(KuudraManifest.Resources resources) {
+        for (KuudraManifest.Component component : resources.components().values()) {
+            java.util.Set<String> supported = component.type().equals("event-source")
+                    ? java.util.Set.of("running", "stopped") : java.util.Set.of("active", "inactive");
+            if (!supported.contains(component.desiredState().toLowerCase(java.util.Locale.ROOT))) {
+                throw new IllegalArgumentException("Unsupported " + component.id().kind() + " desiredState: "
+                        + component.desiredState() + "; expected " + supported);
+            }
+        }
+        for (KuudraManifest.Flow flow : resources.flows().values()) {
+            String state = flow.desiredState().toLowerCase(java.util.Locale.ROOT);
+            if (!java.util.Set.of("active", "paused", "stopped").contains(state)) {
+                throw new IllegalArgumentException("Unsupported Flow desiredState: " + flow.desiredState());
+            }
+            for (KuudraManifest.ResourceReference reference : flow.imports().values()) {
+                KuudraManifest.Component component = resources.components().get(reference.id());
+                if (component != null && !component.type().equals("event-source")
+                        && component.desiredState().equalsIgnoreCase("inactive")) {
+                    throw new IllegalArgumentException("Flow cannot import inactive resource: " + component.id());
+                }
+            }
+        }
     }
 
     private KuudraFlow compile(KuudraManifest.Flow definition,

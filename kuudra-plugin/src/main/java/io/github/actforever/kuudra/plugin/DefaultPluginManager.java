@@ -58,7 +58,8 @@ public final class DefaultPluginManager implements AutoCloseable {
     public synchronized void register(KuudraPlugin plugin) {
         List<PluginDependency> declared = plugin.descriptor().requires().stream()
                 .map(id -> new PluginDependency(id, id, true, "[0,)" )).toList();
-        register(plugin, plugin.descriptor().requires(), declared, List.of(), plugin.id(), "unspecified");
+        register(plugin, declared.stream().map(PluginDependency::identity).toList(), declared,
+                List.of(), plugin.id(), "unspecified");
     }
 
     /** Register a plugin loaded from metadata.toml; metadata dependencies are authoritative. */
@@ -66,8 +67,8 @@ public final class DefaultPluginManager implements AutoCloseable {
         Objects.requireNonNull(loaded, "loaded");
         if (!loaded.instance().id().equals(loaded.metadata().id())) throw new IllegalArgumentException("Plugin id and metadata id must match");
         List<String> ordering = loaded.metadata().dependencies().stream()
-                .filter(dependency -> dependency.mandatory() || plugins.containsKey(dependency.pluginId()))
-                .map(PluginDependency::pluginId).toList();
+                .filter(dependency -> dependency.mandatory() || plugins.containsKey(dependency.identity()))
+                .map(PluginDependency::identity).toList();
         register(loaded.instance(), ordering, loaded.metadata().dependencies(), loaded.components(), loaded.metadata().namespace(), loaded.metadata().version());
     }
 
@@ -78,24 +79,25 @@ public final class DefaultPluginManager implements AutoCloseable {
         if (!descriptor.id().equals(plugin.id())) {
             throw new IllegalArgumentException("Plugin id and descriptor id must match");
         }
-        if (plugins.containsKey(plugin.id())) {
-            throw new IllegalArgumentException("Plugin already registered: " + plugin.id());
+        String identity = identity(namespace, plugin.id());
+        if (plugins.containsKey(identity)) {
+            throw new IllegalArgumentException("Plugin already registered: " + identity);
         }
-        plugins.put(plugin.id(), plugin);
-        namespaces.put(plugin.id(), namespace);
-        versions.put(plugin.id(), version);
-        dependencies.put(plugin.id(), List.copyOf(required));
-        dependencyMetadata.put(plugin.id(), List.copyOf(declaredDependencies));
-        states.put(plugin.id(), PluginState.REGISTERED);
-        resources.put(plugin.id(), new ManagedResources());
+        plugins.put(identity, plugin);
+        namespaces.put(identity, namespace);
+        versions.put(identity, version);
+        dependencies.put(identity, List.copyOf(required));
+        dependencyMetadata.put(identity, List.copyOf(declaredDependencies));
+        states.put(identity, PluginState.REGISTERED);
+        resources.put(identity, new ManagedResources());
         components.forEach(componentRegistry::register);
         event("plugin.registered", Map.of("pluginId", plugin.id(), "namespace", namespace, "dependencies", List.copyOf(required), "components", components.size()));
     }
 
-    public synchronized PluginState state(String pluginId) {
-        PluginState state = states.get(pluginId);
+    public synchronized PluginState state(String namespace, String pluginId) {
+        PluginState state = states.get(identity(namespace, pluginId));
         if (state == null) {
-            throw new IllegalArgumentException("Unknown plugin: " + pluginId);
+            throw new IllegalArgumentException("Unknown plugin: " + identity(namespace, pluginId));
         }
         return state;
     }
@@ -106,12 +108,17 @@ public final class DefaultPluginManager implements AutoCloseable {
     public synchronized List<PluginView> pluginViews() {
         return plugins.keySet().stream().map(this::pluginView).toList();
     }
-    public synchronized PluginView pluginView(String pluginId) {
-        if (!plugins.containsKey(pluginId)) throw new IllegalArgumentException("Unknown plugin: " + pluginId);
+    public synchronized PluginView pluginView(String namespace, String pluginId) {
+        return pluginView(identity(namespace, pluginId));
+    }
+    private synchronized PluginView pluginView(String identity) {
+        if (!plugins.containsKey(identity)) throw new IllegalArgumentException("Unknown plugin: " + identity);
+        String pluginId = plugins.get(identity).id();
         List<ComponentView> components = componentRegistry.definitions().values().stream()
-                .filter(component -> component.pluginId().equals(pluginId)).map(DefaultPluginManager::view).toList();
-        return new PluginView(pluginId, namespaces.get(pluginId), versions.get(pluginId), states.get(pluginId),
-                dependencyMetadata.get(pluginId), components);
+                .filter(component -> component.pluginId().equals(pluginId) && component.namespace().equals(namespaces.get(identity)))
+                .map(DefaultPluginManager::view).toList();
+        return new PluginView(pluginId, namespaces.get(identity), versions.get(identity), states.get(identity),
+                dependencyMetadata.get(identity), components);
     }
     public synchronized List<ComponentView> componentViews() {
         return componentRegistry.definitions().values().stream().map(DefaultPluginManager::view).toList();
@@ -143,10 +150,11 @@ public final class DefaultPluginManager implements AutoCloseable {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown component: " + reference));
         final PluginContext context;
         synchronized (this) {
-            if (states.get(definition.pluginId()) != PluginState.ACTIVE) {
+            String identity = identity(definition.namespace(), definition.pluginId());
+            if (states.get(identity) != PluginState.ACTIVE) {
                 throw new IllegalStateException("Plugin is not active for component " + reference);
             }
-            context = contexts.get(definition.pluginId());
+            context = contexts.get(identity);
         }
         T instance = componentRegistry.create(reference, expectedType);
         event("plugin.component.created", Map.of("pluginId", definition.pluginId(), "component", reference));
@@ -202,7 +210,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             if (states.get(pluginId) == PluginState.ACTIVE) {
                 return CompletableFuture.completedFuture(null);
             }
-            home = pluginsHome.resolve(namespaces.get(pluginId)).resolve(pluginId).normalize();
+            home = pluginsHome.resolve(namespaces.get(pluginId)).resolve(plugin.id()).normalize();
             if (!home.startsWith(pluginsHome)) {
                 return CompletableFuture.failedFuture(new IllegalArgumentException("Invalid plugin id path: " + pluginId));
             }
@@ -214,31 +222,34 @@ public final class DefaultPluginManager implements AutoCloseable {
             return CompletableFuture.failedFuture(exception);
         }
         String namespace = namespaces.get(pluginId);
-        PluginContext context = new PluginContext(pluginId, namespace, home, resources.get(pluginId), runtimeServices,
-                pluginLogger(pluginId, namespace));
-        event("plugin.initializing", Map.of("pluginId", pluginId, "home", home.toString()));
+        String declaredId = plugin.id();
+        PluginContext context = new PluginContext(declaredId, namespace, home, resources.get(pluginId), runtimeServices,
+                pluginLogger(declaredId, namespace));
+        event("plugin.initializing", Map.of("pluginId", declaredId, "namespace", namespace, "home", home.toString()));
         return invoke(plugin, current -> current.initialize(context))
                 .thenRun(() -> { synchronized (this) { contexts.put(pluginId, context); } })
-                .thenRun(() -> { mark(pluginId, PluginState.INITIALIZED); event("plugin.initialized", Map.of("pluginId", pluginId)); })
-                .thenRun(() -> event("plugin.starting", Map.of("pluginId", pluginId)))
+                .thenRun(() -> { mark(pluginId, PluginState.INITIALIZED); event("plugin.initialized", Map.of("pluginId", declaredId, "namespace", namespace)); })
+                .thenRun(() -> event("plugin.starting", Map.of("pluginId", declaredId, "namespace", namespace)))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
-                .thenRun(() -> { mark(pluginId, PluginState.ACTIVE); event("plugin.active", Map.of("pluginId", pluginId)); })
+                .thenRun(() -> { mark(pluginId, PluginState.ACTIVE); event("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace)); })
                 .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }
 
     private CompletionStage<Void> stopAndDestroy(String pluginId) {
         final KuudraPlugin plugin;
+        final String namespace;
         synchronized (this) {
             plugin = plugins.get(pluginId);
+            namespace = namespaces.get(pluginId);
             if (states.get(pluginId) != PluginState.ACTIVE) {
                 return CompletableFuture.completedFuture(null);
             }
         }
-        event("plugin.stopping", Map.of("pluginId", pluginId));
+        event("plugin.stopping", Map.of("pluginId", plugin.id(), "namespace", namespace));
         return invoke(plugin, KuudraPlugin::stop)
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::destroy))
                 .thenRun(() -> closeResources(pluginId))
-                .thenRun(() -> { mark(pluginId, PluginState.STOPPED); event("plugin.stopped", Map.of("pluginId", pluginId)); })
+                .thenRun(() -> { mark(pluginId, PluginState.STOPPED); event("plugin.stopped", Map.of("pluginId", plugin.id(), "namespace", namespace)); })
                 .exceptionallyCompose(error -> failed(pluginId, error));
     }
 
@@ -263,7 +274,7 @@ public final class DefaultPluginManager implements AutoCloseable {
 
     private CompletionStage<Void> failed(String pluginId, Throwable error) {
         markFailed(pluginId);
-        event("plugin.failed", Map.of("pluginId", pluginId, "error", error.toString()));
+        event("plugin.failed", pluginEvent(pluginId, Map.of("error", error.toString())));
         return CompletableFuture.failedFuture(error);
     }
 
@@ -273,7 +284,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             try { closeResources(pluginId); }
             catch (RuntimeException resourceError) { failure.addSuppressed(resourceError); }
             markFailed(pluginId);
-            event("plugin.failed", Map.of("pluginId", pluginId, "error", failure.toString()));
+            event("plugin.failed", pluginEvent(pluginId, Map.of("error", failure.toString())));
             return null;
         }).thenCompose(ignored -> CompletableFuture.failedFuture(failure));
     }
@@ -318,6 +329,8 @@ public final class DefaultPluginManager implements AutoCloseable {
         order.add(pluginId);
     }
 
+    private static String identity(String namespace, String pluginId) { return namespace + "/" + pluginId; }
+
     @Override
     public void close() {
         stopAll().toCompletableFuture().join();
@@ -344,6 +357,12 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
 
     private void event(String type, Map<String, Object> data) { events.publish(SystemEvent.of(type, data)); }
+    private synchronized Map<String, Object> pluginEvent(String identity, Map<String, Object> details) {
+        Map<String, Object> data = new LinkedHashMap<>(details);
+        data.put("pluginId", plugins.get(identity).id());
+        data.put("namespace", namespaces.get(identity));
+        return Map.copyOf(data);
+    }
     private PluginLogger pluginLogger(String pluginId, String namespace) {
         return (level, message, fields, error) -> {
             if (message == null || message.isBlank()) throw new IllegalArgumentException("plugin log message must not be blank");

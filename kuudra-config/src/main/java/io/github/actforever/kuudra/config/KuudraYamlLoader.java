@@ -85,37 +85,51 @@ public final class KuudraYamlLoader {
         if (!Files.isDirectory(directory)) throw new IOException("Manifest directory is not a directory: " + directory);
         try (Stream<Path> files = Files.walk(directory)) {
             for (Path file : files.filter(Files::isRegularFile).filter(KuudraYamlLoader::isYaml).sorted().toList()) {
-                Map<String, Object> root = mapping(read(file), file);
-                String apiVersion = string(required(root, "apiVersion"), file + ".apiVersion");
-                if (!KuudraManifest.API_VERSION.equals(apiVersion)) throw new IOException("Unsupported apiVersion at " + file + ": " + apiVersion);
-                String kind = string(required(root, "kind"), file + ".kind");
-                Map<String, Object> metadataMap = mapping(required(root, "metadata"), file + ".metadata");
-                String namespace = string(metadataMap.getOrDefault("namespace", "default"), file + ".metadata.namespace");
-                String name = string(required(metadataMap, "name"), file + ".metadata.name");
+                int document = 0;
+                for (Object value : readAll(file)) {
+                    document++;
+                    if (value == null) continue;
+                    loadManifest(value, file + "#document-" + document, components, flows);
+                }
+            }
+        }
+        return new KuudraManifest.Resources(components, flows);
+    }
+
+    private static void loadManifest(Object value, String location,
+                                     Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
+                                     Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows) throws IOException {
+                Map<String, Object> root = mapping(value, location);
+                String apiVersion = string(required(root, "apiVersion"), location + ".apiVersion");
+                if (!KuudraManifest.API_VERSION.equals(apiVersion)) throw new IOException("Unsupported apiVersion at " + location + ": " + apiVersion);
+                String kind = string(required(root, "kind"), location + ".kind");
+                Map<String, Object> metadataMap = mapping(required(root, "metadata"), location + ".metadata");
+                String namespace = string(metadataMap.getOrDefault("namespace", "default"), location + ".metadata.namespace");
+                String name = string(required(metadataMap, "name"), location + ".metadata.name");
                 KuudraManifest.Metadata metadata;
                 try {
                     metadata = new KuudraManifest.Metadata(namespace, name,
                             stringMapping(metadataMap, "labels"), stringMapping(metadataMap, "annotations"));
                 } catch (IllegalArgumentException invalid) {
-                    throw new IOException("Invalid manifest metadata at " + file + ": " + invalid.getMessage(), invalid);
+                    throw new IOException("Invalid manifest metadata at " + location + ": " + invalid.getMessage(), invalid);
                 }
-                Map<String, Object> spec = mapping(required(root, "spec"), file + ".spec");
+                Map<String, Object> spec = mapping(required(root, "spec"), location + ".spec");
                 try {
                     if (KuudraManifest.COMPONENT_KINDS.containsKey(kind)) {
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
                             String type = KuudraManifest.COMPONENT_KINDS.get(kind);
                             if (spec.containsKey("type")) throw new IllegalArgumentException("spec.type has been removed; use kind: " + kind);
                             KuudraManifest.Component component = new KuudraManifest.Component(id, metadata,
-                                    type, string(required(spec, "component"), file + ".spec.component"),
-                                    string(spec.getOrDefault("desiredState", defaultComponentState(type)), file + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
+                                    type, string(required(spec, "component"), location + ".spec.component"),
+                                    string(spec.getOrDefault("desiredState", defaultComponentState(type)), location + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
                                     optionalMapping(spec, "options"));
                             if (components.putIfAbsent(id, component) != null) throw new IOException("Duplicate resource identity: " + id);
                     } else switch (kind) {
                         case "Flow" -> {
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
                             Map<String, KuudraManifest.ResourceReference> imports = new LinkedHashMap<>();
-                            for (Map.Entry<String, Object> entry : mapping(required(spec, "imports"), file + ".spec.imports").entrySet()) {
-                                Map<String, Object> reference = mapping(entry.getValue(), file + ".spec.imports." + entry.getKey());
+                            for (Map.Entry<String, Object> entry : mapping(required(spec, "imports"), location + ".spec.imports").entrySet()) {
+                                Map<String, Object> reference = mapping(entry.getValue(), location + ".spec.imports." + entry.getKey());
                                 imports.put(entry.getKey(), new KuudraManifest.ResourceReference(
                                         string(required(reference, "kind"), "reference.kind"),
                                         string(reference.getOrDefault("namespace", namespace), "reference.namespace"),
@@ -123,21 +137,18 @@ public final class KuudraYamlLoader {
                             }
                             List<KuudraConfig.EdgeConfig> edges = new ArrayList<>();
                             for (Object item : list(required(spec, "edges"))) {
-                                Map<String, Object> edge = mapping(item, file + ".spec.edges");
+                                Map<String, Object> edge = mapping(item, location + ".spec.edges");
                                 edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to")));
                             }
                             KuudraManifest.Flow flow = new KuudraManifest.Flow(id, metadata,
-                                    string(spec.getOrDefault("desiredState", "active"), file + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT), imports, edges);
+                                    string(spec.getOrDefault("desiredState", "active"), location + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT), imports, edges);
                             if (flows.putIfAbsent(id, flow) != null) throw new IOException("Duplicate resource identity: " + id);
                         }
-                        default -> throw new IOException("Unsupported manifest kind at " + file + ": " + kind);
+                        default -> throw new IOException("Unsupported manifest kind at " + location + ": " + kind);
                     }
                 } catch (IllegalArgumentException invalid) {
-                    throw new IOException("Invalid manifest " + file + ": " + invalid.getMessage(), invalid);
+                    throw new IOException("Invalid manifest " + location + ": " + invalid.getMessage(), invalid);
                 }
-            }
-        }
-        return new KuudraManifest.Resources(components, flows);
     }
 
     private static String defaultComponentState(Object type) { return "event-source".equals(type) ? "running" : "active"; }
@@ -150,6 +161,13 @@ public final class KuudraYamlLoader {
     }
 
     private static Object read(Path file) throws IOException { try (Reader reader = Files.newBufferedReader(file)) { return new Yaml().load(reader); } }
+    private static Iterable<Object> readAll(Path file) throws IOException {
+        try (Reader reader = Files.newBufferedReader(file)) {
+            List<Object> documents = new ArrayList<>();
+            new Yaml().loadAll(reader).forEach(document -> { if (document != null) documents.add(document); });
+            return List.copyOf(documents);
+        }
+    }
     private static void mergeMappings(Map<String, Object> target, Map<String, Object> source) throws IOException {
         for (Map.Entry<String, Object> entry : source.entrySet()) {
             Object existing = target.get(entry.getKey());

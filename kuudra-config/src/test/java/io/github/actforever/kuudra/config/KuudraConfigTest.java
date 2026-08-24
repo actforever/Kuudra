@@ -116,6 +116,37 @@ class KuudraConfigTest {
     }
 
     @Test
+    void loadsMultipleResourcesFromOneYamlDocumentStream() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Files.writeString(manifests.resolve("pipeline.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: demo, name: ingress}
+                spec: {component: kuudra-official/default}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: demo, name: egress}
+                spec: {component: kuudra-official/default}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: demo, name: pipeline}
+                spec:
+                  imports:
+                    ingress: {kind: Ingress, name: ingress}
+                    egress: {kind: Egress, name: egress}
+                  edges: [{from: ingress, to: egress}]
+                """);
+
+        KuudraManifest.Resources resources = KuudraYamlLoader.load(directory.resolve("config.yaml")).manifests();
+
+        assertEquals(2, resources.components().size());
+        assertEquals(1, resources.flows().size());
+    }
+
+    @Test
     void rejectsLegacyComponentKindAndCrossNamespaceImports() throws Exception {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
