@@ -5,9 +5,9 @@
 App 生命周期独立于 Flow 生命周期：`stop` 关闭 Runtime 与插件资源，但 Web 进程仍可接收 `start` 或 `restart`，重新创建 App 内核。
 
 ```text
-NEW → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
-                  └──────→ STOPPING → STOPPED
-                  └──────────────────────────────→ FAILED
+CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
+                     └───────────────→ STOPPING → STOPPED
+                     └──────────────────────────────→ FAILED
 ```
 
 | 方法 | 路径 | 含义 |
@@ -40,6 +40,8 @@ NEW → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 | `GET` | `/api/v1/app/events` | SSE 系统事件流。 |
 
 暂停由 App 编排：先把状态切换为 `PAUSING`，再要求 Runtime 关闭执行闸门并等待所有已经进入节点执行的工作抵达安全点；随后 Runtime 调用实现了 `PausableLifecycle` 的组件、暂停仍活跃的 Session，并生成一致检查点。只有这些步骤全部完成后 App 才进入 `PAUSED`，所以 `POST /pause` 成功返回本身就是“内核已经静止”的确认。普通 `Lifecycle.stop()` 不参与暂停，避免销毁实例或丢失插件队列；未实现可暂停生命周期的组件仍被 Runtime 闸门隔离，并在资源状态中显示为 `QUIESCED`。恢复按相反方向进行，不重建组件、Session 或上下文。
+
+`stop` 和 `restart` 在 `PAUSING`、`PAUSED` 期间仍然有效。stop 会把状态抢占为 `STOPPING`，关闭 Runtime、插件、Session、队列、上下文和检查点；如果 Runtime 仍在等待暂停安全点，关闭信号会唤醒并终止该等待。restart 等待上述破坏性停止完成后，从 `STOPPED` 创建一套全新的内核资源。也就是说 pause/resume 是非破坏性运行态子流程，而 stop/restart 始终采用“全部丢弃再重建”的语义。
 
 `CancellationToken.isPauseRequested()` 和 `awaitResumed()` 同时观察内核级与当前 Session 级暂停。长时间运行的 Handler 应在合适的协作点检查它们；Runtime 不会强杀插件线程。内核检查点是进程内一致观测数据，不是崩溃恢复文件，也不会写入 SQLite StateStore。
 

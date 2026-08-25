@@ -76,7 +76,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             if (paused) return checkpoint();
             runtimeResumeSignal = new CompletableFuture<>();
             paused = true;
-            while (activeExecutions > 0) {
+            while (activeExecutions > 0 && !closed.get()) {
                 try { monitor.wait(); }
                 catch (InterruptedException interrupted) {
                     paused = false;
@@ -86,6 +86,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                     throw new KuudraException("Interrupted while pausing Runtime", interrupted);
                 }
             }
+            if (closed.get()) throw new KuudraException("Runtime was closed while pausing");
         }
         try {
             pauseComponents();

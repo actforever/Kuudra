@@ -5,7 +5,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import io.github.actforever.kuudra.api.SystemEvent;
+
+import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -15,6 +24,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class KuudraWebApplicationTest {
     @Autowired
     private MockMvc mvc;
+
+    @Test
+    void silentlyUnsubscribesWhenAnSseClientDisconnects() {
+        AtomicInteger closes = new AtomicInteger();
+        SseEmitter disconnected = new SseEmitter() {
+            @Override public void send(SseEventBuilder builder) throws IOException { throw new IOException("client disconnected"); }
+        };
+        AppController.EventStreamSubscription stream = new AppController.EventStreamSubscription(disconnected);
+        stream.attach(closes::incrementAndGet);
+        stream.send(SystemEvent.of("app.paused", Map.of()));
+        stream.send(SystemEvent.of("app.resumed", Map.of()));
+        assertTrue(stream.closed());
+        assertEquals(1, closes.get());
+    }
 
     @Test
     void exposesAppStatusOverRest() throws Exception {

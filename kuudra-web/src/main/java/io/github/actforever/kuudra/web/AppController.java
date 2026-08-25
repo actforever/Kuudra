@@ -126,11 +126,34 @@ class AppController {
     @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events() {
         SseEmitter emitter = new SseEmitter(0L);
-        AutoCloseable subscription = app.systemEvents().subscribe(event -> send(emitter, event));
-        Runnable cleanup = () -> { try { subscription.close(); } catch (Exception ignored) { } };
-        emitter.onCompletion(cleanup); emitter.onTimeout(cleanup); emitter.onError(error -> cleanup.run()); return emitter;
+        EventStreamSubscription stream = new EventStreamSubscription(emitter);
+        stream.attach(app.systemEvents().subscribe(stream::send));
+        emitter.onCompletion(stream::close); emitter.onTimeout(stream::close); emitter.onError(error -> stream.close());
+        return emitter;
     }
-    private static void send(SseEmitter emitter, SystemEvent event) { try { emitter.send(SseEmitter.event().id(event.id().toString()).name(event.type()).data(event)); } catch (IOException failure) { emitter.completeWithError(failure); } }
+    static final class EventStreamSubscription {
+        private final SseEmitter emitter;
+        private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicReference<AutoCloseable> subscription = new java.util.concurrent.atomic.AtomicReference<>();
+        EventStreamSubscription(SseEmitter emitter) { this.emitter = emitter; }
+        void attach(AutoCloseable value) {
+            if (!subscription.compareAndSet(null, value)) { closeQuietly(value); return; }
+            if (closed.get()) closeQuietly(subscription.getAndSet(null));
+        }
+        void send(SystemEvent event) {
+            if (closed.get()) return;
+            try { emitter.send(SseEmitter.event().id(event.id().toString()).name(event.type()).data(event)); }
+            catch (IOException | IllegalStateException disconnected) { close(); }
+        }
+        void close() {
+            closed.set(true);
+            closeQuietly(subscription.getAndSet(null));
+        }
+        boolean closed() { return closed.get(); }
+        private static void closeQuietly(AutoCloseable value) {
+            if (value != null) try { value.close(); } catch (Exception ignored) { }
+        }
+    }
     private static <T> T call(java.util.concurrent.Callable<T> call, String type, String id) { try { return call.call(); } catch (IllegalArgumentException error) { throw notFound(type, id); } catch (Exception error) { throw new IllegalStateException(error); } }
     private static ResponseStatusException notFound(String type, String id) { return new ResponseStatusException(HttpStatus.NOT_FOUND, type + " not found: " + id); }
 }

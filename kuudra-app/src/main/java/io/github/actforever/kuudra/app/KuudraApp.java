@@ -62,7 +62,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraLogSession logSession;
     private ResourceStateStore stateStore;
     private KernelCheckpoint checkpoint;
-    private AppStatus status = AppStatus.NEW;
+    private AppStatus status = AppStatus.CREATED;
     private String detail = "not started";
 
     public KuudraApp(int queueCapacity, int workerThreads) { this(queueCapacity, workerThreads, null); }
@@ -166,7 +166,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     @Override public synchronized void stop() {
-        if (status == AppStatus.STOPPED || status == AppStatus.NEW) return;
+        if (status == AppStatus.STOPPED || status == AppStatus.CREATED || status == AppStatus.STOPPING) return;
         status = AppStatus.STOPPING; publish("app.stopping");
         try {
             releaseResources();
@@ -197,17 +197,28 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     /** Globally suspends event admission and waits queued work at Runtime safe points. */
-    public synchronized void pause() {
-        if (status == AppStatus.PAUSED) return;
-        if (status != AppStatus.RUNNING || runtime == null) throw new KuudraException("App is not running: " + status);
-        status = AppStatus.PAUSING; detail = "waiting for Runtime safe point"; publish("app.pausing");
+    public void pause() {
+        final KuudraRuntime target;
+        synchronized (this) {
+            if (status == AppStatus.PAUSED || status == AppStatus.PAUSING) return;
+            if (status != AppStatus.RUNNING || runtime == null) throw new KuudraException("App is not running: " + status);
+            target = runtime;
+            status = AppStatus.PAUSING; detail = "waiting for Runtime safe point"; publish("app.pausing");
+        }
         try {
-            RuntimeCheckpoint runtimeCheckpoint = runtime.pause();
-            checkpoint = new KernelCheckpoint(runtimeCheckpoint,
-                    manifestResources.components().values().stream().map(this::componentResource).toList());
-            status = AppStatus.PAUSED; detail = "paused"; publish("app.paused");
+            RuntimeCheckpoint runtimeCheckpoint = target.pause();
+            synchronized (this) {
+                if (status != AppStatus.PAUSING || runtime != target) return;
+                checkpoint = new KernelCheckpoint(runtimeCheckpoint,
+                        manifestResources.components().values().stream().map(this::componentResource).toList());
+                status = AppStatus.PAUSED; detail = "paused"; publish("app.paused");
+            }
         } catch (RuntimeException failure) {
-            status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
+            synchronized (this) {
+                if (status == AppStatus.STOPPING || status == AppStatus.STOPPED || runtime != target) return;
+                status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed");
+            }
+            throw failure;
         }
     }
 

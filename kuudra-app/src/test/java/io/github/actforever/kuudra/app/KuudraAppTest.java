@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,6 +35,39 @@ class KuudraAppTest {
             assertTrue(app.plugins().stream().anyMatch(plugin -> plugin.id().equals("default")));
             app.resume(); assertEquals("RUNNING", app.snapshot().status().name());
             assertTrue(app.checkpoint().isEmpty());
+        }
+    }
+
+    @Test void pausedKernelCanBeStoppedAndRestartedAsAFreshKernel() {
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            app.pause();
+            assertEquals("PAUSED", app.snapshot().status().name());
+            app.restart();
+            assertEquals("RUNNING", app.snapshot().status().name());
+            assertTrue(app.checkpoint().isEmpty());
+        }
+    }
+
+    @Test void stopPreemptsAnInProgressPauseBarrier() throws Exception {
+        CountDownLatch executing = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            app.registerFlow(new KuudraFlow("blocking", Map.of("node", new FlowNode.AdapterNode("node", (event, context) -> {
+                executing.countDown();
+                try { release.await(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                return java.util.List.of();
+            }, EventDomain.RAW)), Map.of()));
+            assertTrue(app.publish("blocking", "node", io.github.actforever.kuudra.api.KuudraEvent.of("blocking", Map.of())));
+            assertTrue(executing.await(1, TimeUnit.SECONDS));
+            CompletableFuture<Void> pausing = CompletableFuture.runAsync(app::pause);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (app.snapshot().status() != io.github.actforever.kuudra.api.AppStatus.PAUSING && System.nanoTime() < deadline) Thread.onSpinWait();
+            assertEquals("PAUSING", app.snapshot().status().name());
+            app.stop();
+            pausing.get(1, TimeUnit.SECONDS);
+            assertEquals("STOPPED", app.snapshot().status().name());
+        } finally {
+            release.countDown();
         }
     }
 

@@ -12,6 +12,8 @@ Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。`kuudra
 
 当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。App API、当前 Web SSE 和未来 WebSocket 等其他观察者可同时订阅同一总线，日志不会反向进入业务 Event 管线。
 
+Web SSE 客户端关闭页面、网络切换或主动断开时，发送端只原子取消该订阅并静默结束，不调用 `completeWithError` 将连接关闭重新包装成 MVC 异常。此类断连不是内核失败，也不应产生 `AsyncRequestNotUsableException` WARN；真正的 App/SystemEvent 生产错误仍按原级别记录。
+
 不把统一 Logger 接口放进 `kuudra-logging` 再让内核模块依赖它，是为了维持依赖方向：结构化事件契约属于 `kuudra-api`，App 负责汇聚，`kuudra-logging` 只是可替换的输出适配器。插件侧的 `PluginLogger` 是便捷门面，它最终仍转换成带插件身份的 `plugin.log` 结构化事件。
 
 插件业务日志同样沿用这条总线。`kuudra-plugin` 向插件暴露绑定 namespace/ID 的 `PluginLogger`，并发布 `plugin.log` 系统事件；`kuudra-logging` 按 TRACE/DEBUG/INFO/WARN/ERROR 级别呈现，并在日志行附加 `[plugin=<namespace>/<plugin-id>]`。插件不需要绑定 Logback、SLF4J 或 Spring Logger。
