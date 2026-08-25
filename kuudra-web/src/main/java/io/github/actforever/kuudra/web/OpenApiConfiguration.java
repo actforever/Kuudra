@@ -33,7 +33,8 @@ class OpenApiConfiguration {
     GroupedOpenApi appLifecycleApi() {
         return GroupedOpenApi.builder().group("app-lifecycle")
                 .pathsToMatch("/api/v1/app", "/api/v1/app/status", "/api/v1/app/start",
-                        "/api/v1/app/stop", "/api/v1/app/restart")
+                        "/api/v1/app/stop", "/api/v1/app/pause", "/api/v1/app/resume",
+                        "/api/v1/app/restart", "/api/v1/app/checkpoint")
                 .build();
     }
 
@@ -58,6 +59,7 @@ class OpenApiConfiguration {
     GroupedOpenApi componentResourceApi() {
         return GroupedOpenApi.builder().group("component-resources")
                 .pathsToMatch("/api/v1/app/resources/components/**", "/api/v1/app/resources/*/*/*",
+                        "/api/v1/app/resources/*/*/*/**",
                         "/api/v1/app/namespaces/*/resources")
                 .build();
     }

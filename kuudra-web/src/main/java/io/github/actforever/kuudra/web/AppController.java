@@ -29,6 +29,10 @@ class AppController {
     @GetMapping AppSnapshot snapshot() { return app.snapshot(); }
     @Operation(summary = "获取内核详细状态", tags = "App 生命周期")
     @GetMapping("/status") KuudraApp.Status status() { return app.status(); }
+    @Operation(summary = "获取暂停安全点生成的内核检查点", tags = "App 生命周期")
+    @GetMapping("/checkpoint") KuudraApp.KernelCheckpoint checkpoint() {
+        return app.checkpoint().orElseThrow(() -> notFound("Kernel checkpoint", "current"));
+    }
     @Operation(summary = "启动 App 内核", tags = "App 生命周期")
     @PostMapping("/start") AppSnapshot start() { app.start(); return app.snapshot(); }
     @Operation(summary = "停止 App 内核", tags = "App 生命周期")
@@ -80,6 +84,12 @@ class AppController {
             @PathVariable("kind") String kind, @PathVariable("namespace") String namespace,
             @PathVariable("name") String name) {
         return app.resource(kind, namespace, name).orElseThrow(() -> notFound("Resource", kind + "/" + namespace + "/" + name));
+    }
+    @Operation(summary = "修改资源期望状态并触发 App 调谐", tags = "Component 资源")
+    @PostMapping("/resources/{kind}/{namespace}/{name}/desired-state/{desiredState}") KuudraApp.ComponentResource desiredState(
+            @PathVariable("kind") String kind, @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name, @PathVariable("desiredState") String desiredState) {
+        return call(() -> app.setDesiredState(kind, namespace, name, desiredState), "Resource", kind + "/" + namespace + "/" + name);
     }
     @Operation(summary = "获取 Session", tags = "Session 管理")
     @GetMapping("/sessions/{sessionId}") KuudraApp.Session session(@PathVariable("sessionId") UUID sessionId) { return app.session(sessionId).orElseThrow(() -> notFound("Session", sessionId.toString())); }

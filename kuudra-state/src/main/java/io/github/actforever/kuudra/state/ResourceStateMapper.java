@@ -46,4 +46,14 @@ interface ResourceStateMapper {
     @Update("UPDATE resources SET observed_generation=generation,phase=#{phase},message=#{message},updated_at=#{updatedAt}")
     void markAllObserved(@Param("phase") String phase, @Param("message") String message,
                          @Param("updatedAt") String updatedAt);
+
+    @Update("UPDATE resources SET observed_generation=generation,phase=#{phase},message=#{message},updated_at=#{updatedAt} WHERE kind=#{kind} AND namespace=#{namespace} AND name=#{name}")
+    void markObserved(@Param("kind") String kind, @Param("namespace") String namespace,
+                      @Param("name") String name, @Param("phase") String phase,
+                      @Param("message") String message, @Param("updatedAt") String updatedAt);
+
+    @Update("UPDATE resources SET phase='FAILED',message=#{message},updated_at=#{updatedAt} WHERE kind=#{kind} AND namespace=#{namespace} AND name=#{name}")
+    void markFailed(@Param("kind") String kind, @Param("namespace") String namespace,
+                    @Param("name") String name, @Param("message") String message,
+                    @Param("updatedAt") String updatedAt);
 }

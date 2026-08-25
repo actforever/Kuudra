@@ -95,7 +95,7 @@ Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶�
 - `EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`：`active` 会物化并允许 Flow 导入，`inactive` 不物化且不能被 Flow 导入；
 - `Flow` 是纯路由声明，不接受 `desiredState`。
 
-其他状态会令启动失败。当前没有监听文件/API 变更的持续调谐循环，运行期间的专用 start/stop API 也尚未写回持久期望状态。
+其他状态会令启动失败。运行期间可以通过 App 的通用 desired-state API 修改单个组件：App 先把完整期望资源集事务性写入 SQLite，再创建/销毁被动组件或注册/注销 EventSource，成功后推进 `observedGeneration`，失败则保留新期望并记录 `FAILED`，等待后续重试或新的 generation。当前尚没有文件监听或后台周期重试循环。
 
 ### Flow 示例
 
@@ -161,8 +161,8 @@ threadSafe: true
 | 资源 | 期望状态 | 调谐行为 |
 | --- | --- | --- |
 | EventSource Component | `running/stopped` | 获取或释放外部监听器、线程、端口、设备句柄。 |
-| Adapter/Processor/Actor Component | `active/inactive` | 创建实例并允许路由，或关闭新投递并按策略排空在途调用。 |
-| Flow | `active/paused/stopped` | 控制路由和 Session 闸门，不拥有导入组件。 |
+| Interpreter/Adapter/Ingress/Handler/Egress Component | `active/inactive` | 创建或销毁未被 Flow 导入的实例；被导入资源不能在图仍引用它时转为 inactive。 |
+| Flow | 无 | 纯路由声明，不参与 desired-state 调谐。 |
 
 组件定义需要声明 `lifecycleCapabilities`。EventSource 通常支持 start/stop；被动组件至少支持 materialize/destroy，active/inactive 是 Runtime 路由门控，不要求插件实现没有意义的 `start()`。
 
@@ -206,13 +206,13 @@ DELETE /api/v1/resources/{kind}/{namespace}/{name}
 GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 ```
 
-start/stop/enable/disable 是对 `spec.desiredState` 的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 App、Flow、EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
+当前通用入口是 `POST /api/v1/app/resources/{kind}/{namespace}/{name}/desired-state/{state}`。start/stop/enable/disable 可以作为它的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 App ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
 
 未来 `kuudractl apply -f xxx.yaml` 会把同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。当前 App 启动已经使用相同的 SQLite 持久模型，但运行期 apply/后台监听尚未开放。
 
 ### `state/` 与 SQLite StateStore
 
-当前实现使用 `.kuudra/state/kuudra.db` 保存规范资源身份、完整期望 spec、generation、observedGeneration、phase 和 message。启动导入清单时使用事务：新增资源 generation 为 1，spec 改变时递增，未改变则保持，清单删除的资源也从期望集合移除。App 随后从数据库读取期望资源完成装配，成功后将 observedGeneration 追平并标记 `READY`。Session、事件负载和插件自行持久化的数据不进入该状态库。
+当前实现使用 `.kuudra/state/kuudra.db` 保存规范资源身份、完整期望 spec、generation、observedGeneration、phase 和 message。启动导入清单及运行期 desired-state 变更都由 App 使用事务写入：新增资源 generation 为 1，spec 改变时递增，未改变则保持，清单删除的资源也从期望集合移除。App 负责执行调谐，成功后将 observedGeneration 追平并标记 `READY`，失败则标记 `FAILED` 且不伪造已观测 generation。Runtime 不读写状态库。Session、事件负载、暂停检查点和插件自行持久化的数据都不进入该状态库。
 
 ## 家目录目标结构
 

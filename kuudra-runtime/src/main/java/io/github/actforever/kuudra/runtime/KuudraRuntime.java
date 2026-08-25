@@ -23,6 +23,9 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final int maxEventHops;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean paused;
+    private volatile CompletableFuture<Void> runtimeResumeSignal = CompletableFuture.completedFuture(null);
+    private int activeExecutions;
+    private Set<UUID> kernelPausedSessions = Set.of();
 
     public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of(), 256); }
     public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, 256); }
@@ -65,15 +68,77 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         }
         event("flow.registered", Map.of("flowId", flow.id(), "revision", flow.revision()));
     }
-    public void pause() {
-        synchronized (monitor) { if (closed.get()) throw new KuudraException("Runtime is closed"); paused = true; }
-        event("runtime.paused", Map.of());
+    public RuntimeCheckpoint pause() {
+        synchronized (monitor) {
+            if (closed.get()) throw new KuudraException("Runtime is closed");
+            if (paused) return checkpoint();
+            runtimeResumeSignal = new CompletableFuture<>();
+            paused = true;
+            while (activeExecutions > 0) {
+                try { monitor.wait(); }
+                catch (InterruptedException interrupted) {
+                    paused = false;
+                    runtimeResumeSignal.complete(null);
+                    monitor.notifyAll();
+                    Thread.currentThread().interrupt();
+                    throw new KuudraException("Interrupted while pausing Runtime", interrupted);
+                }
+            }
+        }
+        try {
+            pauseComponents();
+            kernelPausedSessions = sessionManager.pauseAllActive();
+        } catch (RuntimeException failure) {
+            try { resumeComponents(); } catch (RuntimeException rollback) { failure.addSuppressed(rollback); }
+            synchronized (monitor) {
+                paused=false;
+                runtimeResumeSignal.complete(null);
+                monitor.notifyAll();
+            }
+            throw KuudraException.wrap("Failed to pause Runtime components", failure);
+        }
+        RuntimeCheckpoint checkpoint = checkpoint();
+        event("runtime.paused", Map.of("sessions", checkpoint.sessions().size(), "queuedTasks", checkpoint.queuedTasks()));
+        return checkpoint;
     }
     public void resume() {
-        synchronized (monitor) { if (closed.get()) throw new KuudraException("Runtime is closed"); paused = false; monitor.notifyAll(); }
+        synchronized (monitor) { if (closed.get()) throw new KuudraException("Runtime is closed"); }
+        resumeComponents();
+        sessionManager.resumeAll(kernelPausedSessions);
+        kernelPausedSessions = Set.of();
+        synchronized (monitor) {
+            paused = false;
+            runtimeResumeSignal.complete(null);
+            monitor.notifyAll();
+        }
         event("runtime.resumed", Map.of());
     }
     public boolean paused() { return paused; }
+
+    public RuntimeCheckpoint checkpoint() {
+        synchronized (monitor) {
+            if (!paused || activeExecutions != 0) throw new KuudraException("Runtime checkpoint requires a quiescent pause barrier");
+            Map<String,Map<String,Object>> flowContexts=new LinkedHashMap<>();
+            flows.forEach((id,flow)->flowContexts.put(id,flow.context.snapshot()));
+            return new RuntimeCheckpoint(java.time.Instant.now(),queue.size(),flows(),sessionManager.snapshots(),
+                    globalContext.snapshot(),flowContexts);
+        }
+    }
+
+    private void pauseComponents() {
+        for (ManagedSource source : List.copyOf(sources)) pauseLifecycle(source.source());
+        for (Lifecycle lifecycle : List.copyOf(componentLifecycles)) pauseLifecycle(lifecycle);
+    }
+    private void resumeComponents() {
+        for (Lifecycle lifecycle : List.copyOf(componentLifecycles)) resumeLifecycle(lifecycle);
+        for (ManagedSource source : List.copyOf(sources)) resumeLifecycle(source.source());
+    }
+    private static void pauseLifecycle(Lifecycle lifecycle) {
+        if (lifecycle instanceof PausableLifecycle pausable) pausable.pause().toCompletableFuture().join();
+    }
+    private static void resumeLifecycle(Lifecycle lifecycle) {
+        if (lifecycle instanceof PausableLifecycle pausable) pausable.resume().toCompletableFuture().join();
+    }
 
     public CompletionStage<SourceRegistration> registerSource(String flowId, String target, EventSource source) {
         return registerSource(List.of(new SourceTarget(flowId,target)), source);
@@ -126,29 +191,30 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     }
     private void dispatch(){ while(!closed.get()){ try{ Optional<RuntimeTask> next=queue.poll(Duration.ofMillis(200));if(next.isEmpty())continue;if(next.get() instanceof RuntimeTask.StopTask)return;RuntimeTask.EventTask task=(RuntimeTask.EventTask)next.get();RegisteredFlow flow=registeredFlow(task.flowId());if(task.wrapper() instanceof SessionEventWrapper sw){SessionManager.ManagedSession s=sessionManager.require(sw.session().id());if(s==null){continue;}s.submit(()->execute(flow,task,s));}else workers.execute(()->execute(flow,task,null)); }catch(InterruptedException e){Thread.currentThread().interrupt();return;}catch(RuntimeException e){event("runtime.dispatch.failed",Map.of("error",e.toString()));}} }
     private void execute(RegisteredFlow flow,RuntimeTask.EventTask task,SessionManager.ManagedSession session){
-        Throwable failure=null; boolean releaseHere=true;
+        Throwable failure=null; boolean releaseHere=true; boolean asynchronous=false; boolean entered=false;
         try{
-            awaitResumed();
+            enterExecution();
+            entered=true;
             if (session != null) session.awaitResumed();
             if(flow.flow.revision()!=task.flowRevision()||(session!=null&&(!session.active()||session.cancelled.get()||session.failure.get()!=null)))return;
             FlowNode node=flow.flow.node(task.nodeId()); KuudraEvent input=task.wrapper().event();
             EventContext context=context(flow,session,node.id(),input);
             if(node instanceof FlowNode.IngressNode ingress){ executeIngress(flow,ingress,input,context); return; }
-            if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; executeHandler(flow,handler,input,context,session); return; }
+            if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; asynchronous=true; executeHandler(flow,handler,input,context,session); return; }
             List<KuudraEvent> output;
             if(node instanceof FlowNode.AdapterNode adapter)output=adapter.adapter().adapt(input,context);
             else if(node instanceof FlowNode.InterpreterNode interpreter)output=interpreter.interpreter().interpret(input,context);
             else output=((FlowNode.EgressNode)node).egress().export(input,context);
             route(flow,node,task.wrapper(),normalize(input,output,node instanceof FlowNode.EgressNode,session));
         }catch(Throwable e){failure=e;event("event.execution.failed",Map.of("flowId",flow.flow.id(),"nodeId",task.nodeId(),"error",e.toString()));}
-        finally{if(session!=null&&releaseHere)sessionManager.release(session,failure);}
+        finally{if(session!=null&&releaseHere)sessionManager.release(session,failure);if(entered&&!asynchronous)exitExecution();}
     }
     private void executeHandler(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,EventContext context,SessionManager.ManagedSession session){
         AtomicBoolean open=new AtomicBoolean(true);
         EventEmitter emitter=output->{if(!open.get())throw new KuudraException("EventHandler emitted after CompletionStage completion");return routeOne(flow,node,new SessionEventWrapper(input,session.reference()),derive(input,output,false,session));};
-        ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,session.cancelled::get,emitter,globalContext.snapshot(),globalContext,context.configuration());
-        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
-        catch(Throwable error){open.set(false);sessionManager.release(session,error);}
+        ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,controlToken(session),emitter,globalContext.snapshot(),globalContext,context.configuration());
+        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);exitExecution();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
+        catch(Throwable error){open.set(false);sessionManager.release(session,error);exitExecution();}
     }
     private void executeIngress(RegisteredFlow flow,FlowNode.IngressNode node,KuudraEvent input,EventContext context){
         IngressDecision decision=node.ingress().admit(input,context);if(decision instanceof IngressDecision.Rejected rejected){event("ingress.rejected",Map.of("ingressId",node.id(),"reason",rejected.reason()));return;}
@@ -171,16 +237,18 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private KuudraEvent derive(KuudraEvent input,KuudraEvent output,boolean egress,SessionManager.ManagedSession session){if(output==null)throw new KuudraException("Component emitted null");EventLineage lineage=output.lineage().hops()>input.lineage().hops()?output.lineage():(egress&&session!=null?input.lineage().descendFrom(input,session.reference()):input.lineage().descendFrom(input));return output.withLineage(lineage);}
     private EventContext context(RegisteredFlow flow,SessionManager.ManagedSession session,String nodeId,KuudraEvent event){
         Map<String,Object> sessionValues=session==null?Map.of():session.context.snapshot();SessionReference reference=session==null?null:session.reference();
-        EventContext base=new EventContext(flow.flow.id(),reference,sessionValues,session==null?null:session.context,flow.context.snapshot(),flow.context,session==null?()->false:session.cancelled::get,globalContext.snapshot(),globalContext,Map.of());
+        EventContext base=new EventContext(flow.flow.id(),reference,sessionValues,session==null?null:session.context,flow.context.snapshot(),flow.context,session==null?()->false:controlToken(session),globalContext.snapshot(),globalContext,Map.of());
         Map<String,Object> configuration=flow.configuration.get(nodeId).resolve(event,base);
         return new EventContext(base.flowId(),base.session(),base.sessionValues(),base.sessionContext(),base.flowValues(),base.flowContext(),base.cancellationToken(),base.globalValues(),base.globalContext(),configuration);
     }
     private void sessionTerminal(SessionManager.ManagedSession session){SessionCoordinator.Group group=findGroup(session);coordinator.terminal(group,session.id);event("session."+session.status.name().toLowerCase(),Map.of("sessionId",session.id.toString(),"groupKey",session.groupKey));}
+    private CancellationToken controlToken(SessionManager.ManagedSession session){return new CancellationToken(){public boolean isCancellationRequested(){return session.cancelled.get();}public boolean isPauseRequested(){return paused||session.paused;}public CompletionStage<Void> awaitResumed(){CompletableFuture<Void> kernelSignal=runtimeResumeSignal;return kernelSignal.thenCompose(ignored->session.resumed());}};}
     private SessionCoordinator.Group findGroup(SessionManager.ManagedSession session){RegisteredFlow flow=registeredFlow(session.flowId);FlowNode.IngressNode ingress=(FlowNode.IngressNode)flow.flow.node(session.ingressId);String scope=ingress.scheduling().groupScope()==SessionGroupScope.INGRESS?ingress.instanceId():flow.flow.id()+"@"+session.revision;return new SessionCoordinator.Group(scope,ingress.instanceId(),session.groupKey);}
-    private void awaitResumed() throws InterruptedException { synchronized (monitor) { while (paused && !closed.get()) monitor.wait(); } }
+    private void enterExecution() throws InterruptedException { synchronized (monitor) { while (paused && !closed.get()) monitor.wait(); if(closed.get())throw new InterruptedException("Runtime closed");activeExecutions++; } }
+    private void exitExecution() { synchronized (monitor) { activeExecutions--;if(activeExecutions<0)throw new KuudraException("Runtime execution counter underflow");if(activeExecutions==0)monitor.notifyAll(); } }
     private void event(String type,Map<String,Object> data){events.publish(SystemEvent.of(type,data));}
     private static boolean active(SessionStatus s){return s==SessionStatus.ACTIVE||s==SessionStatus.PAUSED||s==SessionStatus.CANCELLATION_REQUESTED;}
-    @Override public void close(){if(!closed.compareAndSet(false,true))return;synchronized(monitor){paused=false;monitor.notifyAll();}List<ManagedSource> copy; synchronized(monitor){copy=List.copyOf(sources);}copy.forEach(s->unregister(s).toCompletableFuture().join());sessionManager.cancelAll();try{sessionManager.awaitDrained(5000);}catch(InterruptedException e){Thread.currentThread().interrupt();}queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}catch(RuntimeException ignored){}componentLifecycles.clear();workers.shutdownNow();}
+    @Override public void close(){if(!closed.compareAndSet(false,true))return;synchronized(monitor){paused=false;runtimeResumeSignal.complete(null);monitor.notifyAll();}List<ManagedSource> copy; synchronized(monitor){copy=List.copyOf(sources);}copy.forEach(s->unregister(s).toCompletableFuture().join());sessionManager.cancelAll();try{sessionManager.awaitDrained(5000);}catch(InterruptedException e){Thread.currentThread().interrupt();}queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}catch(RuntimeException ignored){}componentLifecycles.clear();workers.shutdownNow();}
     private record ManagedSource(EventSource source,List<SourceTarget> targets,AtomicBoolean closed){ManagedSource(EventSource source,List<SourceTarget>targets){this(source,targets,new AtomicBoolean());}}
     private static final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;

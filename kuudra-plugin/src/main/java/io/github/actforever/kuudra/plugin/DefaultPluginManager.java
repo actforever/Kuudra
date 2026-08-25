@@ -172,6 +172,13 @@ public final class DefaultPluginManager implements AutoCloseable {
         return instance;
     }
 
+    /** Destroys one App-owned component instance during reconciliation. */
+    public CompletionStage<Void> destroyComponent(Object instance) {
+        if (!(instance instanceof PluginComponentLifecycle lifecycle)) return CompletableFuture.completedFuture(null);
+        synchronized (this) { managedComponents.remove(lifecycle); }
+        return lifecycle.destroy();
+    }
+
     public CompletionStage<Void> startAll() {
         final List<String> order;
         synchronized (this) {

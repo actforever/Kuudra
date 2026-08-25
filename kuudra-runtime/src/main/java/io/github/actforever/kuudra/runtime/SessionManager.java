@@ -33,7 +33,7 @@ public final class SessionManager {
         ManagedSession session = require(id);
         if (session == null || !session.active() || !session.cancelled.compareAndSet(false, true)) return false;
         session.status = SessionStatus.CANCELLATION_REQUESTED;
-        synchronized (session.pauseMonitor) { session.paused = false; session.pauseMonitor.notifyAll(); }
+        synchronized (session.pauseMonitor) { session.paused = false; session.resumeSignal.complete(null); session.pauseMonitor.notifyAll(); }
         if (session.leases.get() == 0) terminate(session, SessionStatus.CANCELLED);
         return true;
     }
@@ -42,7 +42,7 @@ public final class SessionManager {
         if (session == null || !session.active() || session.cancelled.get()) return false;
         synchronized (session.pauseMonitor) {
             if (session.paused) return true;
-            session.paused = true; session.status = SessionStatus.PAUSED;
+            session.paused = true; session.resumeSignal = new java.util.concurrent.CompletableFuture<>(); session.status = SessionStatus.PAUSED;
         }
         return true;
     }
@@ -51,11 +51,19 @@ public final class SessionManager {
         if (session == null || !session.active() || session.cancelled.get()) return false;
         synchronized (session.pauseMonitor) {
             if (!session.paused) return true;
-            session.paused = false; session.status = SessionStatus.ACTIVE; session.pauseMonitor.notifyAll();
+            session.paused = false; session.status = SessionStatus.ACTIVE; session.resumeSignal.complete(null); session.pauseMonitor.notifyAll();
         }
         if (session.leases.get() == 0) terminate(session, SessionStatus.COMPLETED);
         return true;
     }
+    Set<UUID> pauseAllActive() {
+        Set<UUID> changed = new LinkedHashSet<>();
+        for (SessionSnapshot snapshot : snapshots()) {
+            if (snapshot.status() == SessionStatus.ACTIVE && pause(snapshot.id())) changed.add(snapshot.id());
+        }
+        return Set.copyOf(changed);
+    }
+    void resumeAll(Set<UUID> sessionIds) { sessionIds.forEach(this::resume); }
     boolean acquire(ManagedSession session) { if (!session.active() || session.cancelled.get() || session.failure.get() != null) return false; session.leases.incrementAndGet(); return true; }
     void release(ManagedSession session, Throwable error) {
         if (error != null) session.failure.compareAndSet(null, error);
@@ -70,7 +78,7 @@ public final class SessionManager {
         session.status = terminal; terminalListener.accept(session);
         synchronized (monitor) { monitor.notifyAll(); }
     }
-    void cancelAll() { snapshots().stream().filter(s -> s.status() == SessionStatus.ACTIVE || s.status() == SessionStatus.CANCELLATION_REQUESTED).forEach(s -> cancel(s.id())); }
+    void cancelAll() { snapshots().stream().filter(s -> s.status() == SessionStatus.ACTIVE || s.status() == SessionStatus.PAUSED || s.status() == SessionStatus.CANCELLATION_REQUESTED).forEach(s -> cancel(s.id())); }
     void awaitDrained(long millis) throws InterruptedException {
         long end = System.currentTimeMillis() + millis;
         synchronized (monitor) { while (sessions.values().stream().anyMatch(ManagedSession::active) && System.currentTimeMillis() < end) monitor.wait(Math.max(1, end - System.currentTimeMillis())); }
@@ -83,12 +91,14 @@ public final class SessionManager {
         final AtomicBoolean terminal = new AtomicBoolean(); final AtomicInteger leases = new AtomicInteger();
         volatile SessionStatus status = SessionStatus.ACTIVE;
         final Object pauseMonitor = new Object(); volatile boolean paused;
+        volatile java.util.concurrent.CompletableFuture<Void> resumeSignal = java.util.concurrent.CompletableFuture.completedFuture(null);
         private java.util.concurrent.CompletableFuture<Void> serial = java.util.concurrent.CompletableFuture.completedFuture(null);
         ManagedSession(UUID id, String flowId, long revision, String ingressId, String groupKey, AtomicValueContext context, Executor executor) {
             this.id=id; this.flowId=flowId; this.revision=revision; this.ingressId=ingressId; this.groupKey=groupKey; this.context=context; this.executor=executor;
         }
         boolean active() { return !terminal.get(); }
         void awaitResumed() throws InterruptedException { synchronized (pauseMonitor) { while (paused && !terminal.get() && !cancelled.get()) pauseMonitor.wait(); } }
+        java.util.concurrent.CompletionStage<Void> resumed() { return resumeSignal; }
         synchronized void submit(Runnable task) { serial = serial.handle((v,e)->null).thenRunAsync(task, executor); }
         SessionReference reference() { return new SessionReference(id, flowId); }
         SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, status, cancelled.get(), leases.get()); }

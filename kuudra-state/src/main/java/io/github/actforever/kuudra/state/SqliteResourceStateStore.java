@@ -124,6 +124,24 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         }
     }
 
+    @Override public synchronized void markObserved(KuudraManifest.ResourceId id, String phase, String message) {
+        updateOne(id, mapper -> mapper.markObserved(id.kind(), id.namespace(), id.name(), phase, message, Instant.now().toString()));
+    }
+
+    @Override public synchronized void markFailed(KuudraManifest.ResourceId id, String message) {
+        updateOne(id, mapper -> mapper.markFailed(id.kind(), id.namespace(), id.name(), message, Instant.now().toString()));
+    }
+
+    private void updateOne(KuudraManifest.ResourceId id, java.util.function.Consumer<ResourceStateMapper> update) {
+        requireOpen();
+        try (SqlSession session = sessions.openSession(false)) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection(); update.accept(mapper); session.commit();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to update observed resource " + id, error);
+        }
+    }
+
     private static KuudraManifest.ResourceId id(ResourceStateRow row) {
         return new KuudraManifest.ResourceId(row.getKind(), row.getNamespace(), row.getName());
     }

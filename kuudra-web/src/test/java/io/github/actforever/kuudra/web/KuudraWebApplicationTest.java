@@ -59,6 +59,7 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/app-lifecycle"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/checkpoint']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/flows']").doesNotExist());
         mvc.perform(get("/v3/api-docs/event-sources"))
                 .andExpect(status().isOk())
@@ -68,6 +69,7 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/app/resources/components']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/resources/components/{type}/{namespace}/{name}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/resources/{kind}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/resources/{kind}/{namespace}/{name}/desired-state/{desiredState}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/namespaces/{namespace}/resources']").exists());
         mvc.perform(get("/v3/api-docs/flows"))
                 .andExpect(status().isOk())

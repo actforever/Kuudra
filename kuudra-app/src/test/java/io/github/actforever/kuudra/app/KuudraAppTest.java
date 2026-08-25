@@ -7,6 +7,7 @@ import io.github.actforever.kuudra.api.EventEmitter;
 import io.github.actforever.kuudra.api.EventSource;
 import io.github.actforever.kuudra.api.EventDomain;
 import io.github.actforever.kuudra.api.KuudraException;
+import io.github.actforever.kuudra.api.PausableLifecycle;
 import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
@@ -26,8 +27,30 @@ class KuudraAppTest {
     @Test void pauseAndResumePreserveTheRunningKernel() {
         try (KuudraApp app = new KuudraApp(8, 1)) {
             app.pause(); assertEquals("PAUSED", app.snapshot().status().name());
+            assertTrue(app.checkpoint().isPresent());
+            assertEquals(0, app.checkpoint().orElseThrow().runtime().queuedTasks());
             assertTrue(app.plugins().stream().anyMatch(plugin -> plugin.id().equals("default")));
             app.resume(); assertEquals("RUNNING", app.snapshot().status().name());
+            assertTrue(app.checkpoint().isEmpty());
+        }
+    }
+
+    @Test void delegatesNonDestructivePauseAndResumeToCapableComponents() {
+        AtomicInteger pauses = new AtomicInteger();
+        AtomicInteger resumes = new AtomicInteger();
+        class PausableSource implements EventSource, PausableLifecycle {
+            @Override public void setEmitter(EventEmitter emitter) { }
+            @Override public java.util.concurrent.CompletionStage<Void> pause() { pauses.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+            @Override public java.util.concurrent.CompletionStage<Void> resume() { resumes.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+        }
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            app.registerFlow(new KuudraFlow("flow", Map.of("sink", new FlowNode.AdapterNode("sink", (event, context) -> java.util.List.of(event), EventDomain.RAW)), Map.of()));
+            app.declareEventSource("flow", "input", new PausableSource(), "sink");
+            app.startEventSource("flow", "input");
+            app.pause();
+            assertEquals(1, pauses.get());
+            app.resume();
+            assertEquals(1, resumes.get());
         }
     }
     @TempDir Path directory;
@@ -219,6 +242,23 @@ class KuudraAppTest {
             KuudraApp.ComponentResource resource = app.resource("Ingress", "test", "dormant").orElseThrow();
             assertEquals("inactive", resource.desiredState());
             assertEquals("ABSENT", resource.status());
+        }
+    }
+
+    @Test
+    void appReconcilesAndPersistsAComponentDesiredStateChange() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default"));
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("MATERIALIZED", app.resource("Ingress", "test", "switchable").orElseThrow().status());
+            KuudraApp.ComponentResource inactive = app.setDesiredState("Ingress", "test", "switchable", "inactive");
+            assertEquals("inactive", inactive.desiredState());
+            assertEquals("ABSENT", inactive.status());
+            var state = app.resourceStates().stream().filter(item -> item.id().name().equals("switchable")).findFirst().orElseThrow();
+            assertEquals(state.generation(), state.observedGeneration());
+            assertEquals("READY", state.phase());
+            assertEquals("MATERIALIZED", app.setDesiredState("Ingress", "test", "switchable", "active").status());
         }
     }
 
