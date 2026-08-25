@@ -68,6 +68,27 @@ class KuudraLogTest {
     }
 
     @Test
+    void rendersExplicitDebugSystemEventsOnlyAtDebugLevel() throws Exception {
+        TestBus bus = new TestBus();
+        Path infoLogs = directory.resolve("info-debug-events");
+        try (KuudraLogSession ignored = KuudraLog.openSession(infoLogs, bus,
+                new KuudraLogConfiguration(KuudraLogLevel.INFO, false, true))) {
+            bus.publish(SystemEvent.debug("runtime.event.enqueued", Map.of("eventId", "one")));
+        }
+        assertFalse(Files.readString(infoLogs.resolve("latest.log")).contains("runtime.event.enqueued"));
+
+        Path debugLogs = directory.resolve("enabled-debug-events");
+        try (KuudraLogSession ignored = KuudraLog.openSession(debugLogs, bus,
+                new KuudraLogConfiguration(KuudraLogLevel.DEBUG, false, true))) {
+            bus.publish(SystemEvent.debug("runtime.event.enqueued", Map.of("eventId", "two")));
+        }
+        String latest = Files.readString(debugLogs.resolve("latest.log"));
+        assertTrue(latest.contains("DEBUG"));
+        assertTrue(latest.contains("runtime.event.enqueued"));
+        assertTrue(latest.contains("eventId=two"));
+    }
+
+    @Test
     void disabledFileOutputDoesNotReplaceOrArchiveLatestLog() throws Exception {
         TestBus bus = new TestBus();
         Path logs = Files.createDirectories(directory.resolve("console-only"));

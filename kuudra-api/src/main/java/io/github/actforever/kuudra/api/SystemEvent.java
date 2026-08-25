@@ -5,9 +5,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /** Observation-only runtime event; never re-enters the business signal pipeline. */
-public record SystemEvent(UUID id, Instant occurredAt, String type, Map<String, Object> data) {
+public record SystemEvent(UUID id, Instant occurredAt, SystemEventLevel level, String type, Map<String, Object> data) {
     public SystemEvent { data = Map.copyOf(data); }
     public static SystemEvent of(String type, Map<String, Object> data) {
-        return new SystemEvent(UUID.randomUUID(), Instant.now(), type, data);
+        return new SystemEvent(UUID.randomUUID(), Instant.now(), SystemEventLevel.AUTO, type, data);
+    }
+    public static SystemEvent debug(String type, Map<String, Object> data) {
+        return new SystemEvent(UUID.randomUUID(), Instant.now(), SystemEventLevel.DEBUG, type, data);
     }
 }

@@ -91,6 +91,8 @@ public final class DefaultPluginManager implements AutoCloseable {
         states.put(identity, PluginState.REGISTERED);
         resources.put(identity, new ManagedResources());
         components.forEach(componentRegistry::register);
+        debugEvent("plugin.dependencies.resolved", Map.of("pluginId", plugin.id(), "namespace", namespace,
+                "required", List.copyOf(required), "declared", declaredDependencies.size()));
         event("plugin.registered", Map.of("pluginId", plugin.id(), "namespace", namespace, "dependencies", List.copyOf(required), "components", components.size()));
     }
 
@@ -157,13 +159,14 @@ public final class DefaultPluginManager implements AutoCloseable {
             context = contexts.get(identity);
         }
         T instance = componentRegistry.create(reference, expectedType);
-        event("plugin.component.created", Map.of("pluginId", definition.pluginId(), "component", reference));
+        debugEvent("plugin.component.created", Map.of("pluginId", definition.pluginId(), "component", reference,
+                "instanceClass", instance.getClass().getName()));
         if (instance instanceof PluginComponentLifecycle lifecycle) {
             try {
-                event("plugin.component.initializing", Map.of("pluginId", definition.pluginId(), "component", reference));
+                debugEvent("plugin.component.initializing", Map.of("pluginId", definition.pluginId(), "component", reference));
                 lifecycle.initialize(new PluginComponentContext(reference, context, configuration)).toCompletableFuture().join();
                 synchronized (this) { managedComponents.add(lifecycle); }
-                event("plugin.component.initialized", Map.of("pluginId", definition.pluginId(), "component", reference));
+                debugEvent("plugin.component.initialized", Map.of("pluginId", definition.pluginId(), "component", reference));
             } catch (RuntimeException error) {
                 event("plugin.component.failed", Map.of("pluginId", definition.pluginId(), "component", reference, "error", error.toString()));
                 throw new IllegalStateException("Failed to initialize component " + reference, error);
@@ -364,6 +367,7 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
 
     private void event(String type, Map<String, Object> data) { events.publish(SystemEvent.of(type, data)); }
+    private void debugEvent(String type, Map<String, Object> data) { events.publish(SystemEvent.debug(type, data)); }
     private synchronized Map<String, Object> pluginEvent(String identity, Map<String, Object> details) {
         Map<String, Object> data = new LinkedHashMap<>(details);
         data.put("pluginId", plugins.get(identity).id());

@@ -11,6 +11,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void publishesStructuredDebugEventsForTheTaskExecutionPath() throws Exception {
+        CopyOnWriteArrayList<SystemEvent> events = new CopyOnWriteArrayList<>();
+        CountDownLatch handled = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1, Map.of(), 32, event -> {
+            events.add(event);
+            if (event.type().equals("runtime.node.execution.completed")) completed.countDown();
+        })) {
+            runtime.registerFlow(new KuudraFlow("observed", Map.of("sink", new FlowNode.AdapterNode(
+                    "sink", (event, context) -> { handled.countDown(); return List.of(); }, EventDomain.RAW)), Map.of()));
+            assertTrue(runtime.publish("observed", "sink", KuudraEvent.of("diagnostic", Map.of())));
+            assertTrue(handled.await(1, TimeUnit.SECONDS));
+            assertTrue(completed.await(1, TimeUnit.SECONDS));
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.event.enqueued")
+                    && event.level() == SystemEventLevel.DEBUG));
+            assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.node.execution.completed")
+                    && event.level() == SystemEventLevel.DEBUG));
+        }
+    }
+
+    @Test
     void rawIngressSessionHandlerAndEgressFormClosedPipeline() throws Exception {
         CountDownLatch handled = new CountDownLatch(1); CountDownLatch exported = new CountDownLatch(1);
         AtomicReference<UUID> sessionId = new AtomicReference<>(); AtomicReference<Set<UUID>> lineage = new AtomicReference<>();

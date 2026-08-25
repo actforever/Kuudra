@@ -33,6 +33,15 @@ logging:
 - `console-enabled` 单独控制粗体彩色终端输出；
 - `file-enabled` 单独控制 `latest.log` 和停止时的 gzip 归档。
 
+`SystemEvent` 带有独立的 `SystemEventLevel` 呈现提示。历史事件使用 `AUTO`，继续按 `failed/rejected/cancel` 名称兼容映射；新增诊断事件显式使用 `DEBUG`，不会在默认 INFO 配置中形成噪声。DEBUG 当前覆盖：
+
+- App 配置应用起止、清单校验、StateStore desired set 替换；
+- 单资源调谐起止、组件物化和 Flow 编译；
+- 插件依赖解析、组件创建和初始化边界；
+- Runtime 事件入队、队列拒绝、分派、节点执行起止及缺失 Session 丢弃。
+
+这些事件只携带标识、状态、数量、执行域和结果等诊断元数据，不记录完整 Event 数据或上下文，避免日志泄漏业务载荷。任务级 DEBUG 事件频率可能较高，只应在排障期间启用。
+
 关闭文件输出时不会创建、删除或归档 `latest.log`；已有日志文件保持不变。日志目录仍固定为 `<home-directory>/logs`，不会通过配置改变。
 
 ## 文件策略

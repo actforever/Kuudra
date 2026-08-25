@@ -303,11 +303,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         components.put(id, updated);
         KuudraManifest.Resources desired = new KuudraManifest.Resources(components, manifestResources.flows());
         validateDesiredStates(desired);
+        debug("resource.reconcile.started", Map.of("resource", id.toString(), "from", current.desiredState(), "to", updated.desiredState()));
         stateStore.replaceDesired(desired);
         manifestResources = desired;
         try {
             reconcileComponent(updated);
             stateStore.markObserved(id, "READY", "reconciled");
+            debug("resource.reconcile.completed", Map.of("resource", id.toString(), "desiredState", updated.desiredState(), "outcome", "ready"));
             return componentResource(updated);
         } catch (RuntimeException failure) {
             stateStore.markFailed(id, failure.toString()); throw failure;
@@ -349,6 +351,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraRuntime requireRuntime() { synchronized (this) { if ((status != AppStatus.RUNNING && status != AppStatus.PAUSED) || runtime == null) throw new KuudraException("App is not available: " + status); return runtime; } }
     private DefaultPluginManager requirePlugins() { synchronized (this) { if ((status != AppStatus.RUNNING && status != AppStatus.PAUSED) || plugins == null) throw new KuudraException("App is not available: " + status); return plugins; } }
     private void publish(String type) { events.publish(SystemEvent.of(type, java.util.Map.of("status", status.name(), "detail", detail))); }
+    private void debug(String type, Map<String,Object> data) { events.publish(SystemEvent.debug(type, data)); }
     @Override public void close() { stop(); }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks()); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
@@ -386,6 +389,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     /** Loads plugin archives, resolves their metadata dependencies, and assembles every configured Event Flow. */
     private void applyConfiguration(KuudraConfig.RuntimeConfig config) {
         try {
+            debug("configuration.apply.started", Map.of("homeDirectory", config.homeDirectory().toString(),
+                    "components", config.manifests().components().size(), "flows", config.manifests().flows().size()));
             Path pluginDirectory = config.homeDirectory().resolve("plugins");
             Files.createDirectories(pluginDirectory);
             events.publish(SystemEvent.of("plugin.scan.started", Map.of("directory", pluginDirectory.toString())));
@@ -400,8 +405,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             startPlugins().toCompletableFuture().join();
             stateStore = new SqliteResourceStateStore(config.homeDirectory().resolve("state").resolve("kuudra.db"));
             stateStore.replaceDesired(config.manifests());
+            debug("state.desired.replaced", Map.of("components", config.manifests().components().size(),
+                    "flows", config.manifests().flows().size()));
             applyManifests(stateStore.desiredResources());
             stateStore.markAllObserved("READY", "reconciled");
+            debug("configuration.apply.completed", Map.of("components", manifestResources.components().size(),
+                    "flows", manifestResources.flows().size()));
         } catch (IOException | RuntimeException error) {
             throw KuudraException.wrap("Failed to apply Kuudra configuration", error);
         }
@@ -435,8 +444,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (resources.isEmpty()) return;
         validateDesiredStates(resources);
         validateManifestPolicies(resources);
+        debug("manifest.validation.completed", Map.of("components", resources.components().size(), "flows", resources.flows().size()));
         for (KuudraManifest.Component component : resources.components().values()) {
             if (!component.type().equals("event-source") && component.desiredState().equalsIgnoreCase("inactive")) continue;
+            debug("component.materializing", Map.of("resource", component.id().toString(), "component", component.component()));
             Object instance = switch (component.type()) {
                 case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class, component.options());
                 case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class, component.options());
@@ -447,9 +458,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
             manifestInstances.put(component.id(), instance);
+            debug("component.materialized", Map.of("resource", component.id().toString(), "instanceClass", instance.getClass().getName()));
         }
         Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets = new LinkedHashMap<>();
         for (KuudraManifest.Flow flow : resources.flows().values()) {
+            debug("flow.compiling", Map.of("flow", flow.id().qualifiedName(), "imports", flow.imports().size(), "edges", flow.edges().size()));
             registerFlow(compile(flow, resources.components(), sourceTargets));
         }
         for (Map.Entry<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> entry : sourceTargets.entrySet()) {

@@ -117,9 +117,18 @@ public final class KuudraLog {
             return;
         }
         String message = event.type() + (event.data().isEmpty() ? "" : " " + event.data());
-        if (event.type().contains("failed")) logger.error(message);
-        else if (event.type().contains("rejected") || event.type().contains("cancel")) logger.warn(message);
-        else logger.info(message);
+        switch (event.level()) {
+            case TRACE -> logger.trace(message);
+            case DEBUG -> logger.debug(message);
+            case INFO -> logger.info(message);
+            case WARN -> logger.warn(message);
+            case ERROR -> logger.error(message);
+            case AUTO -> {
+                if (event.type().contains("failed")) logger.error(message);
+                else if (event.type().contains("rejected") || event.type().contains("cancel")) logger.warn(message);
+                else logger.info(message);
+            }
+        }
     }
 
     private static String fields(Object value) {
