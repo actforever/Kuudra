@@ -71,7 +71,7 @@ class KuudraAppTest {
         }
     }
 
-    @Test void delegatesNonDestructivePauseAndResumeToCapableComponents() {
+    @Test void kernelPauseDoesNotMutateComponentLifecycleState() {
         AtomicInteger pauses = new AtomicInteger();
         AtomicInteger resumes = new AtomicInteger();
         class PausableSource implements EventSource, PausableLifecycle {
@@ -84,9 +84,9 @@ class KuudraAppTest {
             app.declareEventSource("flow", "input", new PausableSource(), "sink");
             app.startEventSource("flow", "input");
             app.pause();
-            assertEquals(1, pauses.get());
+            assertEquals(0, pauses.get());
             app.resume();
-            assertEquals(1, resumes.get());
+            assertEquals(0, resumes.get());
         }
     }
     @TempDir Path directory;
@@ -281,6 +281,14 @@ class KuudraAppTest {
             assertEquals("Ingress", app.resource("Ingress", "test", "ingress").orElseThrow().kind());
             assertEquals(2, app.resourcesInNamespace("test").size());
             assertEquals(1, app.flows("test").size());
+            app.pause();
+            KuudraApp.ComponentResource suspended = app.componentResource("ingress", "test", "ingress").orElseThrow();
+            assertEquals("ACTIVE", suspended.status());
+            assertEquals("SUSPENDED", suspended.effectiveStatus());
+            assertFalse(suspended.available());
+            assertEquals(java.util.List.of("KERNEL"), suspended.suspensionReasons());
+            app.resume();
+            assertEquals("ACTIVE", app.componentResource("ingress", "test", "ingress").orElseThrow().effectiveStatus());
         }
     }
 

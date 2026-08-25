@@ -616,8 +616,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             manifestObservedStates.put(entry.getKey(), "RUNNING");
             if (desired.equals("paused")) {
                 if (!(source instanceof PausableLifecycle pausable)) throw new KuudraException("EventSource is not pausable: " + component.id());
+                requireRuntime().setComponentPaused(source, true);
                 pausable.pause().toCompletableFuture().join();
-                requireRuntime().setComponentEnabled(source, false);
                 manifestObservedStates.put(entry.getKey(), "PAUSED");
             }
         }
@@ -637,17 +637,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 requireRuntime().setComponentEnabled(instance, true);
                 manifestObservedStates.put(component.id(), "RUNNING");
                 if (desired.equals("paused")) {
+                    requireRuntime().setComponentPaused(instance, true);
                     ((PausableLifecycle) instance).pause().toCompletableFuture().join();
-                    requireRuntime().setComponentEnabled(instance, false);
                     manifestObservedStates.put(component.id(), "PAUSED");
                 }
             } else if (desired.equals("running") && manifestObservedStates.getOrDefault(component.id(), "").equals("PAUSED")) {
                 ((PausableLifecycle) manifestInstances.get(component.id())).resume().toCompletableFuture().join();
-                requireRuntime().setComponentEnabled(manifestInstances.get(component.id()), true);
+                requireRuntime().setComponentPaused(manifestInstances.get(component.id()), false);
                 manifestObservedStates.put(component.id(), "RUNNING");
             } else if (desired.equals("paused") && manifestObservedStates.getOrDefault(component.id(), "").equals("RUNNING")) {
+                requireRuntime().setComponentPaused(manifestInstances.get(component.id()), true);
                 ((PausableLifecycle) manifestInstances.get(component.id())).pause().toCompletableFuture().join();
-                requireRuntime().setComponentEnabled(manifestInstances.get(component.id()), false);
                 manifestObservedStates.put(component.id(), "PAUSED");
             } else if (desired.equals("stopped")) {
                 SourceRegistration registration = manifestSourceRegistrations.remove(component.id());
@@ -678,22 +678,27 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         String desired = component.desiredState().toUpperCase(java.util.Locale.ROOT);
         String observed = manifestObservedStates.getOrDefault(component.id(), "STOPPED");
         if (desired.equals(observed)) {
-            requireRuntime().setComponentEnabled(lifecycle, desired.equals("RUNNING"));
+            if (desired.equals("PAUSED")) requireRuntime().setComponentPaused(lifecycle, true);
+            else requireRuntime().setComponentEnabled(lifecycle, desired.equals("RUNNING"));
             return;
         }
         switch (desired) {
             case "RUNNING" -> {
                 if (observed.equals("PAUSED")) ((PausableLifecycle) lifecycle).resume().toCompletableFuture().join();
                 else lifecycle.start().toCompletableFuture().join();
+                requireRuntime().setComponentPaused(lifecycle, false);
             }
             case "PAUSED" -> {
                 if (observed.equals("STOPPED")) lifecycle.start().toCompletableFuture().join();
+                requireRuntime().setComponentPaused(lifecycle, true);
                 ((PausableLifecycle) lifecycle).pause().toCompletableFuture().join();
             }
-            case "STOPPED" -> lifecycle.stop().toCompletableFuture().join();
+            case "STOPPED" -> {
+                requireRuntime().setComponentEnabled(lifecycle, false);
+                lifecycle.stop().toCompletableFuture().join();
+            }
             default -> throw new KuudraException("Unsupported lifecycle desiredState " + desired + " for " + component.id());
         }
-        requireRuntime().setComponentEnabled(lifecycle, desired.equals("RUNNING"));
         manifestObservedStates.put(component.id(), desired);
     }
 
@@ -843,9 +848,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
     public record ComponentResource(String kind, String namespace, String name, String type, String component,
-                                    String desiredState, String status, boolean selected, List<String> importedBy,
+                                    String desiredState, String status, String effectiveStatus, boolean available,
+                                    List<String> suspensionReasons, boolean selected, List<String> importedBy,
                                     List<String> lifecycleCapabilities) {
-        public ComponentResource { importedBy = List.copyOf(importedBy); lifecycleCapabilities = List.copyOf(lifecycleCapabilities); }
+        public ComponentResource {
+            suspensionReasons = List.copyOf(suspensionReasons);
+            importedBy = List.copyOf(importedBy);
+            lifecycleCapabilities = List.copyOf(lifecycleCapabilities);
+        }
     }
     public record Plugin(String id, String namespace, String version, String status, List<Dependency> dependencies,
                          List<Component> components) {
@@ -886,16 +896,20 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         boolean source = component.type().equals("event-source");
         Object instance = manifestInstances.get(component.id());
         boolean kernelPaused = status == AppStatus.PAUSING || status == AppStatus.PAUSED;
-        String actual = runtime == null ? "NOT_RUNNING" : kernelPaused && instance != null
-                ? (instance instanceof PausableLifecycle ? "PAUSED" : "QUIESCED")
+        String observed = runtime == null ? "NOT_RUNNING"
                 : manifestObservedStates.getOrDefault(component.id(), source ? "STOPPED" : "INACTIVE");
+        boolean operational = observed.equals("RUNNING") || observed.equals("ACTIVE");
+        String effective = kernelPaused && operational ? "SUSPENDED" : observed;
+        List<String> suspensionReasons = kernelPaused && operational ? List.of("KERNEL")
+                : observed.equals("PAUSED") ? List.of("COMPONENT") : List.of();
+        boolean available = operational && !kernelPaused;
         List<String> capabilities = new ArrayList<>(instance instanceof Lifecycle || source
                 ? List.of("start", "stop") : List.of("materialize", "destroy"));
         if (instance instanceof PausableLifecycle) capabilities.addAll(List.of("pause", "resume"));
         boolean selected = selected(component.metadata().namespace());
-        if (!selected) actual = "EXCLUDED";
+        if (!selected) { observed = "EXCLUDED"; effective = "EXCLUDED"; available = false; suspensionReasons = List.of(); }
         return new ComponentResource(component.id().kind(), component.metadata().namespace(), component.metadata().name(), component.type(),
-                component.component(), component.desiredState(), actual, selected, importedBy,
+                component.component(), component.desiredState(), observed, effective, available, suspensionReasons, selected, importedBy,
                 capabilities);
     }
     private record ResourceKey(String flowId, String id) { }

@@ -16,7 +16,7 @@ import java.util.UUID;
 public record ActionContext(UUID sessionId, String flowId,
                             Map<String, Object> sessionValues, SessionContext sessionContext,
                             Map<String, Object> flowValues, FlowContext flowContext,
-                            CancellationToken cancellationToken, EventEmitter emitter,
+                            ExecutionControl executionControl, EventEmitter emitter,
                             Map<String, Object> globalValues, GlobalContext globalContext,
                             Map<String, Object> configuration) {
     public ActionContext {
@@ -25,17 +25,20 @@ public record ActionContext(UUID sessionId, String flowId,
         java.util.Objects.requireNonNull(emitter, "emitter");
     }
     public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
-                         SessionContext sessionContext, CancellationToken cancellationToken, EventEmitter emitter,
+                         SessionContext sessionContext, ExecutionControl executionControl, EventEmitter emitter,
                          Map<String, Object> globalValues, Map<String, Object> configuration) {
-        this(sessionId, flowId, sessionValues, sessionContext, Map.of(), null, cancellationToken, emitter, globalValues, null, configuration);
+        this(sessionId, flowId, sessionValues, sessionContext, Map.of(), null, executionControl, emitter, globalValues, null, configuration);
     }
     public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
-                         SessionContext sessionContext, CancellationToken cancellationToken, EventEmitter emitter) {
-        this(sessionId, flowId, sessionValues, sessionContext, cancellationToken, emitter, Map.of(), Map.of());
+                         SessionContext sessionContext, ExecutionControl executionControl, EventEmitter emitter) {
+        this(sessionId, flowId, sessionValues, sessionContext, executionControl, emitter, Map.of(), Map.of());
     }
 
     /** Emits a derived Event immediately. The Runtime supplies the current Session and lineage. */
     public boolean emit(KuudraEvent event) { return emitter.emit(event); }
+    /** @deprecated use {@link #executionControl()}. */
+    @Deprecated(forRemoval = false)
+    public ExecutionControl cancellationToken() { return executionControl; }
     public TypedValueMap configurationValues() { return TypedValueMap.of(configuration); }
     public <T> T configuration(String key, Class<T> type) {
         return TypedValueMap.get(configuration, key, type);

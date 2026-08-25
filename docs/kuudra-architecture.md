@@ -61,7 +61,7 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 
 每个进入 SESSION 节点的任务在入队前取得一份工作租约，节点完成、失败或被取消跳过后释放。Handler 返回的 `CompletionStage` 完成前租约保持有效；完成后再调用 emitter 属于契约错误。最后一个租约归零时，Session 进入 `COMPLETED`、`CANCELLED` 或 `FAILED`，Runtime 发布 SystemEvent 并通知 Coordinator 启动下一个待处理事件。
 
-Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消是协作式：取消标记阻止新工作，组件通过 `CancellationToken` 清理自身资源。
+Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消与暂停都是协作式的：`EventContext` 和 `ActionContext` 统一暴露 `ExecutionControl`，组件可以用 `poll()` 无阻塞读取 `CONTINUE/PAUSE/CANCEL`，长时间异步任务则在可恢复边界调用 `checkpoint()`。旧 `CancellationToken` 仅作为迁移兼容接口保留。
 
 Session 不建立父子生命周期。Egress 后再次进入 Ingress 会创建独立 Session；二者只通过 EventLineage 保留因果关系，因此不存在父子取消、合并或引用计数冲突。
 
@@ -89,8 +89,12 @@ Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `Context
 Runtime 和 App 内核边界产生的失败统一以运行时异常 `KuudraException` 对外传播并保留 cause，使 Web、宿主框架和插件能够把内核拒绝与普通 IO、JDK 或容器环境异常区分开。
 # 暂停与控制平面
 
-Flow 是静态路由声明，不拥有生命周期。暂停的控制与编排属于 App，Runtime 只实现两个执行原语：内核闸门在安全点冻结所有后续路由，Session 闸门只冻结携带该 Session 的 Event。App 进入 `PAUSING` 后等待在途节点退出，Runtime 再暂停仍活跃的 Session，并对实现 `PausableLifecycle` 的组件调用非破坏性的 `pause()`；普通 `stop/destroy` 不参与暂停。随后 App 保存包含组件观测状态、队列、Session、Flow/Global context 的进程内检查点，最后才发布 `PAUSED`。因此检查点不会与暂停后的继续执行形成竞态，但它也不是持久化恢复镜像。
+Flow 是静态路由声明，不拥有生命周期。执行控制分成彼此正交的三层：内核闸门冻结整个 Runtime 的事件流转；组件闸门由 App 根据该资源的 `desiredState` 调谐；Session 闸门只影响携带该 Session 的工作。`ExecutionControl` 汇总三层信号，并通过 `suspensionReasons()` 说明暂停来自 `KERNEL`、`COMPONENT` 还是 `SESSION`。
 
-恢复由 App 进入 `RESUMING` 后触发：组件执行 `resume()`、由内核暂停的 Session 恢复、Runtime 闸门重新开放，然后 App 回到 `RUNNING`。原本已被用户单独暂停的 Session 不会被内核恢复。已经进入一次 `EventHandler.handle` 的调用允许协作式抵达安全点；组件可通过 `CancellationToken.isPauseRequested()` 与 `awaitResumed()` 响应内核或 Session 暂停，Runtime 不以线程强杀破坏插件状态。
+App 进入 `PAUSING` 后先关闭内核闸门。尚未进入节点的新工作停在入口；短同步节点执行完当前调用后抵达安全点；长时间异步 Handler 在 `checkpoint()` 处归还 Runtime 在途执行计数，但继续持有 Session 工作租约与当前业务进度。待在途计数归零后，Runtime 保存组件观测状态、队列、Session、Flow/Global context 的进程内检查点，App 才发布 `PAUSED`。内核暂停不会调用组件 `pause()/stop()`，不会改写组件的 `desiredState` 或 observed state，也不会把 Session 状态改成 `PAUSED`。因此它是粗粒度冻结，不会破坏组件内部状态。
+
+恢复由 App 进入 `RESUMING` 后重新开放内核闸门，停在 `checkpoint()` 的调用从原节点继续，随后 App 回到 `RUNNING`。组件自身的 `pause()/resume()` 只由其资源 `desiredState` 调谐触发；Session 的 pause/resume/cancel 也只改变该 Session。三层恢复不会互相越权，例如恢复内核不会恢复用户单独暂停的组件或 Session。
+
+`EventAdapter`、`EventInterpreter`、`Ingress` 与 `Egress` 都接收同一份 `EventContext`，因此具有一致的判断能力；这些同步组件应调用 `poll()` 并快速返回，不应阻塞等待恢复。`EventHandler` 可以异步执行，适合在循环、定时宏或外部 IO 的稳定边界 `checkpoint()`。`EventSource` 位于 Runtime 调用链之外：内核闸门通过 emitter 的接收结果阻止继续注入，组件自身的细粒度暂停仍由 `PausableLifecycle` 调谐。
 
 官方内置组件 `event-handler/kuudra-official/system-control` 通过 `PluginRuntimeServices` 的窄控制端口提交 `PAUSE_KERNEL`、`RESUME_KERNEL`、`STOP_KERNEL`、`PAUSE_SESSION`、`RESUME_SESSION` 或 `CANCEL_SESSION`，因此快捷键等业务事件可以被映射为控制请求，而插件无需依赖 App。内核整体暂停后，恢复命令必须来自仍可工作的控制平面（HTTP 或插件直接持有的控制端口）；普通数据 Flow 已被冻结，不能承担自恢复通道。

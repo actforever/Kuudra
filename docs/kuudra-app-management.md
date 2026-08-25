@@ -41,10 +41,14 @@ CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 | `GET` | `/api/v1/app/resources/state` | 查询持久 generation 与观测状态。 |
 | `GET` | `/api/v1/app/events` | SSE 系统事件流。 |
 
-暂停由 App 编排：先把状态切换为 `PAUSING`，再要求 Runtime 关闭执行闸门并等待所有已经进入节点执行的工作抵达安全点；随后 Runtime 调用实现了 `PausableLifecycle` 的组件、暂停仍活跃的 Session，并生成一致检查点。只有这些步骤全部完成后 App 才进入 `PAUSED`，所以 `POST /pause` 成功返回本身就是“内核已经静止”的确认。普通 `Lifecycle.stop()` 不参与暂停，避免销毁实例或丢失插件队列；未实现可暂停生命周期的组件仍被 Runtime 闸门隔离，并在资源状态中显示为 `QUIESCED`。恢复按相反方向进行，不重建组件、Session 或上下文。
+暂停由 App 编排：先把状态切换为 `PAUSING`，再要求 Runtime 关闭内核执行闸门并等待已经进入节点的工作抵达安全点，随后生成一致检查点。只有这些步骤全部完成后 App 才进入 `PAUSED`，所以 `POST /pause` 成功返回本身就是“内核事件流已经静止”的确认。该流程不调用任何组件的 `pause()/stop()`，也不改写组件或 Session 状态；组件实例、内部状态、上下文和队列均保留。恢复只重新开放内核闸门，不重建组件、Session 或上下文。
 
 `stop` 和 `restart` 在 `PAUSING`、`PAUSED` 期间仍然有效。stop 会把状态抢占为 `STOPPING`，然后执行与 RUNNING 状态相同的正常停止流程：组件与插件按生命周期关闭，Runtime、Session、队列和检查点随本次运行结束而释放；如果 Runtime 仍在等待暂停安全点，关闭信号会唤醒并终止该等待。restart 不包含强制清除分支，而是严格顺序调用同一个 `stop()`，等待进入 `STOPPED` 后再调用 `start()`，最终形成 `PAUSED → STOPPING → STOPPED → STARTING → RUNNING`。
 
-`CancellationToken.isPauseRequested()` 和 `awaitResumed()` 同时观察内核级与当前 Session 级暂停。长时间运行的 Handler 应在合适的协作点检查它们；Runtime 不会强杀插件线程。内核检查点是进程内一致观测数据，不是崩溃恢复文件，也不会写入 SQLite StateStore。
+组件资源生命周期由 `desiredState` 单独调谐：`active/inactive` 控制无生命周期组件是否参与事件流；`running/stopped` 控制 `Lifecycle`；实现 `PausableLifecycle` 后才允许 `paused`。组件 PAUSED 会关闭该实例的执行闸门并调用其 `pause()`，恢复到 RUNNING 时调用 `resume()` 后重新开放闸门。内核 PAUSED 与组件 PAUSED 是不同状态轴。
+
+`ExecutionControl.poll()` 同时观察内核、当前组件和当前 Session；结果为 `CANCEL` 时应尽快清理并结束，为 `PAUSE` 时同步组件应快速返回，长时间异步 Handler 可以 `checkpoint()` 并在原调用点等待恢复。等待期间 Runtime 不把它算作在途节点，但 Session 工作租约仍被保留，避免会话被错误结束。内核检查点是进程内一致观测数据，不是崩溃恢复文件，也不会写入 SQLite StateStore。
+
+组件资源查询同时返回三个维度：`status` 是调谐得到的实际组件状态，`effectiveStatus` 叠加内核闸门后的有效状态，`suspensionReasons` 给出当前冻结来源。内核暂停时，一个实际为 `RUNNING` 的组件仍保持 `status: RUNNING`，但会返回 `effectiveStatus: SUSPENDED`、`available: false` 和 `suspensionReasons: [KERNEL]`。
 
 未来若将 App、Web、TUI 部署为独立进程，需要为 `KuudraApp` 增加独立的 IPC/HTTP Server 适配；该适配应复用本 API 契约，而不引入第二套 Web 模块或再次暴露 Runtime。

@@ -22,9 +22,16 @@ public final class SessionManager {
     private final Executor executor;
     private final ContextCodec codec;
     private final Consumer<ManagedSession> terminalListener;
+    private final Runnable controlChanged;
+
+    SessionManager(Executor executor, ContextCodec codec, Consumer<ManagedSession> terminalListener,
+                   Runnable controlChanged) {
+        this.executor = executor; this.codec = codec; this.terminalListener = terminalListener;
+        this.controlChanged = controlChanged;
+    }
 
     SessionManager(Executor executor, ContextCodec codec, Consumer<ManagedSession> terminalListener) {
-        this.executor = executor; this.codec = codec; this.terminalListener = terminalListener;
+        this(executor, codec, terminalListener, () -> { });
     }
 
     ManagedSession create(String flowId, long revision, String ingressId, String groupKey, Map<String, Object> initial) {
@@ -43,6 +50,7 @@ public final class SessionManager {
         if (session == null || !session.active() || !session.cancelled.compareAndSet(false, true)) return false;
         session.status = SessionStatus.CANCELLATION_REQUESTED;
         synchronized (session.pauseMonitor) { session.paused = false; session.resumeSignal.complete(null); session.pauseMonitor.notifyAll(); }
+        controlChanged.run();
         if (session.leases.get() == 0) terminate(session, SessionStatus.CANCELLED);
         return true;
     }
@@ -53,6 +61,7 @@ public final class SessionManager {
             if (session.paused) return true;
             session.paused = true; session.resumeSignal = new java.util.concurrent.CompletableFuture<>(); session.status = SessionStatus.PAUSED;
         }
+        controlChanged.run();
         return true;
     }
     public boolean resume(UUID id) {
@@ -62,6 +71,7 @@ public final class SessionManager {
             if (!session.paused) return true;
             session.paused = false; session.status = SessionStatus.ACTIVE; session.resumeSignal.complete(null); session.pauseMonitor.notifyAll();
         }
+        controlChanged.run();
         if (session.leases.get() == 0) terminate(session, SessionStatus.COMPLETED);
         return true;
     }

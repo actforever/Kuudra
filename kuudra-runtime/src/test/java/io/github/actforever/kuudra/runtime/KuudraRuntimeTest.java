@@ -20,6 +20,46 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void cooperativeCheckpointParksCurrentHandlerWithoutChangingSessionState() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        AtomicInteger continued = new AtomicInteger();
+        EventHandler handler = (event, context) -> {
+            entered.countDown();
+            CompletableFuture<Void> completion = new CompletableFuture<>();
+            CompletableFuture.runAsync(() -> {
+                while (!context.executionControl().isPauseRequested()) Thread.onSpinWait();
+                context.executionControl().checkpoint().whenComplete((decision, error) -> {
+                    if (error != null) completion.completeExceptionally(error);
+                    else {
+                        if (decision == ExecutionDecision.CONTINUE) continued.incrementAndGet();
+                        completion.complete(null);
+                    }
+                });
+            });
+            return completion;
+        };
+        IngressConfiguration scheduling = new IngressConfiguration(
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("cooperative", Map.of(
+                    "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
+                            IngressDecision.accept("group", event), scheduling, Map.of()),
+                    "handler", new FlowNode.HandlerNode("handler", handler, Map.of())),
+                    Map.of("ingress", List.of("handler"))));
+            assertTrue(runtime.publish("cooperative", "ingress", KuudraEvent.of("work", Map.of())));
+            assertTrue(entered.await(1, TimeUnit.SECONDS));
+
+            RuntimeCheckpoint checkpoint = CompletableFuture.supplyAsync(runtime::pause).get(1, TimeUnit.SECONDS);
+            assertEquals(0, continued.get());
+            assertTrue(checkpoint.sessions().stream().anyMatch(session -> session.status() == SessionStatus.ACTIVE));
+
+            runtime.resume();
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+            assertEquals(1, continued.get());
+        }
+    }
+
+    @Test
     void reconcilerGatePreventsAStoppedLifecycleComponentFromReceivingEvents() throws Exception {
         AtomicInteger handled = new AtomicInteger();
         EventHandler handler = (event, context) -> {

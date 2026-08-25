@@ -4,6 +4,7 @@ import io.github.actforever.kuudra.api.action.ActionContext;
 import io.github.actforever.kuudra.api.action.ActionResult;
 import io.github.actforever.kuudra.api.event.KuudraEvent;
 import io.github.actforever.kuudra.api.context.SessionContext;
+import io.github.actforever.kuudra.api.context.ExecutionDecision;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -31,6 +32,7 @@ class ActionActorTest {
             public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) { return data.compareAndSet(expected, replacement); }
             public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> op) { return data.updateAndGet(op); }
         };
-        return new ActionContext(UUID.randomUUID(), "flow", Map.of(), store, () -> false, event -> true);
+        return new ActionContext(UUID.randomUUID(), "flow", Map.of(), store,
+                () -> ExecutionDecision.CONTINUE, event -> true);
     }
 }

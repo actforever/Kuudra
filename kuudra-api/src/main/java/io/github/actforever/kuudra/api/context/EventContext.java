@@ -18,7 +18,7 @@ import java.util.UUID;
 public record EventContext(String flowId, SessionReference session,
                            Map<String, Object> sessionValues, SessionContext sessionContext,
                            Map<String, Object> flowValues, FlowContext flowContext,
-                           CancellationToken cancellationToken,
+                           ExecutionControl executionControl,
                            Map<String, Object> globalValues, GlobalContext globalContext,
                            Map<String, Object> configuration) {
     public EventContext {
@@ -26,15 +26,18 @@ public record EventContext(String flowId, SessionReference session,
         globalValues = Map.copyOf(globalValues); configuration = Map.copyOf(configuration);
     }
     public EventContext(String flowId, SessionReference session, Map<String, Object> sessionValues,
-                        SessionContext sessionContext, CancellationToken cancellationToken,
+                        SessionContext sessionContext, ExecutionControl executionControl,
                         Map<String, Object> globalValues, Map<String, Object> configuration) {
-        this(flowId, session, sessionValues, sessionContext, Map.of(), null, cancellationToken, globalValues, null, configuration);
+        this(flowId, session, sessionValues, sessionContext, Map.of(), null, executionControl, globalValues, null, configuration);
     }
     public EventContext(String flowId, SessionReference session, Map<String, Object> sessionValues,
-                        SessionContext sessionContext, CancellationToken cancellationToken) {
-        this(flowId, session, sessionValues, sessionContext, cancellationToken, Map.of(), Map.of());
+                        SessionContext sessionContext, ExecutionControl executionControl) {
+        this(flowId, session, sessionValues, sessionContext, executionControl, Map.of(), Map.of());
     }
     public Optional<UUID> sessionId() { return session == null ? Optional.empty() : Optional.of(session.id()); }
+    /** @deprecated use {@link #executionControl()}. */
+    @Deprecated(forRemoval = false)
+    public ExecutionControl cancellationToken() { return executionControl; }
     public TypedValueMap configurationValues() { return TypedValueMap.of(configuration); }
     public <T> T configuration(String key, Class<T> type) {
         return TypedValueMap.get(configuration, key, type);
