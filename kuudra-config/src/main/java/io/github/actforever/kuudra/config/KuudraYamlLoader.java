@@ -87,6 +87,11 @@ public final class KuudraYamlLoader {
         }
         boolean consoleEnabled = bool(logging.get("console-enabled"), true);
         boolean fileEnabled = bool(logging.get("file-enabled"), true);
+        Map<String, Object> i18n = optionalMapping(root, "i18n");
+        String preferredLocale = string(i18n.getOrDefault("preferred-locale", "en_US"), "i18n.preferred-locale");
+        if (!preferredLocale.matches("[a-z]{2}_[A-Z]{2}")) {
+            throw new IOException("Expected locale in xx_XX format at i18n.preferred-locale: " + preferredLocale);
+        }
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         KuudraManifest.Resources manifests = loadManifests(homeDirectory.resolve("manifests"));
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
@@ -95,7 +100,8 @@ public final class KuudraYamlLoader {
                 new KuudraConfig.ResourceSelectionSettings(namespaceMode, selectedNamespaces),
                 new KuudraConfig.ReconciliationSettings(reconciliationEnabled, reconciliationIntervalMs),
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
-                new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled), homeDirectory,
+                new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled),
+                new KuudraConfig.I18nSettings(preferredLocale), homeDirectory,
                 optionalMapping(root, "global-context"), manifests);
     }
 

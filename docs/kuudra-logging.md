@@ -1,5 +1,7 @@
 # Kuudra 内核日志
 
+> Locale 闭环：内核英文目录为 `classpath:/i18n/en_US.json`；`config.yaml` 的 `i18n.preferred-locale`（格式 `xx_XX`）选择 `<home-directory>/locale/<locale>.json`，缺失文件或键时回退 `en_US`。插件可内嵌 `META-INF/kuudra-plugin/i18n/xx_XX.json`，并通过 `PluginLogger.message(...)` 使用身份隔离消息键。
+
 ## 解耦边界
 
 `kuudra-logging` 使用名为 `kuudra-core` 的独立 Logback `LoggerContext`，不会继承 Spring Boot 的 root logger、appender 或日志级别。终端行以粗体彩色 `[KUUDRA]` 标识，级别按 INFO/WARN/ERROR 着色；文件日志始终使用无 ANSI 控制符的纯文本格式。
@@ -12,7 +14,7 @@ Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。`kuudra
 
 系统事件不携带硬编码的自然语言日志正文：稳定的 `type`（例如 `web.shutdown.requested`）同时作为 I18n 消息键，`data` 中的 `trigger`、`action`、数量、耗时等结构化字段作为消息模板占位参数。日志适配器只打印 Resolver 渲染后的文本；增加语言时不需要修改事件生产者。
 
-独立的 `kuudra-i18n` 默认加载 `classpath:/i18n/en.json`，其中 JSON key 是 SystemEvent 消息键，value 是带 `{placeholder}` 的英文模板；通配键 `*` 保证任何新事件仍经过模板渲染。该模块不依赖 App、日志框架或插件系统，提供 `MessageResolver`、`JsonMessageResolver` 与 `MessageResolvers`。App 对外暴露有效的 `MessageResolver`：
+独立的 `kuudra-i18n` 默认加载 `classpath:/i18n/en_US.json`，其中 JSON key 是 SystemEvent 消息键，value 是带 `{placeholder}` 的英文模板；通配键 `*` 保证任何新事件仍经过模板渲染。该模块不依赖 App、日志框架或插件系统，提供 `MessageResolver`、`JsonMessageResolver` 与 `MessageResolvers`。App 对外暴露有效的 `MessageResolver`：
 
 ```java
 app.setSystemEventMessageResolver((messageKey, arguments) ->

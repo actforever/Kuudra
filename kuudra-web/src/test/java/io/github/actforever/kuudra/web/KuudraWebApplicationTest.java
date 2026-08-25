@@ -70,22 +70,13 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/api/v1/app/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/app/plugins/kuudra-official/default"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.namespace").value("kuudra-official"))
-                .andExpect(jsonPath("$.status").value("ACTIVE"));
+                .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.pluginId").value("default"))
-                .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'groupKey')]").exists())
-                .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'policy')].allowedValues").exists());
+                .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default/documentation"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.purpose").isNotEmpty())
-                .andExpect(jsonPath("$.supportedDesiredStates").isArray())
-                .andExpect(jsonPath("$.configuration[?(@.path == 'groupKey')].type").value("java.lang.String"))
-                .andExpect(jsonPath("$.emittedEvents").isArray());
+                .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/app/plugins/kuudra-official/default/components/event-handler/system-control/documentation"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.configuration[0].path").value("action"))
-                .andExpect(jsonPath("$.configuration[0].required").value(true));
+                .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/app/resources/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }

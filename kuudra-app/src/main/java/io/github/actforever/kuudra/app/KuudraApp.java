@@ -36,7 +36,7 @@ import io.github.actforever.kuudra.logging.KuudraLogLevel;
 import io.github.actforever.kuudra.logging.KuudraLogSession;
 import io.github.actforever.kuudra.i18n.MessageResolver;
 import io.github.actforever.kuudra.i18n.MessageResolvers;
-import io.github.actforever.kuudra.defaultplugin.DefaultPluginBundle;
+import io.github.actforever.kuudra.i18n.PluginMessageCatalogs;
 import io.github.actforever.kuudra.plugin.KernelControlAction;
 import io.github.actforever.kuudra.plugin.PluginRuntimeServices;
 import io.github.actforever.kuudra.state.ResourceStateStore;
@@ -63,8 +63,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private Map<String, Object> globalContext = Map.of();
     private final SystemEventBus events = new AppSystemEventBus();
     private volatile MessageResolver externalMessageResolver = MessageResolver.none();
+    private volatile MessageResolver configuredMessageResolver = MessageResolvers.english();
+    private volatile PluginMessageCatalogs pluginMessageCatalogs = new PluginMessageCatalogs(MessageResolvers.DEFAULT_LOCALE);
     private final MessageResolver messageResolver = (key, arguments) ->
-            externalMessageResolver.resolve(key, arguments).or(() -> MessageResolvers.english().resolve(key, arguments));
+            externalMessageResolver.resolve(key, arguments)
+                    .or(() -> pluginMessageCatalogs.resolve(key, arguments))
+                    .or(() -> configuredMessageResolver.resolve(key, arguments));
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
     private final Map<ResourceKey, ManagedEventSource> eventSources = new LinkedHashMap<>();
     private final Map<KuudraManifest.ResourceId, Object> manifestInstances = new LinkedHashMap<>();
@@ -161,6 +165,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Files.createDirectories(homeDirectory.resolve("manifests"));
         Files.createDirectories(homeDirectory.resolve("logs"));
         Files.createDirectories(homeDirectory.resolve("state"));
+        Files.createDirectories(homeDirectory.resolve("locale"));
         Path homeConfigFile = homeDirectory.resolve("config.yaml");
         if (Files.exists(homeConfigFile) && !Files.isRegularFile(homeConfigFile)) {
             throw new IOException("Kuudra home configuration is not a regular file: " + homeConfigFile);
@@ -181,6 +186,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (status == AppStatus.RUNNING || status == AppStatus.STARTING) return;
         try {
             Path home = bootstrapConfig == null ? Path.of(".kuudra") : bootstrapConfig.homeDirectory();
+            configuredMessageResolver = bootstrapConfig == null ? MessageResolvers.english()
+                    : MessageResolvers.locale(home.resolve("locale"), bootstrapConfig.i18n().preferredLocale());
+            pluginMessageCatalogs = new PluginMessageCatalogs(bootstrapConfig == null
+                    ? MessageResolvers.DEFAULT_LOCALE : bootstrapConfig.i18n().preferredLocale());
             KuudraLogConfiguration logging = bootstrapConfig == null
                     ? KuudraLogConfiguration.DEFAULT
                     : new KuudraLogConfiguration(KuudraLogLevel.valueOf(bootstrapConfig.logging().level()),
@@ -197,13 +206,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads, "maxEventHops", maxEventHops)));
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
             plugins = new DefaultPluginManager(homes, pluginRuntimeServices(), events);
-            plugins.register(DefaultPluginBundle.loadedPlugin());
             plugins.startAll().toCompletableFuture().join();
             if (bootstrapConfig != null) {
                 KuudraManifest.Resources currentManifests = KuudraYamlLoader.loadManifests(
                         bootstrapConfig.homeDirectory().resolve("manifests"));
                 applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
-                        bootstrapConfig.stateStore(), bootstrapConfig.logging(),
+                        bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
                         bootstrapConfig.homeDirectory(), bootstrapConfig.globalContext(), currentManifests));
             }
             status = AppStatus.RUNNING;
@@ -431,12 +439,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public synchronized void loadPlugin(Path archive) throws IOException {
         events.publish(SystemEvent.of("plugin.archive.loading", Map.of("archive", archive.toAbsolutePath().normalize().toString())));
         PluginArchiveLoader.LoadedArchive loaded = new PluginArchiveLoader().loadAll(List.of(archive),
-                KuudraApp.class.getClassLoader(), List.of(DefaultPluginBundle.metadata())).get(0);
+                KuudraApp.class.getClassLoader()).get(0);
         try {
+            registerPluginMessages(loaded);
             requirePlugins().register(loaded.plugin()); archives.add(loaded);
             events.publish(SystemEvent.of("plugin.archive.loaded", Map.of("archive", archive.toAbsolutePath().normalize().toString(), "pluginId", loaded.plugin().metadata().id())));
         }
-        catch (RuntimeException error) { try { loaded.close(); } catch (IOException closeError) { error.addSuppressed(closeError); } throw error; }
+        catch (IOException | RuntimeException error) { try { loaded.close(); } catch (IOException closeError) { error.addSuppressed(closeError); } throw error; }
     }
     public java.util.concurrent.CompletionStage<Void> startPlugins() { return requirePlugins().startAll(); }
     public PluginComponentRegistry pluginComponents() { return requirePlugins().components(); }
@@ -479,9 +488,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     public synchronized void loadPluginArchives(List<Path> pluginArchives) throws IOException {
         List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(pluginArchives,
-                KuudraApp.class.getClassLoader(), List.of(DefaultPluginBundle.metadata()));
+                KuudraApp.class.getClassLoader());
         try {
-            for (PluginArchiveLoader.LoadedArchive archive : loaded) requirePlugins().register(archive.plugin());
+            for (PluginArchiveLoader.LoadedArchive archive : loaded) {
+                registerPluginMessages(archive);
+                requirePlugins().register(archive.plugin());
+            }
             archives.addAll(loaded);
         } catch (RuntimeException error) {
             for (PluginArchiveLoader.LoadedArchive archive : loaded) try { archive.close(); } catch (IOException closeError) { error.addSuppressed(closeError); }
@@ -555,6 +567,21 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         runtime = null;
         plugins = null;
         globalContext = Map.of();
+    }
+
+    private void registerPluginMessages(PluginArchiveLoader.LoadedArchive loaded) throws IOException {
+        var metadata = loaded.plugin().metadata();
+        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(loaded.archive().toFile())) {
+            java.util.Set<String> locales = new java.util.LinkedHashSet<>();
+            locales.add(pluginMessageCatalogs.preferredLocale()); locales.add(MessageResolvers.DEFAULT_LOCALE);
+            for (String locale : locales) {
+                String path = "META-INF/kuudra-plugin/i18n/" + locale + ".json";
+                java.util.jar.JarEntry entry = jar.getJarEntry(path);
+                if (entry != null) try (var input = jar.getInputStream(entry)) {
+                    pluginMessageCatalogs.register(metadata.namespace(), metadata.id(), locale, input);
+                }
+            }
+        }
     }
 
     private void startReconciliationLoop(KuudraConfig.ReconciliationSettings settings) {

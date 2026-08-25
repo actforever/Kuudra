@@ -32,7 +32,6 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 | `kuudra-i18n` | I18n Resolver、JSON 消息目录、占位符插值和默认英文文本 |
 | `kuudra-config` | YAML 和 K8s 风格资源清单模型 |
 | `kuudra-plugin` | 插件元数据、依赖 ClassLoader、注解组件发现、清单配置和生命周期 |
-| `kuudra-default-plugin` | 内置官方插件 `kuudra-official/default`，提供按清单实例化的默认 Ingress/Egress |
 | `kuudra-runtime` | 双域 Flow、任务队列、SessionManager 与 SessionCoordinator |
 | `kuudra-app` | 配置、插件、清单和 Runtime 的框架无关外观 |
 | `kuudra-web` | 面向 App 的 REST、SSE 和 OpenAPI 适配器 |
@@ -46,12 +45,13 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 .kuudra/
   config.yaml
   plugins/
+  locale/                  # xx_XX.json 用户语言目录
   manifests/
   logs/
   state/kuudra.db            # 资源期望/观测状态与 generation
 ```
 
-所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`，Flow 只能导入同 namespace 资源。
+核心不再内置或隐式注册组件；`kuudra-default-plugin` 已迁移为同级独立项目，构建后也必须作为普通 JAR 放入 `plugins/`。所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`，Flow 只能导入同 namespace 资源。
 
 清单 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；内核对应的组件 type 分别采用 kebab-case。资源规范身份为 `kind/namespace/name`，Flow 通过同命名空间 import 将该身份绑定为局部路由别名。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时通过统一的 `TypedValueMap` 读取并转换资源 `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
 

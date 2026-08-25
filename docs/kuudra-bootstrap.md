@@ -2,7 +2,7 @@
 
 ## 配置来源与目录
 
-App 按优先级深度合并：初始化时显式配置、`<home-directory>/config.yaml`、包内 `config.yaml`。默认家目录是 `.kuudra`。启动会确保 `plugins/`、`manifests/`、`logs/`、`state/` 存在；家目录缺少 `config.yaml` 时复制包内默认文件，已有文件绝不覆盖。
+App 按优先级深度合并：初始化时显式配置、`<home-directory>/config.yaml`、包内 `config.yaml`。默认家目录是 `.kuudra`。启动会确保 `plugins/`、`manifests/`、`logs/`、`state/`、`locale/` 存在；家目录缺少 `config.yaml` 时复制包内默认文件，已有文件绝不覆盖。
 
 ```yaml
 home-directory: .kuudra
@@ -58,7 +58,7 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 ## 具体组件资源与 Flow
 
-支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。内置 `kuudra-default-plugin` 作为 `kuudra-official/default` 插件默认加载，但默认 Ingress/Egress 仍须由清单显式声明。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
+支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。Adapter 的 `options.domain` 必须是 `RAW` 或 `SESSION`，输入输出域一致。
 
 插件组件实现 `PluginComponentLifecycle` 后，会在 `initialize(PluginComponentContext)` 阶段收到当前 Component 清单的不可变 `options`。EventSource 等没有事件执行上下文的有状态资源，应在这里读取并校验启动参数；运行阶段不再重复解释 YAML。`PluginComponentContext`、`EventContext` 与 `ActionContext` 统一通过 `TypedValueMap` 提供 `configuration(key, Type)` 和带默认值的读取接口，查找、缺失值处理及 `ContextCodec` 类型转换不需要由插件重复实现。
 

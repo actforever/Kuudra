@@ -17,11 +17,11 @@ public final class KuudraConfig {
     /** Aggregate produced from config.yaml and manifests/. */
     public record RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
                                 ReconciliationSettings reconciliation,
-                                StateStoreSettings stateStore, LoggingSettings logging, Path homeDirectory,
+                                StateStoreSettings stateStore, LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
                                 Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
         public RuntimeConfig {
-            if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || manifests == null) {
-                throw new IllegalArgumentException("runtime, resourceSelection, reconciliation, stateStore, logging, and manifests must not be null");
+            if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || i18n == null || manifests == null) {
+                throw new IllegalArgumentException("runtime, resourceSelection, reconciliation, stateStore, logging, i18n, and manifests must not be null");
             }
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
@@ -71,6 +71,13 @@ public final class KuudraConfig {
     public record LoggingSettings(String level, boolean consoleEnabled, boolean fileEnabled) {
         public LoggingSettings {
             if (level == null || level.isBlank()) throw new IllegalArgumentException("logging level must not be blank");
+        }
+    }
+    public record I18nSettings(String preferredLocale) {
+        public I18nSettings {
+            if (preferredLocale == null || !preferredLocale.matches("[a-z]{2}_[A-Z]{2}")) {
+                throw new IllegalArgumentException("i18n.preferredLocale must use xx_XX format");
+            }
         }
     }
 

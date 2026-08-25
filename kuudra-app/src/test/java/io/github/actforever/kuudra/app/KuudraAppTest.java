@@ -21,6 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,7 +48,7 @@ class KuudraAppTest {
             app.pause(); assertEquals("PAUSED", app.snapshot().status().name());
             assertTrue(app.checkpoint().isPresent());
             assertEquals(0, app.checkpoint().orElseThrow().runtime().queuedTasks());
-            assertTrue(app.plugins().stream().anyMatch(plugin -> plugin.id().equals("default")));
+            assertTrue(app.plugins().isEmpty(), "The kernel must not inject a default plugin");
             app.resume(); assertEquals("RUNNING", app.snapshot().status().name());
             assertTrue(app.checkpoint().isEmpty());
         }
@@ -110,17 +112,8 @@ class KuudraAppTest {
         try (KuudraApp app = new KuudraApp(8, 1)) {
             assertEquals("RUNNING", app.health().status());
             assertEquals(0, app.flows().size());
-            assertEquals("ACTIVE", app.plugin("kuudra-official", "default").orElseThrow().status());
-            assertTrue(app.pluginComponent("ingress/kuudra-official/default").isPresent());
-            assertEquals(java.util.List.of("ACTIVE", "INACTIVE"), app.pluginComponent("ingress/kuudra-official/default")
-                    .orElseThrow().documentation().supportedDesiredStates());
-            assertEquals(java.util.List.of("RUNNING", "STOPPED"), app.pluginComponent("event-handler/kuudra-official/system-control")
-                    .orElseThrow().documentation().supportedDesiredStates());
-            assertEquals("action", app.pluginComponent("event-handler/kuudra-official/system-control")
-                    .orElseThrow().documentation().configuration().get(0).path());
-            assertTrue(app.pluginComponent("event-handler/kuudra-official/system-control")
-                    .orElseThrow().documentation().configuration().get(0).required());
-            assertTrue(app.componentResources().isEmpty(), "Loading the built-in plugin must not create resources");
+            assertTrue(app.plugins().isEmpty());
+            assertTrue(app.componentResources().isEmpty());
             app.stop();
             assertEquals("STOPPED", app.snapshot().status().name());
             app.start();
@@ -270,6 +263,7 @@ class KuudraAppTest {
 
     @Test
     void exposesEveryManifestComponentResourceTypeNotOnlyEventSources() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "ingress", "kuudra-official/default"));
         Files.writeString(manifests.resolve("egress.yaml"), component("Egress", "egress", "kuudra-official/default"));
@@ -308,6 +302,7 @@ class KuudraAppTest {
 
     @Test
     void reportsInactivePassiveResourcesWithoutEnablingThem() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
@@ -327,6 +322,7 @@ class KuudraAppTest {
 
     @Test
     void includesOnlySelectedNamespacesWhileKeepingAllDeclarationsQueryable() throws Exception {
+        installDefaultTestPlugin();
         Path home = Files.createDirectories(directory.resolve(".kuudra"));
         Path manifests = Files.createDirectories(home.resolve("manifests"));
         Files.writeString(home.resolve("config.yaml"), """
@@ -396,6 +392,7 @@ class KuudraAppTest {
 
     @Test
     void inactivePassiveResourceMayRemainImportedButItsRuntimeGateIsClosed() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("resources.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
@@ -426,6 +423,7 @@ class KuudraAppTest {
 
     @Test
     void appReconcilesAndPersistsAComponentDesiredStateChange() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default"));
 
@@ -443,6 +441,7 @@ class KuudraAppTest {
 
     @Test
     void startupManifestOverridesAConflictingPersistedDesiredState() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "authoritative", "kuudra-official/default"));
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
@@ -457,6 +456,7 @@ class KuudraAppTest {
 
     @Test
     void controlPlaneResourceQueriesRemainAvailableAfterRuntimeStops() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "queryable", "kuudra-official/default"));
         KuudraApp app = KuudraApp.createFromDefaultLocations(directory);
@@ -473,6 +473,7 @@ class KuudraAppTest {
 
     @Test
     void restartReloadsTheAuthoritativeManifestDirectory() throws Exception {
+        installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Path ingress = manifests.resolve("ingress.yaml");
         Files.writeString(ingress, component("Ingress", "before-restart", "kuudra-official/default"));
@@ -496,5 +497,28 @@ class KuudraAppTest {
                   desiredState: active
                   options: {}
                 """.formatted(kind, name, implementation);
+    }
+
+    private void installDefaultTestPlugin() throws Exception {
+        Path jar = Files.createDirectories(directory.resolve(".kuudra/plugins")).resolve("default-test-plugin.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(jar))) {
+            write(output, "META-INF/kuudra-plugin/metadata.toml", """
+                    id = "default"
+                    namespace = "kuudra-official"
+                    version = "0.1.0"
+                    entrypoint = "io.github.actforever.kuudra.app.TestDefaultPlugin"
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            for (Class<?> type : java.util.List.of(TestDefaultPlugin.class, TestDefaultPlugin.TestIngress.class,
+                    TestDefaultPlugin.TestEgress.class)) {
+                String resource = type.getName().replace('.', '/') + ".class";
+                try (var input = type.getClassLoader().getResourceAsStream(resource)) {
+                    write(output, resource, java.util.Objects.requireNonNull(input).readAllBytes());
+                }
+            }
+        }
+    }
+
+    private static void write(JarOutputStream output, String name, byte[] content) throws Exception {
+        output.putNextEntry(new JarEntry(name)); output.write(content); output.closeEntry();
     }
 }

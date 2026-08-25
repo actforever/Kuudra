@@ -48,5 +48,10 @@ logging:
   # 是否写入 <home-directory>/logs/latest.log 并按启动批次归档。
   file-enabled: true
 
+# 国际化消息配置。自定义语言文件放在 <home-directory>/locale，文件名必须为 xx_XX.json。
+i18n:
+  # 首选语言；找不到对应消息或文件时自动回退到内置 en_US。
+  preferred-locale: en_US
+
 # 全局上下文初始值，可通过 ${global#path} 或自动作用域查找读取。
 global-context: {}

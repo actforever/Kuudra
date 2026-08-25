@@ -115,7 +115,15 @@ public final class KuudraLog {
                               io.github.actforever.kuudra.i18n.MessageResolver messages) {
         if (event.type().equals("plugin.log")) {
             String plugin = "[plugin=" + event.data().get("namespace") + "/" + event.data().get("pluginId") + "] ";
-            String message = plugin + event.data().get("message") + fields(event.data().get("fields"));
+            Object rawFields = event.data().get("fields");
+            java.util.Map<?, ?> pluginFields = rawFields instanceof java.util.Map<?, ?> map ? map : java.util.Map.of();
+            String localKey = Objects.toString(pluginFields.get("kuudra.i18n.message-key"), "");
+            String qualifiedKey = "plugin." + event.data().get("namespace") + "." + event.data().get("pluginId") + "." + localKey;
+            String rendered = localKey.isBlank() ? Objects.toString(event.data().get("message"))
+                    : messages.resolve(qualifiedKey, stringObjectMap(pluginFields)).orElse(qualifiedKey);
+            java.util.LinkedHashMap<Object,Object> visibleFields = new java.util.LinkedHashMap<>(pluginFields);
+            visibleFields.remove("kuudra.i18n.message-key");
+            String message = plugin + rendered + fields(visibleFields);
             String level = Objects.toString(event.data().get("level"), "INFO");
             switch (level) {
                 case "TRACE" -> logger.trace(message);
@@ -144,6 +152,12 @@ public final class KuudraLog {
 
     private static String fields(Object value) {
         return value instanceof java.util.Map<?, ?> fields && !fields.isEmpty() ? " " + fields : "";
+    }
+
+    private static java.util.Map<String,Object> stringObjectMap(java.util.Map<?,?> source) {
+        java.util.LinkedHashMap<String,Object> result = new java.util.LinkedHashMap<>();
+        source.forEach((key, value) -> result.put(Objects.toString(key), value));
+        return result;
     }
 
     private static final class Session implements KuudraLogSession {
