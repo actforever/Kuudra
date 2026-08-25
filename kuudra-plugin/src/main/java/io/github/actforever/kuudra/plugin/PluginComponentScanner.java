@@ -59,12 +59,16 @@ final class PluginComponentScanner {
         boolean lifecycle = io.github.actforever.kuudra.api.Lifecycle.class.isAssignableFrom(type)
                 || PluginComponentLifecycle.class.isAssignableFrom(type);
         List<String> desiredStates = supportedDesiredStates(type);
-        if (annotation == null) return new PluginComponentDocumentation("", "", lifecycle, List.of(), desiredStates, List.of());
+        if (annotation == null) return new PluginComponentDocumentation("", "", lifecycle, List.of(), desiredStates, List.of(), List.of());
+        List<PluginConfigurationDocumentation> configuration = java.util.Arrays.stream(annotation.configuration())
+                .map(item -> new PluginConfigurationDocumentation(item.path(), item.type(), item.required(),
+                        item.defaultValue(), item.description(), item.example(), List.of(item.allowedValues())))
+                .toList();
         List<PluginEventDocumentation> events = java.util.Arrays.stream(annotation.emittedEvents())
                 .map(item -> new PluginEventDocumentation(item.stage(), item.eventType(), item.description(), item.dataExample()))
                 .toList();
         return new PluginComponentDocumentation(annotation.purpose(), annotation.usageExample(), lifecycle,
-                List.of(annotation.lifecyclePhases()), desiredStates, events);
+                List.of(annotation.lifecyclePhases()), desiredStates, configuration, events);
     }
 
     private static List<String> supportedDesiredStates(Class<?> type) {

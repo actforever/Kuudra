@@ -102,6 +102,10 @@ class KuudraAppTest {
                     .orElseThrow().documentation().supportedDesiredStates());
             assertEquals(java.util.List.of("RUNNING", "STOPPED"), app.pluginComponent("event-handler/kuudra-official/system-control")
                     .orElseThrow().documentation().supportedDesiredStates());
+            assertEquals("action", app.pluginComponent("event-handler/kuudra-official/system-control")
+                    .orElseThrow().documentation().configuration().get(0).path());
+            assertTrue(app.pluginComponent("event-handler/kuudra-official/system-control")
+                    .orElseThrow().documentation().configuration().get(0).required());
             assertTrue(app.componentResources().isEmpty(), "Loading the built-in plugin must not create resources");
             app.stop();
             assertEquals("STOPPED", app.snapshot().status().name());

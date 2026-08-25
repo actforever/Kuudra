@@ -13,9 +13,23 @@
 
 ## 组件文档与插件日志
 
-插件组件可通过 `@ComponentDoc` 声明用途、配置示例和生命周期阶段，并通过一个或多个 `@EventEmission` 描述可能输出的事件类型、输出阶段与数据示例。归档扫描时，这些信息会和组件定义一起进入注册表，而不是从 README 文本中临时解析。
+插件组件可通过 `@ComponentDoc` 声明用途、配置示例和生命周期阶段，通过 `configuration` 中的 `@SpecProperty` 描述 `spec.options` 下每个实例配置项，并通过一个或多个 `@EventEmission` 描述可能输出的事件类型、输出阶段与数据示例。每个规约项包含相对路径、类型、是否必填、默认值、允许值、说明和示例。归档扫描时，这些信息会和组件定义一起进入注册表，而不是从 README 文本中临时解析。
 
-插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{namespace}/{pluginId}`、`/api/v1/app/plugins/{namespace}/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。插件始终以 `namespace/pluginId` 隔离，同 ID、不同 namespace 的插件可以同时加载。组件是否真正具有生命周期还会根据其接口实现自动识别。
+```java
+@ComponentDoc(
+    purpose = "在给定时间窗口内识别事件序列",
+    configuration = {
+        @SpecProperty(path = "windowMillis", type = "integer", required = true,
+                      description = "序列匹配窗口，单位毫秒", example = "500"),
+        @SpecProperty(path = "ordered", type = "boolean", defaultValue = "true",
+                      description = "是否要求事件按声明顺序出现")
+    }
+)
+```
+
+`path` 相对于 Component 清单的 `spec.options`，例如 `path = "windowMillis"` 对应 `spec.options.windowMillis`。`defaultValue` 和 `example` 是面向文档的 YAML/JSON 字面量文本。当前版本负责扫描和公开规约文档，但尚未把它作为通用 schema 强制校验；组件仍应在初始化阶段校验自身参数。
+
+插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{namespace}/{pluginId}`、`/api/v1/app/plugins/{namespace}/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。插件始终以 `namespace/pluginId` 隔离，同 ID、不同 namespace 的插件可以同时加载。组件是否真正具有生命周期还会根据其接口实现自动识别；组件详情的 `documentation.configuration` 会原样返回结构化实例规约。
 
 插件代码不直接依赖 Logback。`PluginContext.logger()` 和 `PluginComponentContext.logger()` 返回绑定 namespace 与插件 ID 的 `PluginLogger`；日志先作为 `plugin.log` 系统事件进入 App 总线，再由 `kuudra-logging` 按内核日志配置输出。
 

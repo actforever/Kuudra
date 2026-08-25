@@ -60,7 +60,9 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.namespace").value("kuudra-official"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
         mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.pluginId").value("default"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.pluginId").value("default"))
+                .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'groupKey')]").exists())
+                .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'policy')].allowedValues").exists());
         mvc.perform(get("/api/v1/app/resources/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }

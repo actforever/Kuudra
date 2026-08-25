@@ -410,7 +410,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 view.instancePolicy().limitScope().name(), view.instancePolicy().exclusivityDomain(),
                 view.instancePolicy().shareable(), view.instancePolicy().threadSafe()),
                 new ComponentDocumentation(documentation.purpose(), documentation.usageExample(), documentation.lifecycle(),
-                        documentation.lifecyclePhases(), documentation.supportedDesiredStates(), documentation.emittedEvents().stream()
+                        documentation.lifecyclePhases(), documentation.supportedDesiredStates(), documentation.configuration().stream()
+                        .map(property -> new ConfigurationDocumentation(property.path(), property.type(), property.required(),
+                                property.defaultValue(), property.description(), property.example(), property.allowedValues())).toList(),
+                        documentation.emittedEvents().stream()
                         .map(event -> new EventDocumentation(event.stage(), event.eventType(), event.description(), event.dataExample())).toList()));
     }
     public record Health(String status, int queuedTasks, int flows) { }
@@ -837,12 +840,18 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                                  boolean shareable, boolean threadSafe) { }
     public record ComponentDocumentation(String purpose, String usageExample, boolean lifecycle,
                                          List<String> lifecyclePhases, List<String> supportedDesiredStates,
+                                         List<ConfigurationDocumentation> configuration,
                                          List<EventDocumentation> emittedEvents) {
         public ComponentDocumentation {
             lifecyclePhases = List.copyOf(lifecyclePhases);
             supportedDesiredStates = List.copyOf(supportedDesiredStates);
+            configuration = List.copyOf(configuration);
             emittedEvents = List.copyOf(emittedEvents);
         }
+    }
+    public record ConfigurationDocumentation(String path, String type, boolean required, String defaultValue,
+                                             String description, String example, List<String> allowedValues) {
+        public ConfigurationDocumentation { allowedValues = List.copyOf(allowedValues); }
     }
     public record EventDocumentation(String stage, String eventType, String description, String dataExample) { }
     private ManagedEventSource requireEventSource(String flowId, String resourceId) {

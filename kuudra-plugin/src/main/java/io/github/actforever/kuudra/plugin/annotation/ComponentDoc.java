@@ -11,5 +11,7 @@ public @interface ComponentDoc {
     String purpose();
     String usageExample() default "";
     String[] lifecyclePhases() default {};
+    /** Structured documentation for component-specific properties below spec.options. */
+    SpecProperty[] configuration() default {};
     EventEmission[] emittedEvents() default {};
 }
