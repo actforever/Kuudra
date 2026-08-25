@@ -6,6 +6,7 @@ App 按优先级深度合并：初始化时显式配置、`<home-directory>/conf
 
 ```yaml
 home-directory: .kuudra
+banner-enabled: true
 runtime:
   queue-capacity: 1024
   worker-threads: 2
@@ -35,6 +36,7 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 | 配置路径 | 默认值 | 说明 |
 | --- | ---: | --- |
 | `home-directory` | `.kuudra` | Kuudra 家目录。 |
+| `banner-enabled` | `true` | 是否在内核启动时向控制台打印 Kuudra Banner。 |
 | `runtime.queue-capacity` | `1024` | Runtime 事件任务队列容量。 |
 | `runtime.worker-threads` | `2` | 异步节点工作线程数。 |
 | `runtime.max-event-hops` | `256` | 单个事件的最大路由跳数。 |

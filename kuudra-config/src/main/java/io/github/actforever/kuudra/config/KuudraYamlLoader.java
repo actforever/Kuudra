@@ -93,6 +93,7 @@ public final class KuudraYamlLoader {
             throw new IOException("Expected locale in xx_XX format at i18n.preferred-locale: " + preferredLocale);
         }
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
+        boolean bannerEnabled = bool(root.get("banner-enabled"), true);
         KuudraManifest.Resources manifests = loadManifests(homeDirectory.resolve("manifests"));
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
@@ -101,7 +102,7 @@ public final class KuudraYamlLoader {
                 new KuudraConfig.ReconciliationSettings(reconciliationEnabled, reconciliationIntervalMs),
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled),
-                new KuudraConfig.I18nSettings(preferredLocale), homeDirectory,
+                new KuudraConfig.I18nSettings(preferredLocale), homeDirectory, bannerEnabled,
                 optionalMapping(root, "global-context"), manifests);
     }
 

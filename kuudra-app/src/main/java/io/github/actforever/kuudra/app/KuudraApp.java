@@ -219,7 +219,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     bootstrapConfig.logging().consoleEnabled(), bootstrapConfig.logging().fileEnabled());
             logSession = KuudraLog.openSession(home.resolve("logs"), events, logging, messageResolver);
             status = AppStatus.STARTING; publish("app.starting");
-            KuudraBanner.print();
+            if (bootstrapConfig == null || bootstrapConfig.bannerEnabled()) KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
             int dispatcherPollIntervalMs = bootstrapConfig == null ? 200 : bootstrapConfig.runtime().dispatcherPollIntervalMs();
@@ -235,7 +235,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                         bootstrapConfig.homeDirectory().resolve("manifests"));
                 applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
                         bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
-                        bootstrapConfig.homeDirectory(), bootstrapConfig.globalContext(), currentManifests));
+                        bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(), currentManifests));
             }
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) startReconciliationLoop(bootstrapConfig.reconciliation());

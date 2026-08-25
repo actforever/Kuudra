@@ -24,6 +24,7 @@ class KuudraConfigTest {
                 "reconciliation", Map.of("enabled", true, "interval-ms", 250),
                 "resource-selection", Map.of("namespace-mode", "include", "namespaces", java.util.List.of("alpha", "beta")),
                 "state-store", Map.of("busy-timeout-ms", 1_500),
+                "banner-enabled", false,
                 "home-directory", "custom-home",
                 "global-context", Map.of("profile", "host")), directory, "host configuration"));
 
@@ -44,6 +45,7 @@ class KuudraConfigTest {
         assertEquals("INFO", config.logging().level());
         assertEquals(true, config.logging().consoleEnabled());
         assertEquals(true, config.logging().fileEnabled());
+        assertEquals(false, config.bannerEnabled());
         assertEquals(directory.resolve("custom-home").toAbsolutePath().normalize(), config.homeDirectory());
         assertEquals("host", config.globalContext().get("profile"));
     }

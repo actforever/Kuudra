@@ -1,6 +1,9 @@
 # Kuudra 家目录。相对路径以可执行 JAR 所在目录（独立 App 为工作目录）为基准。
 home-directory: .kuudra
 
+# 是否在内核启动时向控制台打印 Kuudra Banner；关闭日志控制台输出不会隐式关闭该项。
+banner-enabled: true
+
 runtime:
   # Runtime 待执行事件队列的最大容量；队列满时新事件会被拒绝。
   queue-capacity: 1024

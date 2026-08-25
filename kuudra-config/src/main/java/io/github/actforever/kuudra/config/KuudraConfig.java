@@ -18,7 +18,7 @@ public final class KuudraConfig {
     public record RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
                                 ReconciliationSettings reconciliation,
                                 StateStoreSettings stateStore, LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
-                                Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
+                                boolean bannerEnabled, Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
         public RuntimeConfig {
             if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || i18n == null || manifests == null) {
                 throw new IllegalArgumentException("runtime, resourceSelection, reconciliation, stateStore, logging, i18n, and manifests must not be null");
