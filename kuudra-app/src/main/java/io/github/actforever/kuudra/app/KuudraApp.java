@@ -177,6 +177,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
 
+    /** Performs the same graceful stop sequence available to callers, then starts a fresh kernel run. */
+    @Override public void restart() {
+        stop();
+        start();
+    }
+
     @Override public synchronized AppSnapshot snapshot() {
         return runtime == null ? new AppSnapshot(status, 0, 0, detail) : new AppSnapshot(status, runtime.queuedTasks(), runtime.flows().size(), detail);
     }
