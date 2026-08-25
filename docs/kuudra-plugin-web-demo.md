@@ -44,12 +44,12 @@ event-handler/<namespace>/<name>
 
 ## HelloWorld 到 Logging 的最小 Flow
 
-`kuudra-official/hello-world` EventSource 产生 RAW 事件，而 `kuudra-official/event-logger` EventHandler 只能在 SESSION 域执行，因此两者之间必须存在 Ingress。核心 reactor 的 `kuudra-default-plugin` 默认以 `kuudra-official/default` 插件身份加载；只有清单声明 `kind: Ingress` 并引用 `kuudra-official/default` 时才构建实例。最小路由为：
+`kuudra-official/hello-world` EventSource 产生 RAW 事件，而 `kuudra-official/event-logger` EventHandler 只能在 SESSION 域执行，因此两者之间必须存在 Ingress。外置 `kuudra-default-plugin` 以 `kuudra-official/default` 插件身份加载；只有清单声明 `kind: Ingress` 并引用 `kuudra-official/default-ingress` 时才构建实例。最小路由为：
 
 ```text
-EventSource -> ingress/kuudra-official/default -> EventHandler
+EventSource -> ingress/kuudra-official/default-ingress -> EventHandler
 ```
 
-完整的三份 Component 清单和一份 Flow 清单位于 `kuudra-plugin-demos/examples/hello-world-logging/`。其中默认 Ingress 使用 `${event#hello-world.message}` 作为组键并选择 `SERIAL` 策略；它只计算准入和分组，Session 创建与串行调度由 Runtime 完成。Logging Handler 再通过插件 Logger 发布 `plugin.log` SystemEvent，由 `kuudra-logging` 统一打印。
+完整的三份 Component 清单和一份 Flow 清单位于 `kuudra-official-plugins/examples/hello-world-logging/`。其中 `default-ingress` 使用 `${event#hello-world.message}` 作为组键并选择 `SERIAL` 策略；它无条件准入并计算分组，Session 创建与串行调度由 Runtime 完成。Logging Handler 再通过插件 Logger 发布 `plugin.log` SystemEvent，由 `kuudra-logging` 统一打印。
 
 `KuudraApp` 是应用外观。`kuudra-web` 是唯一的 REST/SSE 适配层，直接将 App 管理 API 暴露给 HTTP 客户端；它不直接暴露 Runtime。运行 Web 时输出 `:: Kuudra Web Adapter ::`，而 Kuudra Banner 只在 App 创建时输出。

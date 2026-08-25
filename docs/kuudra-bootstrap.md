@@ -67,7 +67,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: Ingress
 metadata: {namespace: demo, name: ingress}
 spec:
-  component: kuudra-official/default
+  component: kuudra-official/default-ingress
   desiredState: active
   options:
     groupKey: ${event#input.key}
@@ -100,6 +100,6 @@ YAML 原生数字、布尔、Map、List 保持类型。JSON 对象/数组字符�
 | `groupScope` | `FLOW_BINDING`（默认）或 `INGRESS`；后者按 Component 资源身份跨 Flow 共享调度组 |
 | `maxParallelSessions` | PARALLEL 组内上限，默认 64 |
 | `queueCapacity` | 有界等待容量，默认 256 |
-| `groupKey` | 默认 Ingress 分组表达式，默认事件 type |
+| `groupKey` | `default-ingress` 分组表达式，默认事件 type |
 
 Ingress 只计算准入与组键；SessionManager 创建会话并维护工作租约，SessionCoordinator 管理调度状态和队列。失败或取消只会阻止新工作，已有租约全部归还后才发布唯一终态并启动组内后继任务。

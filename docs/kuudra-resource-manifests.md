@@ -130,7 +130,7 @@ spec:
 
 同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。Flow 本身没有生命周期；暂停发生在 App 或 Session 层。
 
-Ingress 必须显式声明为 `kind: Ingress` 资源。官方默认实现来自已加载的 `kuudra-official/default` 插件；加载插件本身不会隐式创建任何资源实例。
+Ingress 必须显式声明为 `kind: Ingress` 资源。官方无条件准入实现为 `ingress/kuudra-official/default-ingress`；加载插件本身不会隐式创建任何资源实例。Flow 是内核拥有的路由资源而非插件组件：其 `metadata/imports/edges` 由 App 校验，Runtime 将其编译为调度图，因此不应注册成与 Ingress 同级的插件实现。
 
 ## 实例数量与互斥域
 
