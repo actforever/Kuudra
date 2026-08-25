@@ -300,6 +300,75 @@ class KuudraAppTest {
     }
 
     @Test
+    void includesOnlySelectedNamespacesWhileKeepingAllDeclarationsQueryable() throws Exception {
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Path manifests = Files.createDirectories(home.resolve("manifests"));
+        Files.writeString(home.resolve("config.yaml"), """
+                home-directory: .kuudra
+                resource-selection:
+                  namespace-mode: INCLUDE
+                  namespaces: [alpha]
+                """);
+        Files.writeString(manifests.resolve("namespaces.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: alpha, name: input}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: alpha, name: output}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: alpha, name: route}
+                spec:
+                  imports:
+                    input: {kind: Ingress, name: input}
+                    output: {kind: Egress, name: output}
+                  edges: [{from: input, to: output}]
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: beta, name: input}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: beta, name: output}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: beta, name: route}
+                spec:
+                  imports:
+                    input: {kind: Ingress, name: input}
+                    output: {kind: Egress, name: output}
+                  edges: [{from: input, to: output}]
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals(4, app.componentResources().size());
+            assertTrue(app.resource("Ingress", "alpha", "input").orElseThrow().selected());
+            assertEquals("ACTIVE", app.resource("Ingress", "alpha", "input").orElseThrow().status());
+            assertEquals(false, app.resource("Ingress", "beta", "input").orElseThrow().selected());
+            assertEquals("EXCLUDED", app.resource("Ingress", "beta", "input").orElseThrow().status());
+            assertEquals(2, app.flows().size());
+            assertTrue(app.flow("alpha", "route").orElseThrow().selected());
+            assertEquals(false, app.flow("beta", "route").orElseThrow().selected());
+            assertEquals("EXCLUDED", app.resourceStates().stream()
+                    .filter(state -> state.id().namespace().equals("beta")).findFirst().orElseThrow().phase());
+            assertEquals("INACTIVE", app.setDesiredState("Ingress", "alpha", "input", "inactive").status());
+            assertEquals(4, app.componentResources().size());
+            assertTrue(app.resource("Ingress", "beta", "input").isPresent());
+            assertThrows(io.github.actforever.kuudra.api.KuudraException.class,
+                    () -> app.setDesiredState("Ingress", "beta", "input", "inactive"));
+        }
+    }
+
+    @Test
     void inactivePassiveResourceMayRemainImportedButItsRuntimeGateIsClosed() throws Exception {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("resources.yaml"), """

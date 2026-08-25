@@ -71,6 +71,10 @@ public final class KuudraYamlLoader {
         SessionGroupScope defaultGroupScope = enumValue(coordinator, "default-group-scope", SessionGroupScope.FLOW_BINDING, SessionGroupScope.class);
         int maxParallelSessions = integer(coordinator, "max-parallel-sessions", 64);
         int sessionQueueCapacity = integer(coordinator, "queue-capacity", 256);
+        Map<String, Object> resourceSelection = optionalMapping(root, "resource-selection");
+        KuudraConfig.NamespaceMode namespaceMode = enumValue(resourceSelection, "namespace-mode",
+                KuudraConfig.NamespaceMode.ALL, KuudraConfig.NamespaceMode.class);
+        java.util.Set<String> selectedNamespaces = stringSet(resourceSelection.get("namespaces"), "resource-selection.namespaces");
         Map<String, Object> reconciliation = optionalMapping(root, "reconciliation");
         boolean reconciliationEnabled = bool(reconciliation.get("enabled"), true);
         int reconciliationIntervalMs = integer(reconciliation, "interval-ms", 1_000);
@@ -88,10 +92,22 @@ public final class KuudraYamlLoader {
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
                 new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity)),
+                new KuudraConfig.ResourceSelectionSettings(namespaceMode, selectedNamespaces),
                 new KuudraConfig.ReconciliationSettings(reconciliationEnabled, reconciliationIntervalMs),
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled), homeDirectory,
                 optionalMapping(root, "global-context"), manifests);
+    }
+
+    private static java.util.Set<String> stringSet(Object value, String path) throws IOException {
+        if (value == null) return java.util.Set.of();
+        if (!(value instanceof List<?> values)) throw new IOException("Expected sequence at " + path);
+        java.util.Set<String> result = new java.util.LinkedHashSet<>();
+        for (Object item : values) {
+            String text = string(item, path + "[]");
+            if (!result.add(text)) throw new IOException("Duplicate value at " + path + ": " + text);
+        }
+        return java.util.Set.copyOf(result);
     }
 
     /** Reloads the complete authoritative manifest set from a Kuudra home manifests directory. */

@@ -15,6 +15,9 @@ runtime:
     default-group-scope: flow-binding
     max-parallel-sessions: 64
     queue-capacity: 256
+resource-selection:
+  namespace-mode: ALL
+  namespaces: []
 logging: {level: info, console-enabled: true, file-enabled: true}
 global-context: {}
 ```
@@ -41,6 +44,8 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 | `runtime.session-coordinator.default-group-scope` | `flow-binding` | 默认会话组隔离范围。 |
 | `runtime.session-coordinator.max-parallel-sessions` | `64` | 每组最大并行 Session 数。 |
 | `runtime.session-coordinator.queue-capacity` | `256` | 每组等待队列容量。 |
+| `resource-selection.namespace-mode` | `ALL` | `ALL` 启动全部资源命名空间；`INCLUDE` 仅启动指定命名空间。 |
+| `resource-selection.namespaces` | `[]` | `INCLUDE` 模式下要启动的一个或多个 `metadata.namespace`；此时不能为空。 |
 | `reconciliation.enabled` | `true` | 是否启用后台代际收敛和失败重试。 |
 | `reconciliation.interval-ms` | `1000` | 上一轮调谐结束到下一轮开始之间的固定延迟。 |
 | `state-store.busy-timeout-ms` | `5000` | SQLite 遇锁后的最长等待时间。 |
@@ -48,6 +53,8 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 | `logging.console-enabled` | `true` | 是否输出控制台日志。 |
 | `logging.file-enabled` | `true` | 是否写入和归档文件日志。 |
 | `global-context` | `{}` | 全局上下文初始值。 |
+
+命名空间选择发生在 App 调谐边界，而不是 YAML 读取边界。App 始终解析完整 `manifests/` 并把全量声明写入 StateStore；仅选中命名空间的 Component 会被实例化，Flow 会被编译并注册到 Runtime。未选中资源仍可通过控制面 API 查询，返回 `selected: false`、状态/phase `EXCLUDED`，但不能在本次部署中修改 `desiredState`。插件仍然全量加载，因为插件命名空间和资源的 `metadata.namespace` 是两套独立身份。
 
 ## 具体组件资源与 Flow
 

@@ -58,6 +58,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> manifestSourceTargets = new LinkedHashMap<>();
     private final Map<KuudraManifest.ResourceId, String> manifestObservedStates = new LinkedHashMap<>();
     private KuudraManifest.Resources manifestResources = KuudraManifest.Resources.EMPTY;
+    private KuudraConfig.ResourceSelectionSettings resourceSelection = new KuudraConfig.ResourceSelectionSettings(
+            KuudraConfig.NamespaceMode.ALL, java.util.Set.of());
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
     private KuudraLogSession logSession;
@@ -162,7 +164,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             if (bootstrapConfig != null) {
                 KuudraManifest.Resources currentManifests = KuudraYamlLoader.loadManifests(
                         bootstrapConfig.homeDirectory().resolve("manifests"));
-                applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.reconciliation(),
+                applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
                         bootstrapConfig.stateStore(), bootstrapConfig.logging(),
                         bootstrapConfig.homeDirectory(), bootstrapConfig.globalContext(), currentManifests));
             }
@@ -264,12 +266,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     public synchronized List<Flow> flows() {
-        if (runtime != null) return runtime.flows().stream().map(KuudraApp::flow).toList();
-        return desiredResources().flows().values().stream().map(flow -> new Flow(flow.id().qualifiedName(), 0, 0)).toList();
+        Map<String, FlowSnapshot> running = runtime == null ? Map.of() : runtime.flows().stream()
+                .collect(java.util.stream.Collectors.toMap(FlowSnapshot::flowId, snapshot -> snapshot));
+        return desiredResources().flows().values().stream().map(declaration -> {
+            FlowSnapshot snapshot = running.get(declaration.id().qualifiedName());
+            return snapshot == null
+                    ? new Flow(declaration.id().qualifiedName(), 0, 0, selected(declaration.metadata().namespace()))
+                    : new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks(), true);
+        }).toList();
     }
     public List<Flow> flows(String namespace) { return flows().stream().filter(flow -> flow.id().startsWith(namespace + "/")).toList(); }
     public synchronized Optional<Flow> flow(String flowId) {
-        if (runtime != null) return runtime.flow(flowId).map(KuudraApp::flow);
         return flows().stream().filter(flow -> flow.id().equals(flowId)).findFirst();
     }
     public Optional<Flow> flow(String namespace, String name) { return flow(namespace + "/" + name); }
@@ -326,18 +333,20 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     /** Updates persisted desired state first, then lets the App-owned reconciler converge one component. */
     public synchronized ComponentResource setDesiredState(String kind, String namespace, String name, String desiredState) {
         requireRuntime();
+        if (!selected(namespace)) throw new KuudraException("Resource namespace is excluded from this deployment: " + namespace);
         KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
-        KuudraManifest.Component current = manifestResources.components().get(id);
+        KuudraManifest.Resources currentDesired = desiredResources();
+        KuudraManifest.Component current = currentDesired.components().get(id);
         if (current == null) throw new IllegalArgumentException("Unknown Component resource: " + id);
         KuudraManifest.Component updated = new KuudraManifest.Component(id, current.metadata(), current.type(),
                 current.component(), desiredState.toLowerCase(java.util.Locale.ROOT), current.options());
-        Map<KuudraManifest.ResourceId,KuudraManifest.Component> components = new LinkedHashMap<>(manifestResources.components());
+        Map<KuudraManifest.ResourceId,KuudraManifest.Component> components = new LinkedHashMap<>(currentDesired.components());
         components.put(id, updated);
-        KuudraManifest.Resources desired = new KuudraManifest.Resources(components, manifestResources.flows());
+        KuudraManifest.Resources desired = new KuudraManifest.Resources(components, currentDesired.flows());
         validateDesiredStates(desired);
         debug("resource.reconcile.started", Map.of("resource", id.toString(), "from", current.desiredState(), "to", updated.desiredState()));
         stateStore.replaceDesired(desired);
-        manifestResources = desired;
+        manifestResources = selectResources(desired);
         try {
             reconcileComponent(updated);
             stateStore.markObserved(id, "READY", "reconciled");
@@ -387,7 +396,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         stop();
         if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
     }
-    private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks()); }
+    private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
     private static Plugin plugin(DefaultPluginManager.PluginView view) {
         return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies().stream()
@@ -440,12 +449,15 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             if (stateStore == null) stateStore = new SqliteResourceStateStore(
                     config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
             validateDesiredStates(config.manifests());
-            validateManifestPolicies(config.manifests());
             stateStore.replaceDesired(config.manifests());
+            resourceSelection = config.resourceSelection();
             debug("state.desired.replaced", Map.of("components", config.manifests().components().size(),
                     "flows", config.manifests().flows().size()));
-            applyManifests(stateStore.desiredResources());
-            stateStore.markAllObserved("READY", "reconciled");
+            KuudraManifest.Resources selected = selectResources(stateStore.desiredResources());
+            validateManifestPolicies(selected);
+            stateStore.markAllObserved("EXCLUDED", "namespace excluded from this deployment");
+            applyManifests(selected);
+            markSelectedObserved(selected);
             debug("configuration.apply.completed", Map.of("components", manifestResources.components().size(),
                     "flows", manifestResources.flows().size()));
         } catch (IOException | RuntimeException error) {
@@ -487,10 +499,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (status != AppStatus.RUNNING || stateStore == null || runtime == null) return;
         try {
             KuudraManifest.Resources desired = stateStore.desiredResources();
-            manifestResources = desired;
+            KuudraManifest.Resources selectedResources = selectResources(desired);
+            manifestResources = selectedResources;
             Map<KuudraManifest.ResourceId, ResourceStateStore.ResourceState> states = stateStore.states().stream()
                     .collect(java.util.stream.Collectors.toMap(ResourceStateStore.ResourceState::id, state -> state));
-            for (KuudraManifest.Component component : desired.components().values()) {
+            for (KuudraManifest.Component component : selectedResources.components().values()) {
                 ResourceStateStore.ResourceState state = states.get(component.id());
                 if (state == null || (state.generation() == state.observedGeneration() && !"FAILED".equals(state.phase()))) continue;
                 try {
@@ -516,6 +529,25 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (logSession == null) return;
         try { logSession.close(); } finally { logSession = null; }
     }
+
+    private KuudraManifest.Resources selectResources(KuudraManifest.Resources resources) {
+        Map<KuudraManifest.ResourceId, KuudraManifest.Component> components = resources.components().entrySet().stream()
+                .filter(entry -> selected(entry.getKey().namespace()))
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                        (left, right) -> left, LinkedHashMap::new));
+        Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = resources.flows().entrySet().stream()
+                .filter(entry -> selected(entry.getKey().namespace()))
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                        (left, right) -> left, LinkedHashMap::new));
+        return new KuudraManifest.Resources(components, flows);
+    }
+
+    private void markSelectedObserved(KuudraManifest.Resources selectedResources) {
+        selectedResources.components().keySet().forEach(id -> stateStore.markObserved(id, "READY", "reconciled"));
+        selectedResources.flows().keySet().forEach(id -> stateStore.markObserved(id, "READY", "reconciled"));
+    }
+
+    private boolean selected(String namespace) { return resourceSelection.selects(namespace); }
 
 
     private void applyManifests(KuudraManifest.Resources resources) {
@@ -783,14 +815,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) throw new IllegalArgumentException("Component must be namespace/component-id: " + component);
         return type + "/" + component;
     }
-    public record Flow(String id, int activeSessions, int deferredTasks) { }
+    public record Flow(String id, int activeSessions, int deferredTasks, boolean selected) { }
     public record KernelCheckpoint(RuntimeCheckpoint runtime, List<ComponentResource> components) {
         public KernelCheckpoint { components = List.copyOf(components); }
     }
     public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
     public record ComponentResource(String kind, String namespace, String name, String type, String component,
-                                    String desiredState, String status, List<String> importedBy,
+                                    String desiredState, String status, boolean selected, List<String> importedBy,
                                     List<String> lifecycleCapabilities) {
         public ComponentResource { importedBy = List.copyOf(importedBy); lifecycleCapabilities = List.copyOf(lifecycleCapabilities); }
     }
@@ -830,8 +862,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         List<String> capabilities = new ArrayList<>(instance instanceof Lifecycle || source
                 ? List.of("start", "stop") : List.of("materialize", "destroy"));
         if (instance instanceof PausableLifecycle) capabilities.addAll(List.of("pause", "resume"));
+        boolean selected = selected(component.metadata().namespace());
+        if (!selected) actual = "EXCLUDED";
         return new ComponentResource(component.id().kind(), component.metadata().namespace(), component.metadata().name(), component.type(),
-                component.component(), component.desiredState(), actual, importedBy,
+                component.component(), component.desiredState(), actual, selected, importedBy,
                 capabilities);
     }
     private record ResourceKey(String flowId, String id) { }

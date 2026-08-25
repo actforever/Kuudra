@@ -22,6 +22,7 @@ class KuudraConfigTest {
                         "session-coordinator", Map.of("default-policy", "serial", "default-group-scope", "ingress",
                                 "max-parallel-sessions", 7, "queue-capacity", 11)),
                 "reconciliation", Map.of("enabled", true, "interval-ms", 250),
+                "resource-selection", Map.of("namespace-mode", "include", "namespaces", java.util.List.of("alpha", "beta")),
                 "state-store", Map.of("busy-timeout-ms", 1_500),
                 "home-directory", "custom-home",
                 "global-context", Map.of("profile", "host")), directory, "host configuration"));
@@ -37,6 +38,8 @@ class KuudraConfigTest {
         assertEquals(11, config.runtime().sessionCoordinator().queueCapacity());
         assertTrue(config.reconciliation().enabled());
         assertEquals(250, config.reconciliation().intervalMs());
+        assertEquals(KuudraConfig.NamespaceMode.INCLUDE, config.resourceSelection().namespaceMode());
+        assertEquals(java.util.Set.of("alpha", "beta"), config.resourceSelection().namespaces());
         assertEquals(1_500, config.stateStore().busyTimeoutMs());
         assertEquals("INFO", config.logging().level());
         assertEquals(true, config.logging().consoleEnabled());
@@ -122,6 +125,16 @@ class KuudraConfigTest {
         Files.writeString(directory.resolve(".kuudra/manifests/b/two.yaml"), component);
 
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+    }
+
+    @Test
+    void validatesResourceNamespaceSelection() {
+        assertThrows(IllegalArgumentException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
+                Map.of("resource-selection", Map.of("namespace-mode", "include", "namespaces", java.util.List.of())),
+                directory, "empty namespace selection")));
+        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(new KuudraConfigResource(
+                Map.of("resource-selection", Map.of("namespace-mode", "include", "namespaces", java.util.List.of("alpha", "alpha"))),
+                directory, "duplicate namespace selection")));
     }
 
     @Test

@@ -200,11 +200,15 @@ App 保存期望资源图，调谐器按以下顺序工作：
 
 当前实现有三种触发边界：
 
-1. `start/restart`：重新读取完整 manifests，先完成 schema、插件能力、引用和共享策略校验，再事务性覆盖 StateStore desired set，装配 Flow/组件，最后整体标记 observed；磁盘声明始终覆盖上次运行期间的 API 修改。
+1. `start/restart`：重新读取完整 manifests，先完成 schema 和插件能力校验，再事务性覆盖 StateStore desired set；随后应用 `resource-selection`，只对选中命名空间校验实例共享策略并装配 Flow/组件。选中资源标记为 `READY`，未选中资源追平 observedGeneration 并标记为 `EXCLUDED`；磁盘声明始终覆盖上次运行期间的 API 修改。
 2. desired-state API：先事务性写入新 generation，再立即尝试同步调谐；调用失败时保留 desired generation 并标记 `FAILED`。
 3. 后台循环：仅在 App 为 `RUNNING` 时执行。默认第一轮在启动后 1000ms 运行，之后使用固定延迟；每轮查询 StateStore，选择 `generation != observedGeneration` 或 phase 为 `FAILED` 的 Component，按当前 desiredState 重试并分别更新 `READY/FAILED`。可通过 `reconciliation.enabled` 和 `reconciliation.interval-ms` 配置。
 
 后台循环不重新读取 YAML，也不重复调谐已经收敛的资源；Flow 当前没有 desiredState，运行期间也没有 Flow apply API，因此不会被周期性重建。这样磁盘部署源、数据库控制面和 Runtime 执行面之间只有明确的单向边界。
+
+### 启动命名空间选择
+
+资源隔离不仅限制 Flow 只能导入自身命名空间的组件，也可以限制一次 App 运行实际部署的命名空间。`resource-selection.namespace-mode: ALL` 部署全部命名空间；`INCLUDE` 接受一个或多个命名空间。选择器只影响执行面，不过滤声明源或 StateStore，因此切换启动集合不会被误判成资源删除。资源与 Flow 查询返回 `selected`；未选中资源显示为 `EXCLUDED`，对它调用 desired-state 控制接口会失败。根配置和其他 App 设置一样在创建 App 时读取，修改后需要重新启动进程；同一 App 实例的 restart 当前只重新载入 manifests。
 
 控制 API 应围绕资源，而不是为每种组件复制一套控制器：
 

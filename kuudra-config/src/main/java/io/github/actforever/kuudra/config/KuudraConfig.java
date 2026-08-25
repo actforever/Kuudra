@@ -5,6 +5,7 @@ import io.github.actforever.kuudra.api.SessionSchedulingPolicy;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Format-neutral configuration model compiled by YAML, JSON or TOML readers.
@@ -14,12 +15,13 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from config.yaml and manifests/. */
-    public record RuntimeConfig(RuntimeSettings runtime, ReconciliationSettings reconciliation,
+    public record RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
+                                ReconciliationSettings reconciliation,
                                 StateStoreSettings stateStore, LoggingSettings logging, Path homeDirectory,
                                 Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
         public RuntimeConfig {
-            if (runtime == null || reconciliation == null || stateStore == null || logging == null || manifests == null) {
-                throw new IllegalArgumentException("runtime, reconciliation, stateStore, logging, and manifests must not be null");
+            if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || manifests == null) {
+                throw new IllegalArgumentException("runtime, resourceSelection, reconciliation, stateStore, logging, and manifests must not be null");
             }
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
@@ -34,6 +36,22 @@ public final class KuudraConfig {
                 throw new IllegalArgumentException("runtime capacities and timeouts must be valid");
             }
             if (sessionCoordinator == null) throw new IllegalArgumentException("sessionCoordinator must not be null");
+        }
+    }
+    public enum NamespaceMode { ALL, INCLUDE }
+    public record ResourceSelectionSettings(NamespaceMode namespaceMode, Set<String> namespaces) {
+        public ResourceSelectionSettings {
+            if (namespaceMode == null) throw new IllegalArgumentException("resourceSelection.namespaceMode must not be null");
+            namespaces = Set.copyOf(namespaces);
+            if (namespaces.stream().anyMatch(namespace -> namespace == null || namespace.isBlank())) {
+                throw new IllegalArgumentException("resourceSelection.namespaces must contain non-blank names");
+            }
+            if (namespaceMode == NamespaceMode.INCLUDE && namespaces.isEmpty()) {
+                throw new IllegalArgumentException("resourceSelection.namespaces must not be empty in INCLUDE mode");
+            }
+        }
+        public boolean selects(String namespace) {
+            return namespaceMode == NamespaceMode.ALL || namespaces.contains(namespace);
         }
     }
     public record ReconciliationSettings(boolean enabled, int intervalMs) {
