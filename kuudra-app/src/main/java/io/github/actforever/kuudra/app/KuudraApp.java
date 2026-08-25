@@ -264,6 +264,15 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         try { return Optional.of(component(requirePlugins().componentView(reference))); }
         catch (IllegalArgumentException missing) { return Optional.empty(); }
     }
+    public Optional<ComponentDocumentation> pluginComponentDocumentation(String reference) {
+        return pluginComponent(reference).map(Component::documentation);
+    }
+    public Optional<ComponentDocumentation> pluginComponentDocumentation(String namespace, String pluginId,
+                                                                         String type, String name) {
+        return plugin(namespace, pluginId).flatMap(owner -> owner.components().stream()
+                .filter(component -> component.kind().equals(type) && component.name().equals(name))
+                .map(Component::documentation).findFirst());
+    }
 
     public synchronized List<Flow> flows() {
         Map<String, FlowSnapshot> running = runtime == null ? Map.of() : runtime.flows().stream()
@@ -412,7 +421,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 new ComponentDocumentation(documentation.purpose(), documentation.usageExample(), documentation.lifecycle(),
                         documentation.lifecyclePhases(), documentation.supportedDesiredStates(), documentation.configuration().stream()
                         .map(property -> new ConfigurationDocumentation(property.path(), property.type(), property.required(),
-                                property.defaultValue(), property.description(), property.example(), property.allowedValues())).toList(),
+                                property.defaultValue(), property.description(), property.examples(), property.allowedValues())).toList(),
                         documentation.emittedEvents().stream()
                         .map(event -> new EventDocumentation(event.stage(), event.eventType(), event.description(), event.dataExample())).toList()));
     }
@@ -850,8 +859,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
     public record ConfigurationDocumentation(String path, String type, boolean required, String defaultValue,
-                                             String description, String example, List<String> allowedValues) {
-        public ConfigurationDocumentation { allowedValues = List.copyOf(allowedValues); }
+                                             String description, List<Object> examples, List<String> allowedValues) {
+        public ConfigurationDocumentation {
+            examples = List.copyOf(examples);
+            allowedValues = List.copyOf(allowedValues);
+        }
     }
     public record EventDocumentation(String stage, String eventType, String description, String dataExample) { }
     private ManagedEventSource requireEventSource(String flowId, String resourceId) {

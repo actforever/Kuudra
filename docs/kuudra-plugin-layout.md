@@ -19,15 +19,15 @@
 @ComponentDoc(
     purpose = "在给定时间窗口内识别事件序列",
     configuration = {
-        @SpecProperty(path = "windowMillis", type = "integer", required = true,
-                      description = "序列匹配窗口，单位毫秒", example = "500"),
-        @SpecProperty(path = "ordered", type = "boolean", defaultValue = "true",
+        @SpecProperty(path = "windowMillis", type = Long.class, required = true,
+                      description = "序列匹配窗口，单位毫秒", examples = {"500", "1000"}),
+        @SpecProperty(path = "ordered", type = Boolean.class, defaultValue = "true",
                       description = "是否要求事件按声明顺序出现")
     }
 )
 ```
 
-`path` 相对于 Component 清单的 `spec.options`，例如 `path = "windowMillis"` 对应 `spec.options.windowMillis`。`defaultValue` 和 `example` 是面向文档的 YAML/JSON 字面量文本。当前版本负责扫描和公开规约文档，但尚未把它作为通用 schema 强制校验；组件仍应在初始化阶段校验自身参数。
+`path` 相对于 Component 清单的 `spec.options`，例如 `path = "windowMillis"` 对应 `spec.options.windowMillis`。嵌套对象使用点路径，数组元素使用 `[]`，例如 `rules.steps[].action`；`type` 是编译期 `Class<?>`，可以直接引用插件依赖提供的共享 POJO 或 `Step[].class`。API 返回规范化 Java 类型名。`defaultValue` 是面向文档的 YAML/JSON 字面量文本。`examples` 接收多个 JSON 字面量，扫描阶段会将字符串、数值、布尔、对象和数组解析为不可变的 `List<Object>`，HTTP API 因而直接返回原生 JSON 值，而非二次编码的字符串。当前版本负责扫描和公开规约文档，但尚未自动反射 POJO 字段或把它作为通用 schema 强制校验；组件仍应在初始化阶段校验自身参数。
 
 插件及组件清单由 App 提供只读快照，并通过 Web 的 `/api/v1/app/plugins`、`/api/v1/app/plugins/{namespace}/{pluginId}`、`/api/v1/app/plugins/{namespace}/{pluginId}/components`、`/api/v1/app/components` 和组件详情接口公开。插件始终以 `namespace/pluginId` 隔离，同 ID、不同 namespace 的插件可以同时加载。组件是否真正具有生命周期还会根据其接口实现自动识别；组件详情的 `documentation.configuration` 会原样返回结构化实例规约。
 

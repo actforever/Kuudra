@@ -113,6 +113,14 @@ class AppController {
             @PathVariable("namespace") String namespace, @PathVariable("pluginId") String pluginId) {
         return call(() -> app.pluginComponents(namespace, pluginId), "Plugin", namespace + "/" + pluginId);
     }
+    @Operation(summary = "按插件身份获取完整组件文档", tags = "插件与组件")
+    @GetMapping("/plugins/{namespace}/{pluginId}/components/{type}/{name}/documentation")
+    KuudraApp.ComponentDocumentation pluginComponentDocumentation(
+            @PathVariable("namespace") String namespace, @PathVariable("pluginId") String pluginId,
+            @PathVariable("type") String type, @PathVariable("name") String name) {
+        return app.pluginComponentDocumentation(namespace, pluginId, type, name).orElseThrow(() ->
+                notFound("Plugin Component", namespace + "/" + pluginId + "/" + type + "/" + name));
+    }
     @Operation(summary = "列出全部插件组件", tags = "插件与组件")
     @GetMapping("/components") List<KuudraApp.Component> components() { return app.components(); }
     @Operation(summary = "获取组件结构化文档", tags = "插件与组件")
@@ -121,6 +129,14 @@ class AppController {
             @PathVariable("name") String name) {
         String reference = type + "/" + namespace + "/" + name;
         return app.pluginComponent(reference).orElseThrow(() -> notFound("Component", reference));
+    }
+    @Operation(summary = "获取完整组件说明文档", tags = "插件与组件")
+    @GetMapping("/components/{type}/{namespace}/{name}/documentation")
+    KuudraApp.ComponentDocumentation componentDocumentation(
+            @PathVariable("type") String type, @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        String reference = type + "/" + namespace + "/" + name;
+        return app.pluginComponentDocumentation(reference).orElseThrow(() -> notFound("Component", reference));
     }
     @Operation(summary = "订阅系统事件", tags = "系统事件")
     @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

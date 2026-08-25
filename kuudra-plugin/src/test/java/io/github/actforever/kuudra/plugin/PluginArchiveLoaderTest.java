@@ -40,8 +40,8 @@ class PluginArchiveLoaderTest {
                             usageExample = "windowMillis: 100",
                             lifecyclePhases = {"start", "stop"},
                             configuration = @io.github.actforever.kuudra.plugin.annotation.SpecProperty(
-                                path = "windowMillis", type = "integer", required = true,
-                                description = "Sequence matching window", example = "100"),
+                                path = "windowMillis", type = Long.class, required = true,
+                                description = "Sequence matching window", examples = {"100", "250"}),
                             emittedEvents = @io.github.actforever.kuudra.plugin.annotation.EventEmission(
                                 stage = "sequence matched", eventType = "parent.matched",
                                 description = "A recognized parent event", dataExample = "{key: A}"))
@@ -91,7 +91,7 @@ class PluginArchiveLoaderTest {
             assertEquals("Recognizes a parent sequence", interpreter.documentation().purpose());
             assertEquals(List.of("RUNNING", "STOPPED"), interpreter.documentation().supportedDesiredStates());
             assertEquals("windowMillis", interpreter.documentation().configuration().get(0).path());
-            assertEquals("integer", interpreter.documentation().configuration().get(0).type());
+            assertEquals("java.lang.Long", interpreter.documentation().configuration().get(0).type());
             assertTrue(interpreter.documentation().configuration().get(0).required());
             assertEquals("parent.matched", interpreter.documentation().emittedEvents().get(0).eventType());
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));

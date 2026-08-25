@@ -38,7 +38,7 @@ event-handler/<namespace>/<name>
 
 由配置创建的 Source、Interpreter、Adapter、Ingress、Handler 或 Egress 若需要实例级资源管理，可实现 `PluginComponentLifecycle`：`initialize(PluginComponentContext)` 在所属插件进入 `ACTIVE` 后、接入 Flow 前调用；`destroy()` 在 Runtime 已停止 Source 投递后、插件 `stop()` 前按组件创建的逆序调用。
 
-组件可以用 `@ComponentDoc` 提供用途、使用示例和生命周期阶段，用 `configuration = {@SpecProperty(...)}` 描述 `spec.options` 实例配置规约，用 `@EventEmission` 列出可能产生的业务事件。配置规约通过组件详情的 `documentation.configuration` 返回，包含 path、type、required、defaultValue、allowedValues、description 和 example。内核扫描后提供结构化查询：`GET /api/v1/app/plugins` 查询已加载插件，`GET /api/v1/app/plugins/{namespace}/{pluginId}/components` 查询插件组件，`GET /api/v1/app/components/{type}/{namespace}/{name}` 查询组件详情。Knife4j 默认打开包含全部端点的 `all` 分组，也可切换到独立的 `plugins` 分组。
+组件可以用 `@ComponentDoc` 提供用途、使用示例和生命周期阶段，用 `configuration = {@SpecProperty(...)}` 描述 `spec.options` 实例配置规约，用 `@EventEmission` 列出可能产生的业务事件。配置规约通过组件详情的 `documentation.configuration` 返回，包含 path、type、required、defaultValue、allowedValues、description 和 examples；examples 是原生 JSON 值列表，可以包含对象与数组。内核扫描后提供结构化查询：`GET /api/v1/app/plugins` 查询已加载插件，`GET /api/v1/app/plugins/{namespace}/{pluginId}/components` 查询插件组件，`GET /api/v1/app/components/{type}/{namespace}/{name}` 查询组件详情。Knife4j 默认打开包含全部端点的 `all` 分组，也可切换到独立的 `plugins` 分组。
 
 插件初始化及组件初始化上下文均提供身份绑定的 `PluginLogger`。日志会携带插件 namespace/ID 并通过系统事件总线进入 Kuudra 日志会话；插件无需依赖具体日志框架。
 

@@ -63,6 +63,16 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.pluginId").value("default"))
                 .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'groupKey')]").exists())
                 .andExpect(jsonPath("$.documentation.configuration[?(@.path == 'policy')].allowedValues").exists());
+        mvc.perform(get("/api/v1/app/components/ingress/kuudra-official/default/documentation"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.purpose").isNotEmpty())
+                .andExpect(jsonPath("$.supportedDesiredStates").isArray())
+                .andExpect(jsonPath("$.configuration[?(@.path == 'groupKey')].type").value("java.lang.String"))
+                .andExpect(jsonPath("$.emittedEvents").isArray());
+        mvc.perform(get("/api/v1/app/plugins/kuudra-official/default/components/event-handler/system-control/documentation"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configuration[0].path").value("action"))
+                .andExpect(jsonPath("$.configuration[0].required").value(true));
         mvc.perform(get("/api/v1/app/resources/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
     }
@@ -111,7 +121,9 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/app/plugins']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/plugins/{namespace}/{pluginId}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/plugins/{namespace}/{pluginId}/components']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/app/components/{type}/{namespace}/{name}']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/app/plugins/{namespace}/{pluginId}/components/{type}/{name}/documentation']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/components/{type}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/components/{type}/{namespace}/{name}/documentation']").exists());
         mvc.perform(get("/v3/api-docs/all"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())

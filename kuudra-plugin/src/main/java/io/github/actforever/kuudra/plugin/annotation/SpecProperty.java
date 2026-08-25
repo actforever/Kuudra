@@ -11,12 +11,13 @@ import java.lang.annotation.Target;
 public @interface SpecProperty {
     /** Dot-separated path relative to spec.options. */
     String path();
-    /** User-facing value type, for example string, integer, boolean, object or array. */
-    String type();
+    /** Java value type; arrays and shared plugin POJOs are supported. */
+    Class<?> type();
     boolean required() default false;
     /** JSON/YAML-compatible literal represented as text; blank means no documented default. */
     String defaultValue() default "";
     String description();
-    String example() default "";
+    /** JSON literals exposed as native values by the component documentation API. */
+    String[] examples() default {};
     String[] allowedValues() default {};
 }
