@@ -27,7 +27,7 @@ The tracked Maven reactor is:
 | `kuudra-web` | The sole HTTP REST/SSE adapter. It exposes **App**, never Runtime. |
 | `kuudra-logging` | Spring-independent colored console logging, SystemEvent projection, and per-run file archival. |
 
-`plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations. The external `kuudra-official-plugins` workspace contains the ordinary deployable default, HelloWorld and logging plugins plus examples; none are implicitly registered by App. The unconditional official Ingress reference is `ingress/kuudra-official/default-ingress`. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts in the local Maven repository.
+`plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations. The external `kuudra-official-plugins` workspace contains the ordinary deployable default, HelloWorld and logging plugins plus examples; none are implicitly registered by App. The official pass-through boundaries are `ingress/kuudra-official/plain-ingress` and `egress/kuudra-official/plain-egress`. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts in the local Maven repository.
 
 For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins`: every JAR is strictly loaded. A plugin home is `<plugins>/<namespace>/<plugin-id>` and is created only when that plugin enters initialization. Invalid/non-Kuudra JARs are fatal startup errors. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce configurable plugin directories or a collision with the build-only `plugins/` directory.
 

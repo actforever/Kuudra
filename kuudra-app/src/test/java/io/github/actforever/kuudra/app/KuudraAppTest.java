@@ -114,6 +114,10 @@ class KuudraAppTest {
             assertEquals(0, app.flows().size());
             assertTrue(app.plugins().isEmpty());
             assertTrue(app.componentResources().isEmpty());
+            KuudraApp.ResourceDocumentation flowDocumentation = app.resourceDocumentation("kuudra-official", "Flow").orElseThrow();
+            assertEquals("Flow", flowDocumentation.kind());
+            assertTrue(flowDocumentation.fields().stream().anyMatch(field -> field.path().equals("spec.imports")));
+            assertEquals("dev", ((Map<?, ?>) flowDocumentation.examples().get(0).get("metadata")).get("namespace"));
             app.stop();
             assertEquals("STOPPED", app.snapshot().status().name());
             app.start();
@@ -247,6 +251,27 @@ class KuudraAppTest {
         Files.writeString(plugins.resolve("not-a-kuudra-plugin.jar"), "invalid jar");
 
         assertThrows(KuudraException.class, () -> KuudraApp.createFromDefaultLocations(directory));
+    }
+
+    @Test
+    void standaloneManifestEventSourceReconcilesToRunningWithoutAFlow() throws Exception {
+        installDefaultTestPlugin();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("standalone-source.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: test, name: standalone}
+                spec:
+                  component: kuudra-official/standalone-source
+                  desiredState: running
+                  options: {}
+                """);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            KuudraApp.ComponentResource source = app.resource("EventSource", "test", "standalone").orElseThrow();
+            assertEquals("running", source.desiredState());
+            assertEquals("RUNNING", source.status());
+            assertTrue(source.importedBy().isEmpty());
+        }
     }
 
     @Test
@@ -535,7 +560,7 @@ class KuudraAppTest {
                     entrypoint = "io.github.actforever.kuudra.app.TestDefaultPlugin"
                     """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             for (Class<?> type : java.util.List.of(TestDefaultPlugin.class, TestDefaultPlugin.TestIngress.class,
-                    TestDefaultPlugin.TestEgress.class)) {
+                    TestDefaultPlugin.TestEgress.class, TestDefaultPlugin.TestSource.class)) {
                 String resource = type.getName().replace('.', '/') + ".class";
                 try (var input = type.getClassLoader().getResourceAsStream(resource)) {
                     write(output, resource, java.util.Objects.requireNonNull(input).readAllBytes());

@@ -166,7 +166,7 @@ public final class KuudraYamlLoader {
                             String type = KuudraManifest.COMPONENT_KINDS.get(kind);
                             if (spec.containsKey("type")) throw new IllegalArgumentException("spec.type has been removed; use kind: " + kind);
                             KuudraManifest.Component component = new KuudraManifest.Component(id, metadata,
-                                    type, string(required(spec, "component", document, "spec", "spec.component: plugin-namespace/component-name"), source + ".spec.component"),
+                                    string(required(spec, "component", document, "spec", "spec.component: plugin-namespace/component-name"), source + ".spec.component"),
                                     string(spec.getOrDefault("desiredState", defaultComponentState(type)), source + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
                                     optionalMapping(spec, "options"));
                             if (components.putIfAbsent(id, component) != null) throw new IOException("Duplicate resource identity: " + id);

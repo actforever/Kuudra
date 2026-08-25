@@ -177,7 +177,7 @@ class DefaultPluginManagerTest {
             @Override public void publish(SystemEvent event) { if (event.type().equals("plugin.log")) logged.set(event); }
         };
         PluginComponentDocumentation documentation = new PluginComponentDocumentation(
-                "periodically emits greetings", "intervalMillis: 1000", true, List.of("start", "stop"),
+                "periodically emits greetings", true, List.of("start", "stop"),
                 List.of(new PluginEventDocumentation("scheduled tick", "hello.tick", "greeting", "{message: hello}")));
         AtomicReference<Path> home = new AtomicReference<>();
         DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("plugin-views"),

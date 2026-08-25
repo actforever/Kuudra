@@ -42,7 +42,7 @@ class OpenApiConfiguration {
     GroupedOpenApi flowApi() {
         return GroupedOpenApi.builder().group("flows")
                 .pathsToMatch("/api/v1/app/flows", "/api/v1/app/flows/*",
-                        "/api/v1/app/namespaces/*/flows/**")
+                        "/api/v1/app/namespaces/*/flows/**", "/api/v1/app/resource-documentation/**")
                 .build();
     }
 

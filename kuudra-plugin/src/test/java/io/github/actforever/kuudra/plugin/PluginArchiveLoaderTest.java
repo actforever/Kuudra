@@ -37,7 +37,6 @@ class PluginArchiveLoaderTest {
                         @io.github.actforever.kuudra.plugin.annotation.EventInterpreter("parent-interpreter")
                         @io.github.actforever.kuudra.plugin.annotation.ComponentDoc(
                             purpose = "Recognizes a parent sequence",
-                            usageExample = "windowMillis: 100",
                             lifecyclePhases = {"start", "stop"},
                             configuration = {@io.github.actforever.kuudra.plugin.annotation.SpecProperty(
                                 path = "windowMillis", type = Long.class, required = true,

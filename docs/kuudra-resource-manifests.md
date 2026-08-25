@@ -98,7 +98,7 @@ Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶�
 
 插件扫描会根据实现类型生成 `supportedDesiredStates`，并随组件结构化文档经 App/Web API 暴露。清单校验和 App 调谐读取的正是同一份能力数据，不再按 kind 硬编码状态。`STARTING/STOPPING/PAUSING/RESUMING` 是 observedState 的瞬时过渡态，不是可收敛目标，不能写入 `desiredState`。
 
-App 在状态操作成功后同步更新 Runtime 组件闸门：`INACTIVE`、`STOPPED` 与 `PAUSED` 的已绑定 Adapter/Ingress/Egress/Handler/Interpreter 都不再接收后续事件，恢复到 `ACTIVE` 或 `RUNNING` 才重新开放；组件级 `PAUSED` 也不会被一次内核级 pause/resume 意外恢复。EventSource 则通过注册状态和自身 pause/resume 能力控制事件准入。
+App 在状态操作成功后同步更新 Runtime 组件闸门：`INACTIVE`、`STOPPED` 与 `PAUSED` 的已绑定 Adapter/Ingress/Egress/Handler/Interpreter 都不再接收后续事件，恢复到 `ACTIVE` 或 `RUNNING` 才重新开放；组件级 `PAUSED` 也不会被一次内核级 pause/resume 意外恢复。EventSource 则通过注册状态和自身 pause/resume 能力控制事件准入。EventSource 的生命周期不依赖 Flow：声明为 `running` 后即使尚未被任何 Flow 导入也会启动，只是其事件没有投递目标；后续 Flow 绑定负责路由而非启动资源。
 
 其他状态会令启动失败。运行期间可以通过 App 的通用 desired-state API 修改单个组件：App 先把完整期望资源集事务性写入 SQLite，再调整组件生命周期或执行闸门，成功后推进 `observedGeneration`，失败则保留新期望并记录 `FAILED`。后台调谐器按 `reconciliation.interval-ms` 固定延迟扫描未收敛 generation 和 `FAILED` 资源并重试；磁盘文件仍只在 start/restart 时重新导入。
 
@@ -130,7 +130,9 @@ spec:
 
 同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。Flow 本身没有生命周期；暂停发生在 App 或 Session 层。
 
-Ingress 必须显式声明为 `kind: Ingress` 资源。官方无条件准入实现为 `ingress/kuudra-official/default-ingress`；加载插件本身不会隐式创建任何资源实例。Flow 是内核拥有的路由资源而非插件组件：其 `metadata/imports/edges` 由 App 校验，Runtime 将其编译为调度图，因此不应注册成与 Ingress 同级的插件实现。
+Flow 的结构化规约由内核以文档提供方 `kuudra-official` 注册，可通过 `GET /api/v1/app/resource-documentation/kuudra-official/Flow` 查询。这里的文档提供方 namespace 不限制 Flow 实例的 `metadata.namespace`；例如文档中的 Flow 实例仍可位于 `dev`。`spec.imports` 是别名到资源引用的映射，`edges.from/to` 引用的是别名而不是资源真实名称。
+
+Ingress 必须显式声明为 `kind: Ingress` 资源。官方无条件准入实现为 `ingress/kuudra-official/plain-ingress`，对应的透传出口为 `egress/kuudra-official/plain-egress`；加载插件本身不会隐式创建任何资源实例。Flow 是内核拥有的路由资源而非插件组件：其 `metadata/imports/edges` 由 App 校验，Runtime 将其编译为调度图，因此不应注册成与 Ingress 同级的插件实现。
 
 ## 实例数量与互斥域
 

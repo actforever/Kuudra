@@ -37,14 +37,15 @@ public final class KuudraManifest {
         public ResourceId id() { return new ResourceId(kind, namespace, name); }
     }
 
-    public record Component(ResourceId id, Metadata metadata, String type, String component,
+    public record Component(ResourceId id, Metadata metadata, String component,
                             String desiredState, Map<String, Object> options) {
         public Component {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
-            requireText(type, "component type"); requireText(component, "spec.component"); requireText(desiredState, "spec.desiredState");
-            if (!type.equals(COMPONENT_KINDS.get(id.kind()))) throw new IllegalArgumentException("Resource kind does not match component type: " + id.kind());
+            if (!COMPONENT_KINDS.containsKey(id.kind())) throw new IllegalArgumentException("Unsupported component kind: " + id.kind());
+            requireText(component, "spec.component"); requireText(desiredState, "spec.desiredState");
             options = Map.copyOf(options);
         }
+        public String type() { return COMPONENT_KINDS.get(id.kind()); }
     }
 
     public record Flow(ResourceId id, Metadata metadata,

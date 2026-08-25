@@ -22,4 +22,9 @@ public final class TestDefaultPlugin implements KuudraPlugin {
         public TestEgress() { }
         @Override public List<KuudraEvent> export(KuudraEvent event, EventContext context) { return List.of(event); }
     }
+    @io.github.actforever.kuudra.plugin.annotation.EventSource("standalone-source")
+    public static final class TestSource implements io.github.actforever.kuudra.api.component.EventSource {
+        public TestSource() { }
+        @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
+    }
 }

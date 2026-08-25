@@ -20,6 +20,8 @@ CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 | `GET` | `/api/v1/app/plugins` | 列出当前已加载插件及其版本、命名空间和状态。 |
 | `GET` | `/api/v1/app/plugins/{namespace}/{pluginId}` | 按规范插件身份查询插件及其组件引用。 |
 | `GET` | `/api/v1/app/plugins/{namespace}/{pluginId}/components` | 查询指定插件的结构化组件文档。 |
+| `GET` | `/api/v1/app/resource-documentation` | 查询内核资源规约文档。 |
+| `GET` | `/api/v1/app/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
 | `GET` | `/api/v1/app/components` | 列出所有已注册插件组件。 |
 | `GET` | `/api/v1/app/components/{type}/{namespace}/{name}` | 按完整组件引用查询用途、示例、生命周期和输出事件。 |
 | `GET` | `/api/v1/app/resources/components` | 列出清单声明的全部 Component 实例及实际状态。 |

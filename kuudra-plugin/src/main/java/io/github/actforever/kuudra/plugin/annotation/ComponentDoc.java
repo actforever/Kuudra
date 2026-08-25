@@ -9,7 +9,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface ComponentDoc {
     String purpose();
-    String usageExample() default "";
     String[] lifecyclePhases() default {};
     /** Structured documentation for component-specific properties below spec.options. */
     SpecProperty[] configuration() default {};

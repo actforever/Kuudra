@@ -79,6 +79,11 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/app/resources/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/v1/app/resource-documentation/kuudra-official/Flow"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.namespace").value("kuudra-official"))
+                .andExpect(jsonPath("$.kind").value("Flow"))
+                .andExpect(jsonPath("$.examples[0].metadata.namespace").value("dev"));
     }
 
     @Test
@@ -113,6 +118,7 @@ class KuudraWebApplicationTest {
         mvc.perform(get("/v3/api-docs/flows"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/flows']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app/resource-documentation/{namespace}/{kind}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/namespaces/{namespace}/flows/{name}']").exists());
         mvc.perform(get("/v3/api-docs/sessions"))
                 .andExpect(status().isOk())

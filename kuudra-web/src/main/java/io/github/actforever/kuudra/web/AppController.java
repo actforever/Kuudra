@@ -54,6 +54,16 @@ class AppController {
             @PathVariable("namespace") String namespace, @PathVariable("name") String name) {
         return app.flow(namespace, name).orElseThrow(() -> notFound("Flow", namespace + "/" + name));
     }
+    @Operation(summary = "列出内核资源说明文档", tags = "Flow 管理")
+    @GetMapping("/resource-documentation") List<KuudraApp.ResourceDocumentation> resourceDocumentations() {
+        return app.resourceDocumentations();
+    }
+    @Operation(summary = "获取指定内核资源说明文档", tags = "Flow 管理")
+    @GetMapping("/resource-documentation/{namespace}/{kind}") KuudraApp.ResourceDocumentation resourceDocumentation(
+            @PathVariable("namespace") String namespace, @PathVariable("kind") String kind) {
+        return app.resourceDocumentation(namespace, kind)
+                .orElseThrow(() -> notFound("Resource documentation", namespace + "/" + kind));
+    }
     @Operation(summary = "列出全部 EventSource 资源", tags = "EventSource 资源")
     @GetMapping("/resources/event-sources") List<KuudraApp.Resource> eventSources() { return app.eventSources(); }
     @Operation(summary = "列出 Flow 的 EventSource 资源", tags = "EventSource 资源")
