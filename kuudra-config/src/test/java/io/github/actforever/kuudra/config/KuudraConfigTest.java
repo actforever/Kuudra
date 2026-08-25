@@ -153,6 +153,7 @@ class KuudraConfigTest {
 
         assertEquals(2, resources.components().size());
         assertEquals(1, resources.flows().size());
+        assertEquals("demo", resources.flows().values().iterator().next().imports().get("ingress").namespace());
     }
 
     @Test

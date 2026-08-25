@@ -23,7 +23,31 @@ global-context: {}
 
 App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 `namespace/pluginId` 身份、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase；一个文件可使用 `---` 声明多个资源。
 
-`state/kuudra.db` 是 SQLite StateStore，数据库访问由独立 `kuudra-state` 模块中的 MyBatis Mapper 管理。App 启动时在一个 MyBatis 事务中导入清单，按 `kind/namespace/name` 保存期望资源及 generation，再从数据库读取并装配资源；成功后写入 observedGeneration 和 `READY`。当前调谐发生在启动边界，尚未监听运行期文件变更。
+`state/kuudra.db` 是 SQLite StateStore，数据库访问由独立 `kuudra-state` 模块中的 MyBatis Mapper 管理。App 启动时在一个 MyBatis 事务中导入清单，按 `kind/namespace/name` 保存期望资源及 generation，再从数据库读取并装配资源；成功后写入 observedGeneration 和 `READY`。运行期间 App 以固定延迟重试未收敛或失败的组件资源；尚未监听磁盘文件变更。
+
+## 根配置参数
+
+包内默认 `config.yaml` 是完整、带中文注释的配置样板。首次初始化家目录时会原样复制；以后新增或修改根配置字段，必须同步更新该样板、配置模型/加载测试和本节说明。
+
+| 配置路径 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `home-directory` | `.kuudra` | Kuudra 家目录。 |
+| `runtime.queue-capacity` | `1024` | Runtime 事件任务队列容量。 |
+| `runtime.worker-threads` | `2` | 异步节点工作线程数。 |
+| `runtime.max-event-hops` | `256` | 单个事件的最大路由跳数。 |
+| `runtime.dispatcher-poll-interval-ms` | `200` | 调度线程空队列轮询间隔。 |
+| `runtime.shutdown-session-drain-timeout-ms` | `5000` | 停止时等待活动 Session 排空的时间；`0` 表示不等待。 |
+| `runtime.session-coordinator.default-policy` | `parallel` | Ingress 默认会话调度策略。 |
+| `runtime.session-coordinator.default-group-scope` | `flow-binding` | 默认会话组隔离范围。 |
+| `runtime.session-coordinator.max-parallel-sessions` | `64` | 每组最大并行 Session 数。 |
+| `runtime.session-coordinator.queue-capacity` | `256` | 每组等待队列容量。 |
+| `reconciliation.enabled` | `true` | 是否启用后台代际收敛和失败重试。 |
+| `reconciliation.interval-ms` | `1000` | 上一轮调谐结束到下一轮开始之间的固定延迟。 |
+| `state-store.busy-timeout-ms` | `5000` | SQLite 遇锁后的最长等待时间。 |
+| `logging.level` | `info` | Kuudra 日志级别。 |
+| `logging.console-enabled` | `true` | 是否输出控制台日志。 |
+| `logging.file-enabled` | `true` | 是否写入和归档文件日志。 |
+| `global-context` | `{}` | 全局上下文初始值。 |
 
 ## 具体组件资源与 Flow
 

@@ -26,7 +26,7 @@ runtime:
 reconciliation:
   # 是否启用后台失败重试和代际收敛。
   enabled: true
-  # 两轮调谐开始之间采用固定延迟，单位毫秒。
+  # 上一轮调谐结束到下一轮开始之间的固定延迟，单位毫秒。
   interval-ms: 1000
 
 state-store:

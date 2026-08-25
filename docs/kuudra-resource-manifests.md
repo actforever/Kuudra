@@ -1,6 +1,6 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用同命名空间的组件资源并配置路由，组件资源不引用 Flow。通用资源写 API 与持续调谐仍是后续工作。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用同命名空间的组件资源并配置路由，组件资源不引用 Flow。组件 desired-state 写入和后台失败重试已经接入同一调谐链路；通用资源 apply/delete 仍是后续工作。
 
 当前 App/Web 已能以统一只读接口查询所有清单 Component 实例，而不只查询 EventSource：`GET /api/v1/app/resources/components` 返回类型、插件组件引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型或 `type/namespace/name` 定位。EventSource 原有专用 start/stop API 暂时保留；其他组件只公开其实际的 materialize/destroy 能力，在通用调谐写接口完成前不伪造 start/stop 操作。
 
@@ -38,7 +38,7 @@ annotation/metadata   →   Component 实例   ← import/绑定 →   Flow + ed
 
 ### Flow 配置
 
-Flow 资源描述“实例如何连接”。它是具体组件资源的消费者：`imports` 以完整 kind/namespace/name 引用资源并分配 Flow 内别名，`edges` 只引用这些别名。资源不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。Flow 只能导入自身 namespace 内的资源，跨 namespace 引用在配置加载阶段失败。
+Flow 资源描述“实例如何连接”。它是具体组件资源的消费者：`imports` 以 kind/namespace/name 引用资源并分配 Flow 内别名，`edges` 只引用这些别名。资源不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。`imports.*.namespace` 可省略并默认继承 Flow 的 `metadata.namespace`；显式字段继续保留以提供清楚的诊断和未来演进空间，但当前填写其他 namespace 仍会在加载阶段失败。
 
 ## 清单格式
 
@@ -93,14 +93,14 @@ Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶�
 
 - 实现 `Lifecycle` 的组件：稳定目标为 `running/stopped`；内核调用标准 `start/stop` 并记录观测状态；
 - 同时实现 `PausableLifecycle` 的组件：在上述状态外增加 `paused`；从 `stopped` 调谐到 `paused` 时先启动再非破坏性暂停；
-- 未实现运行生命周期的组件：稳定目标为 `active/inactive`，分别表示物化或销毁；`inactive` 资源不能被 Flow 导入；
+- 未实现运行生命周期的组件：稳定目标为 `active/inactive`。两者都保留资源声明和 Flow 绑定；`inactive` 关闭 Runtime 执行闸门，不再接收、转换或输出事件；
 - `Flow` 是纯路由声明，不接受 `desiredState`。
 
 插件扫描会根据实现类型生成 `supportedDesiredStates`，并随组件结构化文档经 App/Web API 暴露。清单校验和 App 调谐读取的正是同一份能力数据，不再按 kind 硬编码状态。`STARTING/STOPPING/PAUSING/RESUMING` 是 observedState 的瞬时过渡态，不是可收敛目标，不能写入 `desiredState`。
 
-App 在生命周期调用成功后同步更新 Runtime 组件闸门：`STOPPED` 与 `PAUSED` 的已绑定 Handler/Interpreter 不再接收后续事件，恢复到 `RUNNING` 才重新开放；组件级 `PAUSED` 也不会被一次内核级 pause/resume 意外恢复。EventSource 则通过注册状态和自身 pause/resume 能力控制事件准入。
+App 在状态操作成功后同步更新 Runtime 组件闸门：`INACTIVE`、`STOPPED` 与 `PAUSED` 的已绑定 Adapter/Ingress/Egress/Handler/Interpreter 都不再接收后续事件，恢复到 `ACTIVE` 或 `RUNNING` 才重新开放；组件级 `PAUSED` 也不会被一次内核级 pause/resume 意外恢复。EventSource 则通过注册状态和自身 pause/resume 能力控制事件准入。
 
-其他状态会令启动失败。运行期间可以通过 App 的通用 desired-state API 修改单个组件：App 先把完整期望资源集事务性写入 SQLite，再创建/销毁被动组件或注册/注销 EventSource，成功后推进 `observedGeneration`，失败则保留新期望并记录 `FAILED`，等待后续重试或新的 generation。当前尚没有文件监听或后台周期重试循环。
+其他状态会令启动失败。运行期间可以通过 App 的通用 desired-state API 修改单个组件：App 先把完整期望资源集事务性写入 SQLite，再调整组件生命周期或执行闸门，成功后推进 `observedGeneration`，失败则保留新期望并记录 `FAILED`。后台调谐器按 `reconciliation.interval-ms` 固定延迟扫描未收敛 generation 和 `FAILED` 资源并重试；磁盘文件仍只在 start/restart 时重新导入。
 
 ### Flow 示例
 
@@ -114,15 +114,12 @@ spec:
   imports:
     keyboard:
       kind: EventSource
-      namespace: macros
       name: keyboard-hook
     allocate:
       kind: Ingress
-      namespace: macros
       name: combat-session
     robot:
       kind: EventHandler
-      namespace: macros
       name: keyboard-robot
   edges:
     - from: keyboard
@@ -167,7 +164,7 @@ threadSafe: true
 | --- | --- | --- |
 | 实现 `Lifecycle` 的 Component | `running/stopped` | 获取或释放监听器、线程、端口、设备句柄等运行资源。 |
 | 实现 `PausableLifecycle` 的 Component | `running/paused/stopped` | 在不清除组件内部状态的情况下暂停和恢复。 |
-| 无运行生命周期的 Component | `active/inactive` | 创建或销毁未被 Flow 导入的实例；被导入资源不能在图仍引用它时转为 inactive。 |
+| 无运行生命周期的 Component | `active/inactive` | 保留实例与 Flow 绑定，打开或关闭 Runtime 执行闸门。资源删除才表示回收实例。 |
 | Flow | 无 | 纯路由声明，不参与 desired-state 调谐。 |
 
 组件定义的生命周期能力由插件扫描自动推导并写入结构化文档。插件作者只需实现对应标准接口；用户通过组件文档中的 `supportedDesiredStates` 查询清单可用值。
@@ -201,6 +198,14 @@ App 保存期望资源图，调谐器按以下顺序工作：
 6. 失败时保留上一份可工作状态，并把原因写入 status condition 与 SystemEvent；
 7. 持续重试可恢复错误，对不可恢复配置错误等待新的 generation。
 
+当前实现有三种触发边界：
+
+1. `start/restart`：重新读取完整 manifests，先完成 schema、插件能力、引用和共享策略校验，再事务性覆盖 StateStore desired set，装配 Flow/组件，最后整体标记 observed；磁盘声明始终覆盖上次运行期间的 API 修改。
+2. desired-state API：先事务性写入新 generation，再立即尝试同步调谐；调用失败时保留 desired generation 并标记 `FAILED`。
+3. 后台循环：仅在 App 为 `RUNNING` 时执行。默认第一轮在启动后 1000ms 运行，之后使用固定延迟；每轮查询 StateStore，选择 `generation != observedGeneration` 或 phase 为 `FAILED` 的 Component，按当前 desiredState 重试并分别更新 `READY/FAILED`。可通过 `reconciliation.enabled` 和 `reconciliation.interval-ms` 配置。
+
+后台循环不重新读取 YAML，也不重复调谐已经收敛的资源；Flow 当前没有 desiredState，运行期间也没有 Flow apply API，因此不会被周期性重建。这样磁盘部署源、数据库控制面和 Runtime 执行面之间只有明确的单向边界。
+
 控制 API 应围绕资源，而不是为每种组件复制一套控制器：
 
 ```text
@@ -214,7 +219,7 @@ GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 
 当前通用入口是 `POST /api/v1/app/resources/{kind}/{namespace}/{name}/desired-state/{state}`。start/stop/enable/disable 可以作为它的便捷子资源操作，只有资源声明相应 lifecycle capability 时才接受。现有 EventSource 专用 API 可在迁移期作为适配层，最终都调用同一个 App ResourceService。HTTP 继续只暴露 App 资源，不暴露 Runtime。
 
-未来 `kuudractl apply -f xxx.yaml` 会把同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。当前 App 启动已经使用相同的 SQLite 持久模型，但运行期 apply/后台监听尚未开放。
+未来 `kuudractl apply -f xxx.yaml` 会把同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。当前 App 启动和 desired-state API 已使用相同的 SQLite 持久模型与后台重试循环，但运行期通用 apply 和文件监听尚未开放。
 
 ### `state/` 与 SQLite StateStore
 

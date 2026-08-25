@@ -4,6 +4,8 @@
 
 App 生命周期独立于 Flow 生命周期：`stop` 关闭 Runtime 与插件资源，但 Web 进程仍可接收 `start` 或 `restart`，重新创建 App 内核。
 
+资源清单、generation、observedGeneration、phase 和失败信息属于控制面，查询直接读取 App 持有的 StateStore，因此 Runtime 停止后仍可查询；此时资源运行状态显示为 `NOT_RUNNING`。Session、队列深度和实时 Flow 指标属于执行面，只有 Runtime 存在时才有实时值。
+
 ```text
 CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
                      └───────────────→ STOPPING → STOPPED

@@ -170,6 +170,8 @@ class KuudraAppTest {
 
         assertTrue(Files.readString(home.resolve("config.yaml")).contains("home-directory: .kuudra"));
         assertTrue(Files.readString(home.resolve("config.yaml")).contains("max-event-hops: 256"));
+        assertTrue(Files.readString(home.resolve("config.yaml")).contains("reconciliation:"));
+        assertTrue(Files.readString(home.resolve("config.yaml")).contains("# Kuudra 家目录"));
         assertTrue(Files.readString(home.resolve("config.yaml")).contains("session-coordinator:"));
         assertTrue(Files.isDirectory(home.resolve("plugins")));
         assertFalse(Files.exists(home.resolve("flows")));
