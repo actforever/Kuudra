@@ -214,6 +214,8 @@ GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 
 当前实现使用 `.kuudra/state/kuudra.db` 保存规范资源身份、完整期望 spec、generation、observedGeneration、phase 和 message。启动导入清单及运行期 desired-state 变更都由 App 使用事务写入：新增资源 generation 为 1，spec 改变时递增，未改变则保持，清单删除的资源也从期望集合移除。App 负责执行调谐，成功后将 observedGeneration 追平并标记 `READY`，失败则标记 `FAILED` 且不伪造已观测 generation。Runtime 不读写状态库。Session、事件负载、暂停检查点和插件自行持久化的数据都不进入该状态库。
 
+启动时 `<home-directory>/manifests` 是权威声明源。即使上一次运行通过 API 把数据库中的 `desiredState` 改成了不同值，下一次启动仍会用当前磁盘清单的完整资源集合调用 `replaceDesired`：同身份但 spec 不同的资源递增 generation 并覆盖数据库，磁盘中已删除的资源从数据库删除，然后 App 按覆盖后的 desired set 调谐。因此数据库提供跨进程的 generation、观测进度、失败原因和控制面审计基础，但不会让旧运行期状态凌驾于启动清单。
+
 ## 家目录目标结构
 
 建议目标结构为：

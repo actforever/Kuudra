@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -197,6 +198,18 @@ class KuudraAppTest {
     }
 
     @Test
+    void appOwnsTheBusUsedDirectlyByRuntimeModules() throws Exception {
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            CopyOnWriteArrayList<String> types = new CopyOnWriteArrayList<>();
+            try (AutoCloseable ignored = app.systemEvents().subscribe(event -> types.add(event.type()))) {
+                app.registerFlow(new KuudraFlow("observed", Map.of(
+                        "sink", new FlowNode.AdapterNode("sink", (event, context) -> java.util.List.of(event), EventDomain.RAW)), Map.of()));
+                assertTrue(types.contains("flow.registered"));
+            }
+        }
+    }
+
+    @Test
     void exposesEveryManifestComponentResourceTypeNotOnlyEventSources() throws Exception {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "ingress", "kuudra-official/default"));
@@ -259,6 +272,20 @@ class KuudraAppTest {
             assertEquals(state.generation(), state.observedGeneration());
             assertEquals("READY", state.phase());
             assertEquals("MATERIALIZED", app.setDesiredState("Ingress", "test", "switchable", "active").status());
+        }
+    }
+
+    @Test
+    void startupManifestOverridesAConflictingPersistedDesiredState() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "authoritative", "kuudra-official/default"));
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("ABSENT", app.setDesiredState("Ingress", "test", "authoritative", "inactive").status());
+        }
+        try (KuudraApp restarted = KuudraApp.createFromDefaultLocations(directory)) {
+            KuudraApp.ComponentResource restored = restarted.resource("Ingress", "test", "authoritative").orElseThrow();
+            assertEquals("active", restored.desiredState());
+            assertEquals("MATERIALIZED", restored.status());
         }
     }
 

@@ -4,13 +4,15 @@
 
 `kuudra-logging` 使用名为 `kuudra-core` 的独立 Logback `LoggerContext`，不会继承 Spring Boot 的 root logger、appender 或日志级别。终端行以粗体彩色 `[KUUDRA]` 标识，级别按 INFO/WARN/ERROR 着色；文件日志始终使用无 ANSI 控制符的纯文本格式。
 
-Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。它们发布只读 `SystemEvent`，App 总线汇聚 Runtime 事件，`KuudraLogSession` 作为观察者订阅后统一决定日志级别与呈现方式：
+Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。`kuudra-app` 持有唯一可订阅的 `SystemEventBus`，并只把 API 层的只写 `SystemEventPublisher` 端口注入 Runtime 和插件管理器；底层模块不能订阅总线，也不持有自己的总线。`KuudraLogSession` 作为 App 总线观察者统一决定日志级别与呈现方式：
 
 - 类型包含 `failed` 的事件记为 ERROR；
 - 类型包含 `rejected` 或 `cancel` 的事件记为 WARN；
 - 其他生命周期、扫描、注册和资源事件记为 INFO。
 
-当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。SSE 等其他观察者仍可同时订阅同一总线，日志不会反向进入业务 Event 管线。
+当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。App API、当前 Web SSE 和未来 WebSocket 等其他观察者可同时订阅同一总线，日志不会反向进入业务 Event 管线。
+
+不把统一 Logger 接口放进 `kuudra-logging` 再让内核模块依赖它，是为了维持依赖方向：结构化事件契约属于 `kuudra-api`，App 负责汇聚，`kuudra-logging` 只是可替换的输出适配器。插件侧的 `PluginLogger` 是便捷门面，它最终仍转换成带插件身份的 `plugin.log` 结构化事件。
 
 插件业务日志同样沿用这条总线。`kuudra-plugin` 向插件暴露绑定 namespace/ID 的 `PluginLogger`，并发布 `plugin.log` 系统事件；`kuudra-logging` 按 TRACE/DEBUG/INFO/WARN/ERROR 级别呈现，并在日志行附加 `[plugin=<namespace>/<plugin-id>]`。插件不需要绑定 Logback、SLF4J 或 Spring Logger。
 

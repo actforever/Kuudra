@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import io.github.actforever.kuudra.api.SystemEvent;
-import io.github.actforever.kuudra.api.SystemEventBus;
+import io.github.actforever.kuudra.api.SystemEventPublisher;
 
 /**
  * Dependency-aware lifecycle manager for already loaded plugins.
@@ -28,7 +28,7 @@ import io.github.actforever.kuudra.api.SystemEventBus;
 public final class DefaultPluginManager implements AutoCloseable {
     private final Path pluginsHome;
     private final PluginRuntimeServices runtimeServices;
-    private final SystemEventBus events;
+    private final SystemEventPublisher events;
     private final Map<String, KuudraPlugin> plugins = new LinkedHashMap<>();
     private final Map<String, PluginState> states = new LinkedHashMap<>();
     private final Map<String, ManagedResources> resources = new LinkedHashMap<>();
@@ -49,7 +49,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         this(pluginsHome, runtimeServices, noEvents());
     }
 
-    public DefaultPluginManager(Path pluginsHome, PluginRuntimeServices runtimeServices, SystemEventBus events) {
+    public DefaultPluginManager(Path pluginsHome, PluginRuntimeServices runtimeServices, SystemEventPublisher events) {
         this.pluginsHome = Objects.requireNonNull(pluginsHome, "pluginsHome").toAbsolutePath().normalize();
         this.runtimeServices = Objects.requireNonNull(runtimeServices, "runtimeServices");
         this.events = Objects.requireNonNull(events, "events");
@@ -380,12 +380,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             event("plugin.log", data);
         };
     }
-    private static SystemEventBus noEvents() {
-        return new SystemEventBus() {
-            @Override public AutoCloseable subscribe(java.util.function.Consumer<SystemEvent> listener) { return () -> { }; }
-            @Override public void publish(SystemEvent event) { }
-        };
-    }
+    private static SystemEventPublisher noEvents() { return SystemEventPublisher.noop(); }
 
     private static final class ManagedResources implements PluginResourceRegistry {
         private final LinkedHashMap<String, AutoCloseable> resources = new LinkedHashMap<>();

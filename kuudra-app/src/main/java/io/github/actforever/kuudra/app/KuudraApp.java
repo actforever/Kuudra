@@ -21,7 +21,6 @@ import io.github.actforever.kuudra.config.KuudraYamlLoader;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
 import io.github.actforever.kuudra.runtime.KuudraRuntime;
-import io.github.actforever.kuudra.runtime.SimpleSystemEventBus;
 import io.github.actforever.kuudra.logging.KuudraLog;
 import io.github.actforever.kuudra.logging.KuudraLogConfiguration;
 import io.github.actforever.kuudra.logging.KuudraLogLevel;
@@ -51,7 +50,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final int workerThreads;
     private final KuudraConfig.RuntimeConfig bootstrapConfig;
     private Map<String, Object> globalContext = Map.of();
-    private final SystemEventBus events = new SimpleSystemEventBus();
+    private final SystemEventBus events = new AppSystemEventBus();
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
     private final Map<ResourceKey, ManagedEventSource> eventSources = new LinkedHashMap<>();
     private final Map<KuudraManifest.ResourceId, Object> manifestInstances = new LinkedHashMap<>();
@@ -60,7 +59,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraManifest.Resources manifestResources = KuudraManifest.Resources.EMPTY;
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
-    private AutoCloseable runtimeEvents;
     private KuudraLogSession logSession;
     private ResourceStateStore stateStore;
     private KernelCheckpoint checkpoint;
@@ -150,8 +148,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
-            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext, maxEventHops);
-            runtimeEvents = runtime.systemEvents().subscribe(events::publish);
+            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext, maxEventHops, events);
             events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads, "maxEventHops", maxEventHops)));
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
             plugins = new DefaultPluginManager(homes, pluginRuntimeServices(), events);
@@ -423,10 +420,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (stateStore != null) try { stateStore.close(); } catch (RuntimeException ignored) { }
         stateStore = null;
         checkpoint = null;
-        if (runtimeEvents != null) try { runtimeEvents.close(); } catch (Exception ignored) { }
         runtime = null;
         plugins = null;
-        runtimeEvents = null;
         globalContext = Map.of();
     }
 

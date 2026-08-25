@@ -15,7 +15,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final Map<String, RegisteredFlow> flows = new LinkedHashMap<>();
     private final List<ManagedSource> sources = new ArrayList<>();
     private final Set<Lifecycle> componentLifecycles = Collections.newSetFromMap(new IdentityHashMap<>());
-    private final SimpleSystemEventBus events = new SimpleSystemEventBus();
+    private final SystemEventPublisher events;
     private final ContextCodec codec = ContextCodecs.defaultCodec();
     private final SessionCoordinator coordinator = new SessionCoordinator();
     private final SessionManager sessionManager;
@@ -27,20 +27,22 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private int activeExecutions;
     private Set<UUID> kernelPausedSessions = Set.of();
 
-    public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of(), 256); }
-    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, 256); }
-    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops); }
-    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) { this(queue, workerThreads, Map.of(), 256); }
-    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals) { this(queue, workerThreads, globals, 256); }
-    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops) {
+    public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of(), 256, SystemEventPublisher.noop()); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, 256, SystemEventPublisher.noop()); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, SystemEventPublisher.noop()); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops, SystemEventPublisher events) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, events); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) { this(queue, workerThreads, Map.of(), 256, SystemEventPublisher.noop()); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals) { this(queue, workerThreads, globals, 256, SystemEventPublisher.noop()); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops) { this(queue, workerThreads, globals, maxEventHops, SystemEventPublisher.noop()); }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops, SystemEventPublisher events) {
         this.queue = Objects.requireNonNull(queue); this.workers = Executors.newFixedThreadPool(workerThreads);
+        this.events = Objects.requireNonNull(events, "events");
         if (maxEventHops < 1) throw new KuudraException("maxEventHops must be positive"); this.maxEventHops = maxEventHops;
         this.globalContext = new SessionManager.AtomicValueContext(codec, globals);
         this.sessionManager = new SessionManager(workers, codec, this::sessionTerminal);
         this.dispatcher = new Thread(this::dispatch, "kuudra-runtime-dispatcher"); this.dispatcher.start();
     }
 
-    public SystemEventBus systemEvents() { return events; }
     public GlobalContext globalContext() { return globalContext; }
     public SessionManager sessions() { return sessionManager; }
     public SessionCoordinator coordinator() { return coordinator; }
