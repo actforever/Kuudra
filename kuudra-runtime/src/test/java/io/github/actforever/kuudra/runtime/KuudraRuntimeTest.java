@@ -11,6 +11,28 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void reconcilerGatePreventsAStoppedLifecycleComponentFromReceivingEvents() throws Exception {
+        AtomicInteger handled = new AtomicInteger();
+        EventHandler handler = (event, context) -> {
+            handled.incrementAndGet();
+            return CompletableFuture.completedFuture(null);
+        };
+        IngressConfiguration scheduling = new IngressConfiguration(
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("gated", Map.of(
+                    "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
+                            IngressDecision.accept("group", event), scheduling, Map.of()),
+                    "handler", new FlowNode.HandlerNode("handler", handler, Map.of())),
+                    Map.of("ingress", List.of("handler"))));
+            runtime.setComponentEnabled(handler, false);
+            assertTrue(runtime.publish("gated", "ingress", KuudraEvent.of("ignored", Map.of())));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+            assertEquals(0, handled.get());
+        }
+    }
+
+    @Test
     void publishesStructuredDebugEventsForTheTaskExecutionPath() throws Exception {
         CopyOnWriteArrayList<SystemEvent> events = new CopyOnWriteArrayList<>();
         CountDownLatch handled = new CountDownLatch(1);

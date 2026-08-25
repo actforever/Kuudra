@@ -83,7 +83,7 @@ metadata:
   name: keyboard-robot
 spec:
   component: awt-input/keyboard-robot
-  desiredState: active
+  desiredState: running
   options: {}
 ```
 
@@ -91,9 +91,14 @@ spec:
 
 Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶段收敛：
 
-- `EventSource`：`running` 会注册并启动事件源，`stopped` 只物化资源、不启动事件生产；
-- `EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`：`active` 会物化并允许 Flow 导入，`inactive` 不物化且不能被 Flow 导入；
+- 实现 `Lifecycle` 的组件：稳定目标为 `running/stopped`；内核调用标准 `start/stop` 并记录观测状态；
+- 同时实现 `PausableLifecycle` 的组件：在上述状态外增加 `paused`；从 `stopped` 调谐到 `paused` 时先启动再非破坏性暂停；
+- 未实现运行生命周期的组件：稳定目标为 `active/inactive`，分别表示物化或销毁；`inactive` 资源不能被 Flow 导入；
 - `Flow` 是纯路由声明，不接受 `desiredState`。
+
+插件扫描会根据实现类型生成 `supportedDesiredStates`，并随组件结构化文档经 App/Web API 暴露。清单校验和 App 调谐读取的正是同一份能力数据，不再按 kind 硬编码状态。`STARTING/STOPPING/PAUSING/RESUMING` 是 observedState 的瞬时过渡态，不是可收敛目标，不能写入 `desiredState`。
+
+App 在生命周期调用成功后同步更新 Runtime 组件闸门：`STOPPED` 与 `PAUSED` 的已绑定 Handler/Interpreter 不再接收后续事件，恢复到 `RUNNING` 才重新开放；组件级 `PAUSED` 也不会被一次内核级 pause/resume 意外恢复。EventSource 则通过注册状态和自身 pause/resume 能力控制事件准入。
 
 其他状态会令启动失败。运行期间可以通过 App 的通用 desired-state API 修改单个组件：App 先把完整期望资源集事务性写入 SQLite，再创建/销毁被动组件或注册/注销 EventSource，成功后推进 `observedGeneration`，失败则保留新期望并记录 `FAILED`，等待后续重试或新的 generation。当前尚没有文件监听或后台周期重试循环。
 
@@ -160,11 +165,12 @@ threadSafe: true
 
 | 资源 | 期望状态 | 调谐行为 |
 | --- | --- | --- |
-| EventSource Component | `running/stopped` | 获取或释放外部监听器、线程、端口、设备句柄。 |
-| Interpreter/Adapter/Ingress/Handler/Egress Component | `active/inactive` | 创建或销毁未被 Flow 导入的实例；被导入资源不能在图仍引用它时转为 inactive。 |
+| 实现 `Lifecycle` 的 Component | `running/stopped` | 获取或释放监听器、线程、端口、设备句柄等运行资源。 |
+| 实现 `PausableLifecycle` 的 Component | `running/paused/stopped` | 在不清除组件内部状态的情况下暂停和恢复。 |
+| 无运行生命周期的 Component | `active/inactive` | 创建或销毁未被 Flow 导入的实例；被导入资源不能在图仍引用它时转为 inactive。 |
 | Flow | 无 | 纯路由声明，不参与 desired-state 调谐。 |
 
-组件定义需要声明 `lifecycleCapabilities`。EventSource 通常支持 start/stop；被动组件至少支持 materialize/destroy，active/inactive 是 Runtime 路由门控，不要求插件实现没有意义的 `start()`。
+组件定义的生命周期能力由插件扫描自动推导并写入结构化文档。插件作者只需实现对应标准接口；用户通过组件文档中的 `supportedDesiredStates` 查询清单可用值。
 
 删除资源表示从期望状态中删除该资源并由调谐器回收实例，不叫“从上下文删除”。Event、Session、Flow、Global context 是数据作用域；删除其中的键属于独立的数据操作和权限问题，不能与资源 DELETE API 混为一谈。
 

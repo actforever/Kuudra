@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraConfigTest {
     @TempDir Path directory;
@@ -174,5 +175,28 @@ class KuudraConfigTest {
                 spec: {type: event-handler, component: demo/handler}
                 """);
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+    }
+
+    @Test
+    void reportsManifestIdentityFileLineAndExpectedShapeForMissingEdges() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Path invalid = manifests.resolve("broken-flow.yaml");
+        Files.writeString(invalid, """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: demo, name: broken}
+                spec:
+                  imports:
+                    ingress: {kind: Ingress, name: ingress}
+                """);
+
+        java.io.IOException error = assertThrows(java.io.IOException.class,
+                () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+        assertTrue(error.getMessage().contains("broken-flow.yaml#document-1"));
+        assertTrue(error.getMessage().contains("Flow demo/broken"));
+        assertTrue(error.getMessage().contains("spec.edges"));
+        assertTrue(error.getMessage().contains("near line "));
+        assertTrue(error.getMessage().contains("{from: source, to: ingress}"));
     }
 }

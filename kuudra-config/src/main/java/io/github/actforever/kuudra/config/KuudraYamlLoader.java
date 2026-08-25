@@ -1,6 +1,12 @@
 package io.github.actforever.kuudra.config;
 
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.nodes.MappingNode;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.ScalarNode;
+import org.yaml.snakeyaml.nodes.SequenceNode;
+import org.yaml.snakeyaml.error.MarkedYAMLException;
+import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -78,7 +84,8 @@ public final class KuudraYamlLoader {
                 optionalMapping(root, "global-context"), manifests);
     }
 
-    private static KuudraManifest.Resources loadManifests(Path directory) throws IOException {
+    /** Reloads the complete authoritative manifest set from a Kuudra home manifests directory. */
+    public static KuudraManifest.Resources loadManifests(Path directory) throws IOException {
         Map<KuudraManifest.ResourceId, KuudraManifest.Component> components = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = new LinkedHashMap<>();
         if (!Files.exists(directory)) return KuudraManifest.Resources.EMPTY;
@@ -86,42 +93,49 @@ public final class KuudraYamlLoader {
         try (Stream<Path> files = Files.walk(directory)) {
             for (Path file : files.filter(Files::isRegularFile).filter(KuudraYamlLoader::isYaml).sorted().toList()) {
                 int document = 0;
-                for (Object value : readAll(file)) {
+                for (ManifestDocument manifest : readAll(file)) {
                     document++;
-                    if (value == null) continue;
-                    loadManifest(value, file + "#document-" + document, components, flows);
+                    if (manifest.value() == null) continue;
+                    try {
+                        loadManifest(manifest, file, document, components, flows);
+                    } catch (IOException invalid) {
+                        throw new IOException("Invalid manifest " + file + "#document-" + document + ": "
+                                + invalid.getMessage(), invalid);
+                    }
                 }
             }
         }
         return new KuudraManifest.Resources(components, flows);
     }
 
-    private static void loadManifest(Object value, String location,
+    private static void loadManifest(ManifestDocument document, Path file, int documentIndex,
                                      Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
                                      Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows) throws IOException {
-                Map<String, Object> root = mapping(value, location);
-                String apiVersion = string(required(root, "apiVersion"), location + ".apiVersion");
-                if (!KuudraManifest.API_VERSION.equals(apiVersion)) throw new IOException("Unsupported apiVersion at " + location + ": " + apiVersion);
-                String kind = string(required(root, "kind"), location + ".kind");
-                Map<String, Object> metadataMap = mapping(required(root, "metadata"), location + ".metadata");
-                String namespace = string(metadataMap.getOrDefault("namespace", "default"), location + ".metadata.namespace");
-                String name = string(required(metadataMap, "name"), location + ".metadata.name");
+                String source = file + ":" + document.line("") + " (document " + documentIndex + ")";
+                Map<String, Object> root = mapping(document.value(), source);
+                String apiVersion = string(required(root, "apiVersion", document, "", "apiVersion: " + KuudraManifest.API_VERSION), source + ".apiVersion");
+                if (!KuudraManifest.API_VERSION.equals(apiVersion)) throw new IOException("Unsupported apiVersion at " + source + ": " + apiVersion);
+                String kind = string(required(root, "kind", document, "", "kind: EventSource|EventInterpreter|EventAdapter|Ingress|EventHandler|Egress|Flow"), source + ".kind");
+                Map<String, Object> metadataMap = mapping(required(root, "metadata", document, "", "metadata: {namespace: default, name: resource-name}"), source + ".metadata");
+                String namespace = string(metadataMap.getOrDefault("namespace", "default"), source + ".metadata.namespace");
+                String name = string(required(metadataMap, "name", document, "metadata", "metadata.name: resource-name"), source + ".metadata.name");
+                String resource = kind + " " + namespace + "/" + name;
                 KuudraManifest.Metadata metadata;
                 try {
                     metadata = new KuudraManifest.Metadata(namespace, name,
                             stringMapping(metadataMap, "labels"), stringMapping(metadataMap, "annotations"));
                 } catch (IllegalArgumentException invalid) {
-                    throw new IOException("Invalid manifest metadata at " + location + ": " + invalid.getMessage(), invalid);
+                    throw new IOException("Invalid " + resource + " metadata at " + source + ": " + invalid.getMessage(), invalid);
                 }
-                Map<String, Object> spec = mapping(required(root, "spec"), location + ".spec");
+                Map<String, Object> spec = mapping(required(root, "spec", document, "", "spec: {...}"), source + ".spec");
                 try {
                     if (KuudraManifest.COMPONENT_KINDS.containsKey(kind)) {
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
                             String type = KuudraManifest.COMPONENT_KINDS.get(kind);
                             if (spec.containsKey("type")) throw new IllegalArgumentException("spec.type has been removed; use kind: " + kind);
                             KuudraManifest.Component component = new KuudraManifest.Component(id, metadata,
-                                    type, string(required(spec, "component"), location + ".spec.component"),
-                                    string(spec.getOrDefault("desiredState", defaultComponentState(type)), location + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
+                                    type, string(required(spec, "component", document, "spec", "spec.component: plugin-namespace/component-name"), source + ".spec.component"),
+                                    string(spec.getOrDefault("desiredState", defaultComponentState(type)), source + ".spec.desiredState").toLowerCase(java.util.Locale.ROOT),
                                     optionalMapping(spec, "options"));
                             if (components.putIfAbsent(id, component) != null) throw new IOException("Duplicate resource identity: " + id);
                     } else switch (kind) {
@@ -129,29 +143,33 @@ public final class KuudraYamlLoader {
                             if (spec.containsKey("desiredState")) throw new IllegalArgumentException("Flow is a routing declaration and does not support spec.desiredState");
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
                             Map<String, KuudraManifest.ResourceReference> imports = new LinkedHashMap<>();
-                            for (Map.Entry<String, Object> entry : mapping(required(spec, "imports"), location + ".spec.imports").entrySet()) {
-                                Map<String, Object> reference = mapping(entry.getValue(), location + ".spec.imports." + entry.getKey());
+                            for (Map.Entry<String, Object> entry : mapping(required(spec, "imports", document, "spec", "spec.imports: {alias: {kind: EventSource, name: resource-name}}"), source + ".spec.imports").entrySet()) {
+                                Map<String, Object> reference = mapping(entry.getValue(), source + ".spec.imports." + entry.getKey());
                                 imports.put(entry.getKey(), new KuudraManifest.ResourceReference(
-                                        string(required(reference, "kind"), "reference.kind"),
+                                        string(required(reference, "kind", document, "spec.imports." + entry.getKey(), "kind: EventSource"), "reference.kind"),
                                         string(reference.getOrDefault("namespace", namespace), "reference.namespace"),
-                                        string(required(reference, "name"), "reference.name")));
+                                        string(required(reference, "name", document, "spec.imports." + entry.getKey(), "name: resource-name"), "reference.name")));
                             }
                             List<KuudraConfig.EdgeConfig> edges = new ArrayList<>();
-                            for (Object item : list(required(spec, "edges"))) {
-                                Map<String, Object> edge = mapping(item, location + ".spec.edges");
+                            for (Object item : list(requiredForResource(spec, "edges", document, "spec",
+                                    "spec.edges: [{from: source, to: ingress}]", resource, source))) {
+                                Map<String, Object> edge = mapping(item, source + ".spec.edges");
                                 edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to")));
                             }
                             KuudraManifest.Flow flow = new KuudraManifest.Flow(id, metadata, imports, edges);
                             if (flows.putIfAbsent(id, flow) != null) throw new IOException("Duplicate resource identity: " + id);
                         }
-                        default -> throw new IOException("Unsupported manifest kind at " + location + ": " + kind);
+                        default -> throw new IOException("Unsupported manifest kind at " + source + ": " + kind);
                     }
                 } catch (IllegalArgumentException invalid) {
-                    throw new IOException("Invalid manifest " + location + ": " + invalid.getMessage(), invalid);
+                    throw new IOException("Invalid " + resource + " at " + source + ": " + invalid.getMessage(), invalid);
                 }
     }
 
-    private static String defaultComponentState(Object type) { return "event-source".equals(type) ? "running" : "active"; }
+    private static String defaultComponentState(Object type) {
+        return java.util.Set.of("event-source", "event-interpreter", "event-handler").contains(type)
+                ? "running" : "active";
+    }
     private static boolean isYaml(Path path) { String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT); return name.endsWith(".yaml") || name.endsWith(".yml"); }
     private static Map<String, String> stringMapping(Map<String, Object> map, String key) throws IOException {
         if (!map.containsKey(key)) return Map.of();
@@ -161,11 +179,43 @@ public final class KuudraYamlLoader {
     }
 
     private static Object read(Path file) throws IOException { try (Reader reader = Files.newBufferedReader(file)) { return new Yaml().load(reader); } }
-    private static Iterable<Object> readAll(Path file) throws IOException {
+    private static List<ManifestDocument> readAll(Path file) throws IOException {
+        List<Object> values = new ArrayList<>();
         try (Reader reader = Files.newBufferedReader(file)) {
-            List<Object> documents = new ArrayList<>();
-            new Yaml().loadAll(reader).forEach(document -> { if (document != null) documents.add(document); });
-            return List.copyOf(documents);
+            new Yaml().loadAll(reader).forEach(values::add);
+        } catch (MarkedYAMLException invalid) {
+            int line = invalid.getProblemMark() == null ? 1 : invalid.getProblemMark().getLine() + 1;
+            int column = invalid.getProblemMark() == null ? 1 : invalid.getProblemMark().getColumn() + 1;
+            throw new IOException("Invalid YAML syntax at " + file + ":" + line + ":" + column + ": "
+                    + invalid.getProblem(), invalid);
+        } catch (YAMLException invalid) {
+            throw new IOException("Invalid YAML syntax in " + file + ": " + invalid.getMessage(), invalid);
+        }
+        List<Node> nodes = new ArrayList<>();
+        try (Reader reader = Files.newBufferedReader(file)) { new Yaml().composeAll(reader).forEach(nodes::add); }
+        List<ManifestDocument> documents = new ArrayList<>();
+        for (int index = 0; index < values.size(); index++) {
+            Map<String, Integer> lines = new LinkedHashMap<>();
+            Node node = index < nodes.size() ? nodes.get(index) : null;
+            if (node != null) collectLines(node, "", lines);
+            documents.add(new ManifestDocument(values.get(index), lines));
+        }
+        return List.copyOf(documents);
+    }
+
+    private static void collectLines(Node node, String path, Map<String, Integer> lines) {
+        lines.putIfAbsent(path, node.getStartMark().getLine() + 1);
+        if (node instanceof MappingNode mapping) {
+            mapping.getValue().forEach(tuple -> {
+                if (tuple.getKeyNode() instanceof ScalarNode key) {
+                    String child = path.isEmpty() ? key.getValue() : path + "." + key.getValue();
+                    collectLines(tuple.getValueNode(), child, lines);
+                }
+            });
+        } else if (node instanceof SequenceNode sequence) {
+            for (int index = 0; index < sequence.getValue().size(); index++) {
+                collectLines(sequence.getValue().get(index), path + "[" + index + "]", lines);
+            }
         }
     }
     private static void mergeMappings(Map<String, Object> target, Map<String, Object> source) throws IOException {
@@ -189,6 +239,22 @@ public final class KuudraYamlLoader {
     private static Map<String, Object> optionalMapping(Map<String, Object> map, String key) throws IOException { return !map.containsKey(key) ? Map.of() : mapping(map.get(key), key); }
     private static List<Object> list(Object value) throws IOException { if (value == null) return List.of(); if (!(value instanceof List<?> list)) throw new IOException("Expected list"); return List.copyOf(list); }
     private static Object required(Map<String, Object> map, String key) throws IOException { Object value = map.get(key); if (value == null) throw new IOException("Missing required value: " + key); return value; }
+    private static Object required(Map<String, Object> map, String key, ManifestDocument document,
+                                   String parentPath, String example) throws IOException {
+        Object value = map.get(key);
+        if (value != null) return value;
+        String path = parentPath.isEmpty() ? key : parentPath + "." + key;
+        throw new IOException("Missing required field '" + path + "' near line " + document.line(parentPath)
+                + "; expected format: " + example);
+    }
+    private static Object requiredForResource(Map<String, Object> map, String key, ManifestDocument document,
+                                              String parentPath, String example, String resource, String source) throws IOException {
+        try {
+            return required(map, key, document, parentPath, example);
+        } catch (IOException invalid) {
+            throw new IOException("Invalid " + resource + " at " + source + ": " + invalid.getMessage(), invalid);
+        }
+    }
     private static String string(Object value, String location) throws IOException { if (!(value instanceof String text) || text.isBlank()) throw new IOException("Expected non-blank string at " + location); return text; }
     private static int integer(Map<String, Object> map, String key, int fallback) throws IOException { Object value = map.get(key); if (value == null) return fallback; if (value instanceof Number number) return number.intValue(); try { return Integer.parseInt(string(value, key)); } catch (NumberFormatException error) { throw new IOException("Expected integer at " + key, error); } }
     private static <E extends Enum<E>> E enumValue(Map<String, Object> map, String key, E fallback, Class<E> type) throws IOException {
@@ -197,4 +263,7 @@ public final class KuudraYamlLoader {
         catch (IllegalArgumentException error) { throw new IOException("Unsupported value at " + key + ": " + value, error); }
     }
     private static boolean bool(Object value, boolean fallback) throws IOException { if (value == null) return fallback; if (value instanceof Boolean flag) return flag; if (value instanceof String text) return Boolean.parseBoolean(text); throw new IOException("Expected boolean"); }
+    private record ManifestDocument(Object value, Map<String, Integer> lines) {
+        int line(String path) { return lines.getOrDefault(path, lines.getOrDefault("", 1)); }
+    }
 }

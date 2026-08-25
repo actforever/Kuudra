@@ -86,6 +86,7 @@ class PluginArchiveLoaderTest {
             PluginComponentDefinition interpreter = base.plugin().components().stream().filter(component ->
                     component.reference().equals("event-interpreter/base/parent-interpreter")).findFirst().orElseThrow();
             assertEquals("Recognizes a parent sequence", interpreter.documentation().purpose());
+            assertEquals(List.of("RUNNING", "STOPPED"), interpreter.documentation().supportedDesiredStates());
             assertEquals("parent.matched", interpreter.documentation().emittedEvents().get(0).eventType());
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));

@@ -48,6 +48,8 @@ spec:
 
 Flow 通过 `spec.imports` 引用 Component，再用 `edges` 路由。Source 只能指向 RAW 节点；只有 Ingress 可 RAW→SESSION，只有 Egress 可 SESSION→RAW。启动顺序为：初始化目录与配置，扫描并按依赖启动插件，实例化 Component，编译校验 Flow/占位符，最后启动 EventSource。任一步失败都会释放已创建资源。
 
+清单解析错误包含 YAML 文件、文档序号、附近行号、资源身份、字段路径和正确格式示例。App 每次 `start`（包括 `restart` 完成正常停止后的重新启动）都会重新递归读取 `<home-directory>/manifests`，并用该完整集合覆盖 StateStore 的期望状态；当前不在运行期间监听文件变化。
+
 ## 占位符编译与取值
 
 支持 `${path}` 自动查询，以及 `${event#path}`、`${session#path}`、`${flow#path}`、`${global#path}` 严格查询。不存在 `rawEvent#`。

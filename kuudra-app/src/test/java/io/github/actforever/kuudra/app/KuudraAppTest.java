@@ -98,6 +98,10 @@ class KuudraAppTest {
             assertEquals(0, app.flows().size());
             assertEquals("ACTIVE", app.plugin("kuudra-official", "default").orElseThrow().status());
             assertTrue(app.pluginComponent("ingress/kuudra-official/default").isPresent());
+            assertEquals(java.util.List.of("ACTIVE", "INACTIVE"), app.pluginComponent("ingress/kuudra-official/default")
+                    .orElseThrow().documentation().supportedDesiredStates());
+            assertEquals(java.util.List.of("RUNNING", "STOPPED"), app.pluginComponent("event-handler/kuudra-official/system-control")
+                    .orElseThrow().documentation().supportedDesiredStates());
             assertTrue(app.componentResources().isEmpty(), "Loading the built-in plugin must not create resources");
             app.stop();
             assertEquals("STOPPED", app.snapshot().status().name());
@@ -264,7 +268,7 @@ class KuudraAppTest {
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             assertEquals(2, app.componentResources().size());
             KuudraApp.ComponentResource ingress = app.componentResource("ingress", "test", "ingress").orElseThrow();
-            assertEquals("MATERIALIZED", ingress.status());
+            assertEquals("ACTIVE", ingress.status());
             assertEquals(java.util.List.of("test/pipeline"), ingress.importedBy());
             assertEquals(1, app.componentResources("egress").size());
             assertTrue(app.componentResources("event-handler").isEmpty());
@@ -289,7 +293,7 @@ class KuudraAppTest {
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             KuudraApp.ComponentResource resource = app.resource("Ingress", "test", "dormant").orElseThrow();
             assertEquals("inactive", resource.desiredState());
-            assertEquals("ABSENT", resource.status());
+            assertEquals("INACTIVE", resource.status());
         }
     }
 
@@ -299,14 +303,14 @@ class KuudraAppTest {
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default"));
 
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
-            assertEquals("MATERIALIZED", app.resource("Ingress", "test", "switchable").orElseThrow().status());
+            assertEquals("ACTIVE", app.resource("Ingress", "test", "switchable").orElseThrow().status());
             KuudraApp.ComponentResource inactive = app.setDesiredState("Ingress", "test", "switchable", "inactive");
             assertEquals("inactive", inactive.desiredState());
-            assertEquals("ABSENT", inactive.status());
+            assertEquals("INACTIVE", inactive.status());
             var state = app.resourceStates().stream().filter(item -> item.id().name().equals("switchable")).findFirst().orElseThrow();
             assertEquals(state.generation(), state.observedGeneration());
             assertEquals("READY", state.phase());
-            assertEquals("MATERIALIZED", app.setDesiredState("Ingress", "test", "switchable", "active").status());
+            assertEquals("ACTIVE", app.setDesiredState("Ingress", "test", "switchable", "active").status());
         }
     }
 
@@ -315,12 +319,27 @@ class KuudraAppTest {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "authoritative", "kuudra-official/default"));
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
-            assertEquals("ABSENT", app.setDesiredState("Ingress", "test", "authoritative", "inactive").status());
+            assertEquals("INACTIVE", app.setDesiredState("Ingress", "test", "authoritative", "inactive").status());
         }
         try (KuudraApp restarted = KuudraApp.createFromDefaultLocations(directory)) {
             KuudraApp.ComponentResource restored = restarted.resource("Ingress", "test", "authoritative").orElseThrow();
             assertEquals("active", restored.desiredState());
-            assertEquals("MATERIALIZED", restored.status());
+            assertEquals("ACTIVE", restored.status());
+        }
+    }
+
+    @Test
+    void restartReloadsTheAuthoritativeManifestDirectory() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Path ingress = manifests.resolve("ingress.yaml");
+        Files.writeString(ingress, component("Ingress", "before-restart", "kuudra-official/default"));
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertTrue(app.resource("Ingress", "test", "before-restart").isPresent());
+            Files.writeString(ingress, component("Ingress", "after-restart", "kuudra-official/default"));
+            app.restart();
+            assertTrue(app.resource("Ingress", "test", "before-restart").isEmpty());
+            assertTrue(app.resource("Ingress", "test", "after-restart").isPresent());
         }
     }
 
