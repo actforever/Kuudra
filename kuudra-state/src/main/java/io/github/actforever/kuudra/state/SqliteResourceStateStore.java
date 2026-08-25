@@ -13,6 +13,7 @@ import org.apache.ibatis.session.SqlSessionFactory;
 import org.apache.ibatis.session.SqlSessionFactoryBuilder;
 import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
 import org.sqlite.SQLiteDataSource;
+import org.sqlite.SQLiteConfig;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -30,9 +31,15 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
             .build();
     private volatile boolean closed;
 
-    public SqliteResourceStateStore(Path database) {
+    public SqliteResourceStateStore(Path database) { this(database, 5_000); }
+
+    public SqliteResourceStateStore(Path database, int busyTimeoutMs) {
         Path normalized = database.toAbsolutePath().normalize();
+        if (busyTimeoutMs < 0) throw new IllegalArgumentException("busyTimeoutMs must not be negative");
         SQLiteDataSource dataSource = new SQLiteDataSource();
+        SQLiteConfig sqlite = new SQLiteConfig();
+        sqlite.setBusyTimeout(busyTimeoutMs);
+        dataSource.setConfig(sqlite);
         dataSource.setUrl("jdbc:sqlite:" + normalized);
         Environment environment = new Environment("kuudra-state", new JdbcTransactionFactory(), dataSource);
         Configuration configuration = new Configuration(environment);
@@ -41,7 +48,6 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         sessions = new SqlSessionFactoryBuilder().build(configuration);
         try (SqlSession session = sessions.openSession(true)) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection();
             mapper.createSchema();
         } catch (RuntimeException error) {
             throw KuudraException.wrap("Failed to open StateStore " + normalized, error);
@@ -52,7 +58,6 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         try (SqlSession session = sessions.openSession(false)) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection();
             Set<KuudraManifest.ResourceId> retained = new HashSet<>();
             resources.components().values().forEach(value -> persist(mapper, value.id(), "component", value, retained));
             resources.flows().values().forEach(value -> persist(mapper, value.id(), "flow", value, retained));
@@ -81,7 +86,6 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = new LinkedHashMap<>();
         try (SqlSession session = sessions.openSession()) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection();
             for (ResourceStateRow row : mapper.findAll()) {
                 if ("component".equals(row.getResourceType())) {
                     KuudraManifest.Component value = json.readValue(row.getDesiredJson(), KuudraManifest.Component.class);
@@ -103,7 +107,6 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         try (SqlSession session = sessions.openSession()) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection();
             return mapper.findAll().stream()
                     .map(row -> new ResourceState(id(row), row.getGeneration(), row.getObservedGeneration(),
                             row.getPhase(), row.getMessage())).toList();
@@ -116,7 +119,6 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         try (SqlSession session = sessions.openSession(false)) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection();
             mapper.markAllObserved(phase, message, Instant.now().toString());
             session.commit();
         } catch (RuntimeException error) {
@@ -136,7 +138,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         try (SqlSession session = sessions.openSession(false)) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
-            mapper.configureConnection(); update.accept(mapper); session.commit();
+            update.accept(mapper); session.commit();
         } catch (RuntimeException error) {
             throw KuudraException.wrap("Failed to update observed resource " + id, error);
         }

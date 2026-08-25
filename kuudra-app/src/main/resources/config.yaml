@@ -1,18 +1,45 @@
+# Kuudra 家目录。相对路径以可执行 JAR 所在目录（独立 App 为工作目录）为基准。
 home-directory: .kuudra
 
 runtime:
+  # Runtime 待执行事件队列的最大容量；队列满时新事件会被拒绝。
   queue-capacity: 1024
+  # 执行 EventHandler 等异步任务的工作线程数。
   worker-threads: 2
+  # 单个事件允许经历的最大路由跳数，用于阻断意外循环。
   max-event-hops: 256
+  # Runtime 调度线程在队列为空时的轮询间隔，单位毫秒。
+  dispatcher-poll-interval-ms: 200
+  # 内核停止时等待活动 Session 协作式结束的最长时间，单位毫秒；0 表示不等待。
+  shutdown-session-drain-timeout-ms: 5000
   session-coordinator:
+    # Ingress 未单独声明 policy 时采用的默认会话调度策略。
     default-policy: parallel
+    # 默认会话组隔离范围：flow-binding 或 ingress。
     default-group-scope: flow-binding
+    # PARALLEL 策略下每个会话组允许同时运行的最大 Session 数。
     max-parallel-sessions: 64
+    # SERIAL 等需要等待的策略中，每个会话组允许积压的 Raw Event 数量。
     queue-capacity: 256
 
+# App 后台调谐循环。磁盘 manifests 仅在 start/restart 时重新导入；循环负责收敛 StateStore 中未完成或失败的 generation。
+reconciliation:
+  # 是否启用后台失败重试和代际收敛。
+  enabled: true
+  # 两轮调谐开始之间采用固定延迟，单位毫秒。
+  interval-ms: 1000
+
+state-store:
+  # SQLite 遇到数据库锁时等待重试的时间，单位毫秒。
+  busy-timeout-ms: 5000
+
 logging:
+  # TRACE、DEBUG、INFO、WARN、ERROR 或 OFF。
   level: info
+  # 是否向控制台输出 Kuudra 日志。
   console-enabled: true
+  # 是否写入 <home-directory>/logs/latest.log 并按启动批次归档。
   file-enabled: true
 
+# 全局上下文初始值，可通过 ${global#path} 或自动作用域查找读取。
 global-context: {}

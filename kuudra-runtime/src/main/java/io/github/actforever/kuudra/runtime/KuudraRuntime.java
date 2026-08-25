@@ -22,6 +22,8 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final SessionManager sessionManager;
     private final SessionManager.AtomicValueContext globalContext;
     private final int maxEventHops;
+    private final Duration dispatcherPollInterval;
+    private final long shutdownSessionDrainTimeoutMs;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean paused;
     private volatile CompletableFuture<Void> runtimeResumeSignal = CompletableFuture.completedFuture(null);
@@ -31,14 +33,26 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     public KuudraRuntime(int queueCapacity, int workerThreads) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, Map.of(), 256, SystemEventPublisher.noop()); }
     public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, 256, SystemEventPublisher.noop()); }
     public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, SystemEventPublisher.noop()); }
-    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops, SystemEventPublisher events) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, events); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops, SystemEventPublisher events) { this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, events, 200, 5_000); }
+    public KuudraRuntime(int queueCapacity, int workerThreads, Map<String,Object> globals, int maxEventHops,
+                         SystemEventPublisher events, int dispatcherPollIntervalMs, int shutdownSessionDrainTimeoutMs) {
+        this(new InMemoryKuudraTaskQueue(queueCapacity), workerThreads, globals, maxEventHops, events,
+                dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs);
+    }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads) { this(queue, workerThreads, Map.of(), 256, SystemEventPublisher.noop()); }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals) { this(queue, workerThreads, globals, 256, SystemEventPublisher.noop()); }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops) { this(queue, workerThreads, globals, maxEventHops, SystemEventPublisher.noop()); }
     public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops, SystemEventPublisher events) {
+        this(queue, workerThreads, globals, maxEventHops, events, 200, 5_000);
+    }
+    public KuudraRuntime(KuudraTaskQueue queue, int workerThreads, Map<String,Object> globals, int maxEventHops,
+                         SystemEventPublisher events, int dispatcherPollIntervalMs, int shutdownSessionDrainTimeoutMs) {
         this.queue = Objects.requireNonNull(queue); this.workers = Executors.newFixedThreadPool(workerThreads);
         this.events = Objects.requireNonNull(events, "events");
         if (maxEventHops < 1) throw new KuudraException("maxEventHops must be positive"); this.maxEventHops = maxEventHops;
+        if (dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0) throw new KuudraException("Runtime timing settings are invalid");
+        this.dispatcherPollInterval = Duration.ofMillis(dispatcherPollIntervalMs);
+        this.shutdownSessionDrainTimeoutMs = shutdownSessionDrainTimeoutMs;
         this.globalContext = new SessionManager.AtomicValueContext(codec, globals);
         this.sessionManager = new SessionManager(workers, codec, this::sessionTerminal);
         this.dispatcher = new Thread(this::dispatch, "kuudra-runtime-dispatcher"); this.dispatcher.start();
@@ -206,7 +220,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                 "eventId", wrapper.event().id().toString(), "queuedTasks", queue.size()));
         if(!offered&&owner!=null)sessionManager.release(owner,null); return offered;
     }
-    private void dispatch(){ while(!closed.get()){ try{ Optional<RuntimeTask> next=queue.poll(Duration.ofMillis(200));if(next.isEmpty())continue;if(next.get() instanceof RuntimeTask.StopTask)return;RuntimeTask.EventTask task=(RuntimeTask.EventTask)next.get();debugEvent("runtime.event.dispatched",taskData(task));RegisteredFlow flow=registeredFlow(task.flowId());if(task.wrapper() instanceof SessionEventWrapper sw){SessionManager.ManagedSession s=sessionManager.require(sw.session().id());if(s==null){debugEvent("runtime.event.session-missing",taskData(task));continue;}s.submit(()->execute(flow,task,s));}else workers.execute(()->execute(flow,task,null)); }catch(InterruptedException e){Thread.currentThread().interrupt();return;}catch(RuntimeException e){event("runtime.dispatch.failed",Map.of("error",e.toString()));}} }
+    private void dispatch(){ while(!closed.get()){ try{ Optional<RuntimeTask> next=queue.poll(dispatcherPollInterval);if(next.isEmpty())continue;if(next.get() instanceof RuntimeTask.StopTask)return;RuntimeTask.EventTask task=(RuntimeTask.EventTask)next.get();debugEvent("runtime.event.dispatched",taskData(task));RegisteredFlow flow=registeredFlow(task.flowId());if(task.wrapper() instanceof SessionEventWrapper sw){SessionManager.ManagedSession s=sessionManager.require(sw.session().id());if(s==null){debugEvent("runtime.event.session-missing",taskData(task));continue;}s.submit(()->execute(flow,task,s));}else workers.execute(()->execute(flow,task,null)); }catch(InterruptedException e){Thread.currentThread().interrupt();return;}catch(RuntimeException e){event("runtime.dispatch.failed",Map.of("error",e.toString()));}} }
     private void execute(RegisteredFlow flow,RuntimeTask.EventTask task,SessionManager.ManagedSession session){
         Throwable failure=null; boolean releaseHere=true; boolean asynchronous=false; boolean entered=false;
         try{
@@ -275,7 +289,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private Map<String,Object> taskData(RuntimeTask.EventTask task){return Map.of("flowId",task.flowId(),"revision",task.flowRevision(),"nodeId",task.nodeId(),"domain",task.wrapper().domain().name(),"eventId",task.wrapper().event().id().toString(),"queuedTasks",queue.size());}
     private Map<String,Object> completionData(RuntimeTask.EventTask task,Throwable failure){return Map.of("flowId",task.flowId(),"nodeId",task.nodeId(),"eventId",task.wrapper().event().id().toString(),"outcome",failure==null?"success":"failed");}
     private static boolean active(SessionStatus s){return s==SessionStatus.ACTIVE||s==SessionStatus.PAUSED||s==SessionStatus.CANCELLATION_REQUESTED;}
-    @Override public void close(){if(!closed.compareAndSet(false,true))return;synchronized(monitor){paused=false;runtimeResumeSignal.complete(null);monitor.notifyAll();}List<ManagedSource> copy; synchronized(monitor){copy=List.copyOf(sources);}copy.forEach(s->unregister(s).toCompletableFuture().join());sessionManager.cancelAll();try{sessionManager.awaitDrained(5000);}catch(InterruptedException e){Thread.currentThread().interrupt();}queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}catch(RuntimeException ignored){}componentLifecycles.clear();synchronized(monitor){disabledComponents.clear();}workers.shutdownNow();}
+    @Override public void close(){if(!closed.compareAndSet(false,true))return;synchronized(monitor){paused=false;runtimeResumeSignal.complete(null);monitor.notifyAll();}List<ManagedSource> copy; synchronized(monitor){copy=List.copyOf(sources);}copy.forEach(s->unregister(s).toCompletableFuture().join());sessionManager.cancelAll();try{sessionManager.awaitDrained(shutdownSessionDrainTimeoutMs);}catch(InterruptedException e){Thread.currentThread().interrupt();}queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}catch(RuntimeException ignored){}componentLifecycles.clear();synchronized(monitor){disabledComponents.clear();}workers.shutdownNow();}
     private record ManagedSource(EventSource source,List<SourceTarget> targets,AtomicBoolean closed){ManagedSource(EventSource source,List<SourceTarget>targets){this(source,targets,new AtomicBoolean());}}
     private static final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;

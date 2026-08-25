@@ -18,18 +18,26 @@ class KuudraConfigTest {
     void loadsFrameworkNeutralConfigurationResource() throws Exception {
         KuudraConfig.RuntimeConfig config = KuudraYamlLoader.load(new KuudraConfigResource(Map.of(
                 "runtime", Map.of("queue-capacity", 48, "worker-threads", 3, "max-event-hops", 99,
+                        "dispatcher-poll-interval-ms", 75, "shutdown-session-drain-timeout-ms", 900,
                         "session-coordinator", Map.of("default-policy", "serial", "default-group-scope", "ingress",
                                 "max-parallel-sessions", 7, "queue-capacity", 11)),
+                "reconciliation", Map.of("enabled", true, "interval-ms", 250),
+                "state-store", Map.of("busy-timeout-ms", 1_500),
                 "home-directory", "custom-home",
                 "global-context", Map.of("profile", "host")), directory, "host configuration"));
 
         assertEquals(48, config.runtime().queueCapacity());
         assertEquals(3, config.runtime().workerThreads());
         assertEquals(99, config.runtime().maxEventHops());
+        assertEquals(75, config.runtime().dispatcherPollIntervalMs());
+        assertEquals(900, config.runtime().shutdownSessionDrainTimeoutMs());
         assertEquals(io.github.actforever.kuudra.api.SessionSchedulingPolicy.SERIAL, config.runtime().sessionCoordinator().defaultPolicy());
         assertEquals(io.github.actforever.kuudra.api.SessionGroupScope.INGRESS, config.runtime().sessionCoordinator().defaultGroupScope());
         assertEquals(7, config.runtime().sessionCoordinator().maxParallelSessions());
         assertEquals(11, config.runtime().sessionCoordinator().queueCapacity());
+        assertTrue(config.reconciliation().enabled());
+        assertEquals(250, config.reconciliation().intervalMs());
+        assertEquals(1_500, config.stateStore().busyTimeoutMs());
         assertEquals("INFO", config.logging().level());
         assertEquals(true, config.logging().consoleEnabled());
         assertEquals(true, config.logging().fileEnabled());

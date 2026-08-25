@@ -62,6 +62,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private DefaultPluginManager plugins;
     private KuudraLogSession logSession;
     private ResourceStateStore stateStore;
+    private java.util.concurrent.ScheduledExecutorService reconciliationExecutor;
     private KernelCheckpoint checkpoint;
     private AppStatus status = AppStatus.CREATED;
     private String detail = "not started";
@@ -149,7 +150,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
-            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext, maxEventHops, events);
+            int dispatcherPollIntervalMs = bootstrapConfig == null ? 200 : bootstrapConfig.runtime().dispatcherPollIntervalMs();
+            int shutdownDrainTimeoutMs = bootstrapConfig == null ? 5_000 : bootstrapConfig.runtime().shutdownSessionDrainTimeoutMs();
+            runtime = new KuudraRuntime(queueCapacity, workerThreads, globalContext, maxEventHops, events,
+                    dispatcherPollIntervalMs, shutdownDrainTimeoutMs);
             events.publish(SystemEvent.of("runtime.started", Map.of("queueCapacity", queueCapacity, "workerThreads", workerThreads, "maxEventHops", maxEventHops)));
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
             plugins = new DefaultPluginManager(homes, pluginRuntimeServices(), events);
@@ -158,10 +162,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             if (bootstrapConfig != null) {
                 KuudraManifest.Resources currentManifests = KuudraYamlLoader.loadManifests(
                         bootstrapConfig.homeDirectory().resolve("manifests"));
-                applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.logging(),
+                applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.reconciliation(),
+                        bootstrapConfig.stateStore(), bootstrapConfig.logging(),
                         bootstrapConfig.homeDirectory(), bootstrapConfig.globalContext(), currentManifests));
             }
             status = AppStatus.RUNNING;
+            if (bootstrapConfig != null) startReconciliationLoop(bootstrapConfig.reconciliation());
             detail = ""; publish("app.running");
         } catch (RuntimeException failure) {
             releaseResources();
@@ -174,7 +180,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     @Override public synchronized void stop() {
         if (status == AppStatus.STOPPED || status == AppStatus.CREATED || status == AppStatus.STOPPING) return;
-        status = AppStatus.STOPPING; publish("app.stopping");
+        status = AppStatus.STOPPING; publish("app.stopping"); stopReconciliationLoop();
         try {
             releaseResources();
             status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
@@ -431,7 +437,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             events.publish(SystemEvent.of("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size())));
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
-            if (stateStore == null) stateStore = new SqliteResourceStateStore(config.homeDirectory().resolve("state").resolve("kuudra.db"));
+            if (stateStore == null) stateStore = new SqliteResourceStateStore(
+                    config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
             validateDesiredStates(config.manifests());
             validateManifestPolicies(config.manifests());
             stateStore.replaceDesired(config.manifests());
@@ -447,6 +454,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private void releaseResources() {
+        stopReconciliationLoop();
         if (runtime != null) try { runtime.close(); } catch (RuntimeException ignored) { }
         if (plugins != null) try { plugins.close(); } catch (RuntimeException ignored) { }
         for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
@@ -461,6 +469,47 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         runtime = null;
         plugins = null;
         globalContext = Map.of();
+    }
+
+    private void startReconciliationLoop(KuudraConfig.ReconciliationSettings settings) {
+        if (!settings.enabled() || reconciliationExecutor != null) return;
+        reconciliationExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "kuudra-app-reconciler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        reconciliationExecutor.scheduleWithFixedDelay(this::reconcilePendingSafely,
+                settings.intervalMs(), settings.intervalMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
+        debug("reconciliation.loop.started", Map.of("intervalMs", settings.intervalMs()));
+    }
+
+    private synchronized void reconcilePendingSafely() {
+        if (status != AppStatus.RUNNING || stateStore == null || runtime == null) return;
+        try {
+            KuudraManifest.Resources desired = stateStore.desiredResources();
+            manifestResources = desired;
+            Map<KuudraManifest.ResourceId, ResourceStateStore.ResourceState> states = stateStore.states().stream()
+                    .collect(java.util.stream.Collectors.toMap(ResourceStateStore.ResourceState::id, state -> state));
+            for (KuudraManifest.Component component : desired.components().values()) {
+                ResourceStateStore.ResourceState state = states.get(component.id());
+                if (state == null || (state.generation() == state.observedGeneration() && !"FAILED".equals(state.phase()))) continue;
+                try {
+                    debug("resource.reconcile.retry", Map.of("resource", component.id().toString(), "generation", state.generation()));
+                    reconcileComponent(component);
+                    stateStore.markObserved(component.id(), "READY", "reconciled by periodic loop");
+                } catch (RuntimeException failure) {
+                    stateStore.markFailed(component.id(), failure.toString());
+                }
+            }
+        } catch (RuntimeException failure) {
+            events.publish(SystemEvent.of("reconciliation.loop.failed", Map.of("error", failure.toString())));
+        }
+    }
+
+    private void stopReconciliationLoop() {
+        if (reconciliationExecutor == null) return;
+        reconciliationExecutor.shutdownNow();
+        reconciliationExecutor = null;
     }
 
     private void closeLogSession() {

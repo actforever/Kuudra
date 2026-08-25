@@ -5,8 +5,6 @@ import java.util.List;
 
 /** SQL mapping for the resource StateStore. Transaction ownership remains in the store. */
 interface ResourceStateMapper {
-    @Update("PRAGMA busy_timeout=5000") void configureConnection();
-
     @Update("""
             CREATE TABLE IF NOT EXISTS resources (
               kind TEXT NOT NULL, namespace TEXT NOT NULL, name TEXT NOT NULL,

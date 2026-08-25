@@ -64,11 +64,18 @@ public final class KuudraYamlLoader {
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
         int maxEventHops = integer(runtime, "max-event-hops", 256);
+        int dispatcherPollIntervalMs = integer(runtime, "dispatcher-poll-interval-ms", 200);
+        int shutdownSessionDrainTimeoutMs = nonNegativeInteger(runtime, "shutdown-session-drain-timeout-ms", 5_000);
         Map<String, Object> coordinator = optionalMapping(runtime, "session-coordinator");
         SessionSchedulingPolicy defaultPolicy = enumValue(coordinator, "default-policy", SessionSchedulingPolicy.PARALLEL, SessionSchedulingPolicy.class);
         SessionGroupScope defaultGroupScope = enumValue(coordinator, "default-group-scope", SessionGroupScope.FLOW_BINDING, SessionGroupScope.class);
         int maxParallelSessions = integer(coordinator, "max-parallel-sessions", 64);
         int sessionQueueCapacity = integer(coordinator, "queue-capacity", 256);
+        Map<String, Object> reconciliation = optionalMapping(root, "reconciliation");
+        boolean reconciliationEnabled = bool(reconciliation.get("enabled"), true);
+        int reconciliationIntervalMs = integer(reconciliation, "interval-ms", 1_000);
+        Map<String, Object> stateStore = optionalMapping(root, "state-store");
+        int stateStoreBusyTimeoutMs = nonNegativeInteger(stateStore, "busy-timeout-ms", 5_000);
         Map<String, Object> logging = optionalMapping(root, "logging");
         String loggingLevel = string(logging.getOrDefault("level", "info"), "logging.level").toUpperCase(java.util.Locale.ROOT);
         if (!java.util.Set.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF").contains(loggingLevel)) {
@@ -79,7 +86,10 @@ public final class KuudraYamlLoader {
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         KuudraManifest.Resources manifests = loadManifests(homeDirectory.resolve("manifests"));
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
+                dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
                 new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity)),
+                new KuudraConfig.ReconciliationSettings(reconciliationEnabled, reconciliationIntervalMs),
+                new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled), homeDirectory,
                 optionalMapping(root, "global-context"), manifests);
     }
@@ -257,6 +267,11 @@ public final class KuudraYamlLoader {
     }
     private static String string(Object value, String location) throws IOException { if (!(value instanceof String text) || text.isBlank()) throw new IOException("Expected non-blank string at " + location); return text; }
     private static int integer(Map<String, Object> map, String key, int fallback) throws IOException { Object value = map.get(key); if (value == null) return fallback; if (value instanceof Number number) return number.intValue(); try { return Integer.parseInt(string(value, key)); } catch (NumberFormatException error) { throw new IOException("Expected integer at " + key, error); } }
+    private static int nonNegativeInteger(Map<String, Object> map, String key, int fallback) throws IOException {
+        int value = integer(map, key, fallback);
+        if (value < 0) throw new IOException("Expected non-negative integer at " + key);
+        return value;
+    }
     private static <E extends Enum<E>> E enumValue(Map<String, Object> map, String key, E fallback, Class<E> type) throws IOException {
         Object value = map.get(key); if (value == null) return fallback;
         try { return Enum.valueOf(type, string(value, key).replace('-', '_').toUpperCase(java.util.Locale.ROOT)); }

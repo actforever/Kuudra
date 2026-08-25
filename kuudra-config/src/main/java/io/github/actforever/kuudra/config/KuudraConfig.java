@@ -14,20 +14,33 @@ public final class KuudraConfig {
     private KuudraConfig() { }
 
     /** Aggregate produced from config.yaml and manifests/. */
-    public record RuntimeConfig(RuntimeSettings runtime, LoggingSettings logging, Path homeDirectory,
+    public record RuntimeConfig(RuntimeSettings runtime, ReconciliationSettings reconciliation,
+                                StateStoreSettings stateStore, LoggingSettings logging, Path homeDirectory,
                                 Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
         public RuntimeConfig {
-            if (runtime == null || logging == null || manifests == null) throw new IllegalArgumentException("runtime, logging, and manifests must not be null");
+            if (runtime == null || reconciliation == null || stateStore == null || logging == null || manifests == null) {
+                throw new IllegalArgumentException("runtime, reconciliation, stateStore, logging, and manifests must not be null");
+            }
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
         }
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads, int maxEventHops,
+                                  int dispatcherPollIntervalMs, int shutdownSessionDrainTimeoutMs,
                                   SessionCoordinatorSettings sessionCoordinator) {
         public RuntimeSettings {
-            if (queueCapacity < 1 || workerThreads < 1 || maxEventHops < 1) throw new IllegalArgumentException("runtime capacities and maxEventHops must be positive");
+            if (queueCapacity < 1 || workerThreads < 1 || maxEventHops < 1
+                    || dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0) {
+                throw new IllegalArgumentException("runtime capacities and timeouts must be valid");
+            }
             if (sessionCoordinator == null) throw new IllegalArgumentException("sessionCoordinator must not be null");
         }
+    }
+    public record ReconciliationSettings(boolean enabled, int intervalMs) {
+        public ReconciliationSettings { if (intervalMs < 1) throw new IllegalArgumentException("reconciliation.intervalMs must be positive"); }
+    }
+    public record StateStoreSettings(int busyTimeoutMs) {
+        public StateStoreSettings { if (busyTimeoutMs < 0) throw new IllegalArgumentException("stateStore.busyTimeoutMs must not be negative"); }
     }
     public record SessionCoordinatorSettings(SessionSchedulingPolicy defaultPolicy,
                                              SessionGroupScope defaultGroupScope,
