@@ -1,14 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
-    <parent><groupId>io.github.actforever</groupId><artifactId>kuudra</artifactId><version>v0.4.0-alpha-3</version></parent>
+    <parent>
+        <groupId>io.github.actforever</groupId>
+        <artifactId>kuudra</artifactId>
+        <version>v0.4.0-alpha-4</version>
+    </parent>
     <artifactId>kuudra-state</artifactId>
     <dependencies>
-        <dependency><groupId>io.github.actforever</groupId><artifactId>kuudra-config</artifactId><version>${project.version}</version></dependency>
-        <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId></dependency>
-        <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId></dependency>
-        <dependency><groupId>org.mybatis</groupId><artifactId>mybatis</artifactId></dependency>
-        <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><scope>provided</scope></dependency>
-        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
+        <dependency>
+            <groupId>io.github.actforever</groupId>
+            <artifactId>kuudra-config</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mybatis</groupId>
+            <artifactId>mybatis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
