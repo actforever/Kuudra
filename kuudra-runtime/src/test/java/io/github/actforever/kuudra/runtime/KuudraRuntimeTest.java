@@ -33,6 +33,25 @@ class KuudraRuntimeTest {
     }
 
     @Test
+    void reconcilerGateAlsoCoversPassiveIngressComponents() throws Exception {
+        AtomicInteger admissions = new AtomicInteger();
+        Ingress ingress = (event, context) -> {
+            admissions.incrementAndGet();
+            return IngressDecision.reject("test");
+        };
+        IngressConfiguration scheduling = new IngressConfiguration(
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("inactive", Map.of(
+                    "ingress", new FlowNode.IngressNode("ingress", ingress, scheduling, Map.of())), Map.of()));
+            runtime.setComponentEnabled(ingress, false);
+            assertTrue(runtime.publish("inactive", "ingress", KuudraEvent.of("ignored", Map.of())));
+            Thread.sleep(100);
+            assertEquals(0, admissions.get());
+        }
+    }
+
+    @Test
     void publishesStructuredDebugEventsForTheTaskExecutionPath() throws Exception {
         CopyOnWriteArrayList<SystemEvent> events = new CopyOnWriteArrayList<>();
         CountDownLatch handled = new CountDownLatch(1);

@@ -279,7 +279,7 @@ class KuudraAppTest {
     }
 
     @Test
-    void leavesInactivePassiveResourcesUnmaterialized() throws Exception {
+    void reportsInactivePassiveResourcesWithoutEnablingThem() throws Exception {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("ingress.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
@@ -294,6 +294,36 @@ class KuudraAppTest {
             KuudraApp.ComponentResource resource = app.resource("Ingress", "test", "dormant").orElseThrow();
             assertEquals("inactive", resource.desiredState());
             assertEquals("INACTIVE", resource.status());
+        }
+    }
+
+    @Test
+    void inactivePassiveResourceMayRemainImportedButItsRuntimeGateIsClosed() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("resources.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: dormant}
+                spec: {component: kuudra-official/default, desiredState: inactive}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: test, name: output}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: test, name: dormant-route}
+                spec:
+                  imports:
+                    ingress: {kind: Ingress, name: dormant}
+                    output: {kind: Egress, name: output}
+                  edges: [{from: ingress, to: output}]
+                """);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals("INACTIVE", app.resource("Ingress", "test", "dormant").orElseThrow().status());
+            assertEquals(java.util.List.of("test/dormant-route"), app.resource("Ingress", "test", "dormant")
+                    .orElseThrow().importedBy());
         }
     }
 
@@ -325,6 +355,22 @@ class KuudraAppTest {
             KuudraApp.ComponentResource restored = restarted.resource("Ingress", "test", "authoritative").orElseThrow();
             assertEquals("active", restored.desiredState());
             assertEquals("ACTIVE", restored.status());
+        }
+    }
+
+    @Test
+    void controlPlaneResourceQueriesRemainAvailableAfterRuntimeStops() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "queryable", "kuudra-official/default"));
+        KuudraApp app = KuudraApp.createFromDefaultLocations(directory);
+        try {
+            app.stop();
+            KuudraApp.ComponentResource resource = app.resource("Ingress", "test", "queryable").orElseThrow();
+            assertEquals("active", resource.desiredState());
+            assertEquals("NOT_RUNNING", resource.status());
+            assertEquals(1, app.resourceStates().size());
+        } finally {
+            app.close();
         }
     }
 

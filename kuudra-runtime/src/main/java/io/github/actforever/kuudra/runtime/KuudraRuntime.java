@@ -217,7 +217,10 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             if(flow.flow.revision()!=task.flowRevision()||(session!=null&&(!session.active()||session.cancelled.get()||session.failure.get()!=null)))return;
             FlowNode node=flow.flow.node(task.nodeId()); KuudraEvent input=task.wrapper().event();
             Object component = node instanceof FlowNode.InterpreterNode interpreter ? interpreter.interpreter()
-                    : node instanceof FlowNode.HandlerNode handler ? handler.handler() : null;
+                    : node instanceof FlowNode.HandlerNode handler ? handler.handler()
+                    : node instanceof FlowNode.AdapterNode adapter ? adapter.adapter()
+                    : node instanceof FlowNode.IngressNode ingress ? ingress.ingress()
+                    : node instanceof FlowNode.EgressNode egress ? egress.egress() : null;
             synchronized (monitor) { if (component != null && disabledComponents.contains(component)) return; }
             EventContext context=context(flow,session,node.id(),input);
             if(node instanceof FlowNode.IngressNode ingress){ executeIngress(flow,ingress,input,context); return; }
