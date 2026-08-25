@@ -41,5 +41,8 @@
   "session.resumed": "Session resumed (sessionId={sessionId})",
   "session.cancel.requested": "Session cancellation requested (sessionId={sessionId})",
   "event-source.started": "EventSource started (targets={targets})",
-  "event-handler.completed": "EventHandler completed (sessionId={sessionId}, handlerId={handlerId})"
+  "event-handler.completed": "EventHandler completed (sessionId={sessionId}, handlerId={handlerId})",
+  "reconciliation.cycle.started": "Reconciliation cycle started",
+  "reconciliation.cycle.completed": "Reconciliation cycle completed (attemptedComponents={attemptedComponents}, failedComponents={failedComponents}, elapsedMs={elapsedMs})",
+  "component.state.changed": "Component state changed (resource={resource}, from={from}, to={to}, desiredState={desiredState})"
 }

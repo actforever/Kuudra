@@ -428,6 +428,8 @@ class KuudraAppTest {
         Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default"));
 
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            CopyOnWriteArrayList<io.github.actforever.kuudra.api.system.SystemEvent> observedEvents = new CopyOnWriteArrayList<>();
+            try (AutoCloseable ignored = app.systemEvents().subscribe(observedEvents::add)) {
             assertEquals("ACTIVE", app.resource("Ingress", "test", "switchable").orElseThrow().status());
             KuudraApp.ComponentResource inactive = app.setDesiredState("Ingress", "test", "switchable", "inactive");
             assertEquals("inactive", inactive.desiredState());
@@ -436,6 +438,30 @@ class KuudraAppTest {
             assertEquals(state.generation(), state.observedGeneration());
             assertEquals("READY", state.phase());
             assertEquals("ACTIVE", app.setDesiredState("Ingress", "test", "switchable", "active").status());
+            assertTrue(observedEvents.stream().anyMatch(event -> event.type().equals("component.state.changed")
+                    && event.level() == io.github.actforever.kuudra.api.system.SystemEventLevel.DEBUG
+                    && event.data().get("from").equals("ACTIVE") && event.data().get("to").equals("INACTIVE")));
+            }
+        }
+    }
+
+    @Test void periodicReconciliationPublishesTraceForEveryCycle() throws Exception {
+        KuudraConfigResource configuration = new KuudraConfigResource(Map.of(
+                "home-directory", ".kuudra",
+                "reconciliation", Map.of("enabled", true, "interval-ms", 10),
+                "logging", Map.of("level", "off", "console-enabled", false, "file-enabled", false)),
+                directory, "trace reconciliation test");
+        try (KuudraApp app = KuudraApp.createConfigured(configuration)) {
+            CopyOnWriteArrayList<io.github.actforever.kuudra.api.system.SystemEvent> events = new CopyOnWriteArrayList<>();
+            try (AutoCloseable ignored = app.systemEvents().subscribe(events::add)) {
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+                while (events.stream().noneMatch(event -> event.type().equals("reconciliation.cycle.completed"))
+                        && System.nanoTime() < deadline) Thread.sleep(5);
+                assertTrue(events.stream().anyMatch(event -> event.type().equals("reconciliation.cycle.started")
+                        && event.level() == io.github.actforever.kuudra.api.system.SystemEventLevel.TRACE));
+                assertTrue(events.stream().anyMatch(event -> event.type().equals("reconciliation.cycle.completed")
+                        && event.level() == io.github.actforever.kuudra.api.system.SystemEventLevel.TRACE));
+            }
         }
     }
 

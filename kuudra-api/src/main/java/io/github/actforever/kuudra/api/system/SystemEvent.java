@@ -23,4 +23,7 @@ public record SystemEvent(UUID id, Instant occurredAt, SystemEventLevel level, S
     public static SystemEvent debug(String type, Map<String, Object> data) {
         return new SystemEvent(UUID.randomUUID(), Instant.now(), SystemEventLevel.DEBUG, type, data);
     }
+    public static SystemEvent trace(String type, Map<String, Object> data) {
+        return new SystemEvent(UUID.randomUUID(), Instant.now(), SystemEventLevel.TRACE, type, data);
+    }
 }

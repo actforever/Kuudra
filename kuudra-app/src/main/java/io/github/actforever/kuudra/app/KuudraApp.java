@@ -458,6 +458,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private DefaultPluginManager requirePlugins() { synchronized (this) { if ((status != AppStatus.STARTING && status != AppStatus.RUNNING && status != AppStatus.PAUSED) || plugins == null) throw new KuudraException("App is not available: " + status); return plugins; } }
     private void publish(String type) { events.publish(SystemEvent.of(type, java.util.Map.of("status", status.name(), "detail", detail))); }
     private void debug(String type, Map<String,Object> data) { events.publish(SystemEvent.debug(type, data)); }
+    private void trace(String type, Map<String,Object> data) { events.publish(SystemEvent.trace(type, data)); }
     @Override public synchronized void close() {
         stop();
         if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
@@ -598,6 +599,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private synchronized void reconcilePendingSafely() {
         if (status != AppStatus.RUNNING || stateStore == null || runtime == null) return;
+        long startedAt = System.nanoTime();
+        int attempted = 0;
+        int failed = 0;
+        trace("reconciliation.cycle.started", Map.of());
         try {
             KuudraManifest.Resources desired = stateStore.desiredResources();
             KuudraManifest.Resources selectedResources = selectResources(desired);
@@ -607,16 +612,23 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             for (KuudraManifest.Component component : selectedResources.components().values()) {
                 ResourceStateStore.ResourceState state = states.get(component.id());
                 if (state == null || (state.generation() == state.observedGeneration() && !"FAILED".equals(state.phase()))) continue;
+                attempted++;
                 try {
                     debug("resource.reconcile.retry", Map.of("resource", component.id().toString(), "generation", state.generation()));
                     reconcileComponent(component);
                     stateStore.markObserved(component.id(), "READY", "reconciled by periodic loop");
                 } catch (RuntimeException failure) {
+                    failed++;
                     stateStore.markFailed(component.id(), failure.toString());
                 }
             }
         } catch (RuntimeException failure) {
             events.publish(SystemEvent.of("reconciliation.loop.failed", Map.of("error", failure.toString())));
+            failed++;
+        } finally {
+            trace("reconciliation.cycle.completed", Map.of("attemptedComponents", attempted,
+                    "failedComponents", failed,
+                    "elapsedMs", java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)));
         }
     }
 
@@ -679,7 +691,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
         for (KuudraManifest.Component component : resources.components().values()) {
             if (!component.type().equals("event-source") && manifestInstances.get(component.id()) instanceof Lifecycle) {
-                manifestObservedStates.put(component.id(), "RUNNING");
+                recordComponentStateChange(component, "RUNNING");
                 reconcileLifecycle(component, (Lifecycle) manifestInstances.get(component.id()));
             } else if (!component.type().equals("event-source")) {
                 boolean active = component.desiredState().equalsIgnoreCase("active");
@@ -716,24 +728,24 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 if (targets.isEmpty()) throw new KuudraException("EventSource is not imported by any Flow: " + component.id());
                 manifestSourceRegistrations.put(component.id(), requireRuntime().registerSource(targets, instance).toCompletableFuture().join());
                 requireRuntime().setComponentEnabled(instance, true);
-                manifestObservedStates.put(component.id(), "RUNNING");
+                recordComponentStateChange(component, "RUNNING");
                 if (desired.equals("paused")) {
                     requireRuntime().setComponentPaused(instance, true);
                     ((PausableLifecycle) instance).pause().toCompletableFuture().join();
-                    manifestObservedStates.put(component.id(), "PAUSED");
+                    recordComponentStateChange(component, "PAUSED");
                 }
             } else if (desired.equals("running") && manifestObservedStates.getOrDefault(component.id(), "").equals("PAUSED")) {
                 ((PausableLifecycle) manifestInstances.get(component.id())).resume().toCompletableFuture().join();
                 requireRuntime().setComponentPaused(manifestInstances.get(component.id()), false);
-                manifestObservedStates.put(component.id(), "RUNNING");
+                recordComponentStateChange(component, "RUNNING");
             } else if (desired.equals("paused") && manifestObservedStates.getOrDefault(component.id(), "").equals("RUNNING")) {
                 requireRuntime().setComponentPaused(manifestInstances.get(component.id()), true);
                 ((PausableLifecycle) manifestInstances.get(component.id())).pause().toCompletableFuture().join();
-                manifestObservedStates.put(component.id(), "PAUSED");
+                recordComponentStateChange(component, "PAUSED");
             } else if (desired.equals("stopped")) {
                 SourceRegistration registration = manifestSourceRegistrations.remove(component.id());
                 if (registration != null) registration.unregister().toCompletableFuture().join();
-                manifestObservedStates.put(component.id(), "STOPPED");
+                recordComponentStateChange(component, "STOPPED");
             }
             return;
         }
@@ -744,14 +756,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
         if (desired.equals("inactive")) {
             requireRuntime().setComponentEnabled(currentInstance, false);
-            manifestObservedStates.put(component.id(), "INACTIVE");
+            recordComponentStateChange(component, "INACTIVE");
         } else {
             if (currentInstance == null) {
                 currentInstance = createManifestComponent(component);
                 manifestInstances.put(component.id(), currentInstance);
             }
             requireRuntime().setComponentEnabled(currentInstance, true);
-            manifestObservedStates.put(component.id(), "ACTIVE");
+            recordComponentStateChange(component, "ACTIVE");
         }
     }
 
@@ -780,7 +792,16 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             }
             default -> throw new KuudraException("Unsupported lifecycle desiredState " + desired + " for " + component.id());
         }
-        manifestObservedStates.put(component.id(), desired);
+        recordComponentStateChange(component, desired);
+    }
+
+    private void recordComponentStateChange(KuudraManifest.Component component, String state) {
+        String previous = manifestObservedStates.put(component.id(), state);
+        if (!java.util.Objects.equals(previous, state)) {
+            debug("component.state.changed", Map.of("resource", component.id().toString(),
+                    "from", previous == null ? "UNOBSERVED" : previous, "to", state,
+                    "desiredState", component.desiredState()));
+        }
     }
 
     private Object createManifestComponent(KuudraManifest.Component component) {
