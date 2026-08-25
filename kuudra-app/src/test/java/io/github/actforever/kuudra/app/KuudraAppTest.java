@@ -193,6 +193,9 @@ class KuudraAppTest {
         assertTrue(Files.isDirectory(home.resolve("manifests")));
         assertTrue(Files.isDirectory(home.resolve("state")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
+        String latestLog = Files.readString(home.resolve("logs/latest.log"));
+        assertTrue(latestLog.contains("Created missing Kuudra home directory"));
+        assertTrue(latestLog.contains("Restored missing Kuudra home configuration from packaged defaults"));
     }
 
     @Test
@@ -251,6 +254,21 @@ class KuudraAppTest {
         Files.writeString(plugins.resolve("not-a-kuudra-plugin.jar"), "invalid jar");
 
         assertThrows(KuudraException.class, () -> KuudraApp.createFromDefaultLocations(directory));
+    }
+
+    @Test
+    void restartRecreatesHomeEntriesDeletedDuringThePreviousRun() throws Exception {
+        Path home = directory.resolve(".kuudra");
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            Files.delete(home.resolve("config.yaml"));
+            Files.delete(home.resolve("locale"));
+            app.restart();
+            assertTrue(Files.isRegularFile(home.resolve("config.yaml")));
+            assertTrue(Files.isDirectory(home.resolve("locale")));
+        }
+        String latestLog = Files.readString(home.resolve("logs/latest.log"));
+        assertTrue(latestLog.contains("role=locale"));
+        assertTrue(latestLog.contains("Restored missing Kuudra home configuration from packaged defaults"));
     }
 
     @Test

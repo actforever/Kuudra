@@ -83,6 +83,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final int queueCapacity;
     private final int workerThreads;
     private final KuudraConfig.RuntimeConfig bootstrapConfig;
+    private final List<HomeInitialization> homeInitializations;
+    private boolean homeInitializationReported;
     private Map<String, Object> globalContext = Map.of();
     private final SystemEventBus events = new AppSystemEventBus();
     private volatile MessageResolver externalMessageResolver = MessageResolver.none();
@@ -112,13 +114,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     public KuudraApp(int queueCapacity, int workerThreads) { this(queueCapacity, workerThreads, null); }
     private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig) {
-        this(queueCapacity, workerThreads, bootstrapConfig, MessageResolver.none());
+        this(queueCapacity, workerThreads, bootstrapConfig, MessageResolver.none(), List.of());
     }
     private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig,
-                      MessageResolver externalMessages) {
+                      MessageResolver externalMessages, List<HomeInitialization> homeInitializations) {
         this.queueCapacity = queueCapacity;
         this.workerThreads = workerThreads;
         this.bootstrapConfig = bootstrapConfig;
+        this.homeInitializations = List.copyOf(homeInitializations);
         this.externalMessageResolver = java.util.Objects.requireNonNull(externalMessages, "externalMessages");
         start();
     }
@@ -129,8 +132,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     /** Creates App from a configuration path with external I18n active before startup. */
     public static KuudraApp createConfigured(Path configFile, MessageResolver messages) throws IOException {
         KuudraConfigResource explicit = KuudraYamlLoader.readResource(configFile);
-        KuudraConfig.RuntimeConfig config = loadConfiguration(explicit.baseDirectory(), explicit);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
+        LoadedConfiguration loaded = loadConfiguration(explicit.baseDirectory(), explicit);
+        KuudraConfig.RuntimeConfig config = loaded.config();
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages, loaded.homeInitializations());
     }
     /** Creates App using a programmatic configuration as the highest-priority layer. */
     public static KuudraApp createConfigured(KuudraConfigResource resource) throws IOException {
@@ -139,8 +143,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     /** Creates App with an external I18n layer active before the first startup event is logged. */
     public static KuudraApp createConfigured(KuudraConfigResource resource,
                                              MessageResolver messages) throws IOException {
-        KuudraConfig.RuntimeConfig config = loadConfiguration(resource.baseDirectory(), resource);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
+        LoadedConfiguration loaded = loadConfiguration(resource.baseDirectory(), resource);
+        KuudraConfig.RuntimeConfig config = loaded.config();
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages, loaded.homeInitializations());
     }
     /** Creates App from its home config, falling back to the packaged defaults. */
     public static KuudraApp createDefaultOrClasspathConfigured() throws IOException {
@@ -158,11 +163,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public static KuudraApp createFromDefaultLocations(Path baseDirectory,
                                                        MessageResolver messages) throws IOException {
         Path base = baseDirectory.toAbsolutePath().normalize();
-        KuudraConfig.RuntimeConfig config = loadConfiguration(base, null);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
+        LoadedConfiguration loaded = loadConfiguration(base, null);
+        KuudraConfig.RuntimeConfig config = loaded.config();
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages, loaded.homeInitializations());
     }
 
-    private static KuudraConfig.RuntimeConfig loadConfiguration(Path baseDirectory, KuudraConfigResource explicit) throws IOException {
+    private static LoadedConfiguration loadConfiguration(Path baseDirectory, KuudraConfigResource explicit) throws IOException {
         Path base = baseDirectory.toAbsolutePath().normalize();
         KuudraConfigResource defaults;
         try (var input = KuudraApp.class.getClassLoader().getResourceAsStream("config.yaml")) {
@@ -175,20 +181,21 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 throw new IOException("Expected non-blank string at home-directory");
             }
             Path homeDirectory = base.resolve(home).normalize();
-            initializeHomeDirectory(homeDirectory, defaultConfiguration);
+            List<HomeInitialization> homeInitializations = initializeHomeDirectory(homeDirectory, defaultConfiguration);
             KuudraConfigResource homeConfig = KuudraYamlLoader.readResource(homeDirectory.resolve("config.yaml"));
             KuudraConfigResource merged = KuudraYamlLoader.merge(base, "merged Kuudra configuration", defaults, homeConfig, explicit);
-            return KuudraYamlLoader.load(merged);
+            return new LoadedConfiguration(KuudraYamlLoader.load(merged), homeInitializations);
         }
     }
 
-    private static void initializeHomeDirectory(Path homeDirectory, byte[] defaultConfiguration) throws IOException {
-        Files.createDirectories(homeDirectory);
-        Files.createDirectories(homeDirectory.resolve("plugins"));
-        Files.createDirectories(homeDirectory.resolve("manifests"));
-        Files.createDirectories(homeDirectory.resolve("logs"));
-        Files.createDirectories(homeDirectory.resolve("state"));
-        Files.createDirectories(homeDirectory.resolve("locale"));
+    private static List<HomeInitialization> initializeHomeDirectory(Path homeDirectory, byte[] defaultConfiguration) throws IOException {
+        List<HomeInitialization> created = new ArrayList<>();
+        ensureDirectory(homeDirectory, "home", created);
+        ensureDirectory(homeDirectory.resolve("plugins"), "plugins", created);
+        ensureDirectory(homeDirectory.resolve("manifests"), "manifests", created);
+        ensureDirectory(homeDirectory.resolve("logs"), "logs", created);
+        ensureDirectory(homeDirectory.resolve("state"), "state", created);
+        ensureDirectory(homeDirectory.resolve("locale"), "locale", created);
         Path homeConfigFile = homeDirectory.resolve("config.yaml");
         if (Files.exists(homeConfigFile) && !Files.isRegularFile(homeConfigFile)) {
             throw new IOException("Kuudra home configuration is not a regular file: " + homeConfigFile);
@@ -201,7 +208,15 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     throw concurrentCreation;
                 }
             }
+            if (Files.isRegularFile(homeConfigFile)) created.add(new HomeInitialization("configuration", homeConfigFile));
         }
+        return List.copyOf(created);
+    }
+
+    private static void ensureDirectory(Path directory, String role, List<HomeInitialization> created) throws IOException {
+        boolean missing = Files.notExists(directory);
+        Files.createDirectories(directory);
+        if (missing) created.add(new HomeInitialization(role, directory));
     }
 
     @Override public synchronized void start() {
@@ -209,6 +224,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (status == AppStatus.RUNNING || status == AppStatus.STARTING) return;
         try {
             Path home = bootstrapConfig == null ? Path.of(".kuudra") : bootstrapConfig.homeDirectory();
+            List<HomeInitialization> startupInitializations = new ArrayList<>();
+            if (!homeInitializationReported) startupInitializations.addAll(homeInitializations);
+            if (bootstrapConfig != null) {
+                try (var defaults = KuudraApp.class.getClassLoader().getResourceAsStream("config.yaml")) {
+                    if (defaults == null) throw new IOException("Packaged Kuudra configuration is missing: classpath:/config.yaml");
+                    startupInitializations.addAll(initializeHomeDirectory(home, defaults.readAllBytes()));
+                }
+            }
             configuredMessageResolver = bootstrapConfig == null ? MessageResolvers.english()
                     : MessageResolvers.locale(home.resolve("locale"), bootstrapConfig.i18n().preferredLocale());
             pluginMessageCatalogs = new PluginMessageCatalogs(bootstrapConfig == null
@@ -219,6 +242,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     bootstrapConfig.logging().consoleEnabled(), bootstrapConfig.logging().fileEnabled());
             logSession = KuudraLog.openSession(home.resolve("logs"), events, logging, messageResolver);
             status = AppStatus.STARTING; publish("app.starting");
+            for (HomeInitialization initialization : startupInitializations) {
+                String type = initialization.role().equals("configuration")
+                        ? "home.configuration.created" : "home.directory.created";
+                events.publish(SystemEvent.of(type, Map.of("role", initialization.role(), "path", initialization.path().toString())));
+            }
+            homeInitializationReported = true;
             if (bootstrapConfig == null || bootstrapConfig.bannerEnabled()) KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
             int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
@@ -1024,6 +1053,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                                              List<Object> examples) {
         public ResourceFieldDocumentation { examples = List.copyOf(examples); }
     }
+    private record LoadedConfiguration(KuudraConfig.RuntimeConfig config, List<HomeInitialization> homeInitializations) { }
+    private record HomeInitialization(String role, Path path) { }
     private ManagedEventSource requireEventSource(String flowId, String resourceId) {
         ManagedEventSource source = eventSources.get(new ResourceKey(flowId, resourceId));
         if (source == null) throw new IllegalArgumentException("Unknown EventSource resource: " + flowId + "/" + resourceId);

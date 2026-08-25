@@ -10,6 +10,8 @@
   "app.stopping": "Kuudra App is stopping (status={status})",
   "app.stopped": "Kuudra App has stopped (status={status})",
   "app.failed": "Kuudra App failed (status={status}, detail={detail})",
+  "home.directory.created": "Created missing Kuudra home directory (role={role}, path={path})",
+  "home.configuration.created": "Restored missing Kuudra home configuration from packaged defaults (path={path})",
   "app.shutdown.runtime.started": "Stopping Runtime",
   "app.shutdown.runtime.completed": "Runtime stopped",
   "app.shutdown.plugins.started": "Stopping plugins",
