@@ -18,15 +18,15 @@ public record PluginComponentContext(String componentReference, PluginContext pl
     public java.nio.file.Path pluginHome() { return plugin.pluginHome(); }
     public PluginLogger logger() { return plugin.logger(); }
 
-    public io.github.actforever.kuudra.api.TypedValueMap configurationValues() {
-        return io.github.actforever.kuudra.api.TypedValueMap.of(configuration);
+    public io.github.actforever.kuudra.api.context.TypedValueMap configurationValues() {
+        return io.github.actforever.kuudra.api.context.TypedValueMap.of(configuration);
     }
 
     public <T> T configuration(String key, Class<T> type) {
-        return io.github.actforever.kuudra.api.TypedValueMap.get(configuration, key, type);
+        return io.github.actforever.kuudra.api.context.TypedValueMap.get(configuration, key, type);
     }
 
     public <T> T configuration(String key, Class<T> type, T fallback) {
-        return io.github.actforever.kuudra.api.TypedValueMap.getOrDefault(configuration, key, type, fallback);
+        return io.github.actforever.kuudra.api.context.TypedValueMap.getOrDefault(configuration, key, type, fallback);
     }
 }

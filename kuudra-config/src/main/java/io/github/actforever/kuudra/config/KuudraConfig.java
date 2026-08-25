@@ -1,7 +1,7 @@
 package io.github.actforever.kuudra.config;
 
-import io.github.actforever.kuudra.api.SessionGroupScope;
-import io.github.actforever.kuudra.api.SessionSchedulingPolicy;
+import io.github.actforever.kuudra.api.session.SessionGroupScope;
+import io.github.actforever.kuudra.api.session.SessionSchedulingPolicy;
 
 import java.nio.file.Path;
 import java.util.Map;

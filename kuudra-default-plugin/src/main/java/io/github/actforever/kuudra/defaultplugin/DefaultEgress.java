@@ -1,8 +1,8 @@
 package io.github.actforever.kuudra.defaultplugin;
 
-import io.github.actforever.kuudra.api.Egress;
-import io.github.actforever.kuudra.api.EventContext;
-import io.github.actforever.kuudra.api.KuudraEvent;
+import io.github.actforever.kuudra.api.component.Egress;
+import io.github.actforever.kuudra.api.context.EventContext;
+import io.github.actforever.kuudra.api.event.KuudraEvent;
 
 import java.util.List;
 

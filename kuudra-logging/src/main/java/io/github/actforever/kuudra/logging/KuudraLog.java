@@ -39,12 +39,12 @@ public final class KuudraLog {
     }
 
     /** Opens one kernel log lifecycle, replacing the previous latest.log and archiving it on close. */
-    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.SystemEventBus events) throws IOException {
+    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.system.SystemEventBus events) throws IOException {
         return openSession(logsDirectory, events, KuudraLogConfiguration.DEFAULT);
     }
 
     /** Opens one configured kernel log lifecycle. */
-    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.SystemEventBus events,
+    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.system.SystemEventBus events,
                                                KuudraLogConfiguration configuration) throws IOException {
         Objects.requireNonNull(events, "events");
         Objects.requireNonNull(configuration, "configuration");
@@ -102,7 +102,7 @@ public final class KuudraLog {
         encoder.setContext(context); encoder.setPattern(pattern); encoder.start(); return encoder;
     }
 
-    private static void write(Logger logger, io.github.actforever.kuudra.api.SystemEvent event) {
+    private static void write(Logger logger, io.github.actforever.kuudra.api.system.SystemEvent event) {
         if (event.type().equals("plugin.log")) {
             String plugin = "[plugin=" + event.data().get("namespace") + "/" + event.data().get("pluginId") + "] ";
             String message = plugin + event.data().get("message") + fields(event.data().get("fields"));

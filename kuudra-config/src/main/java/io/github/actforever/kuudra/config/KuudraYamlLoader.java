@@ -20,8 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
-import io.github.actforever.kuudra.api.SessionGroupScope;
-import io.github.actforever.kuudra.api.SessionSchedulingPolicy;
+import io.github.actforever.kuudra.api.session.SessionGroupScope;
+import io.github.actforever.kuudra.api.session.SessionSchedulingPolicy;
 
 /** Reads config.yaml plus Flow YAML files into the format-neutral configuration model. */
 public final class KuudraYamlLoader {

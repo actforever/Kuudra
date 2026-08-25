@@ -48,9 +48,9 @@ public final class DefaultPluginBundle {
     private static List<PluginConfigurationDocumentation> ingressConfiguration() {
         return List.of(
                 property("groupKey", String.class, "", "会话分组键；未配置时使用当前事件类型。", List.of("device-1", "keyboard"), List.of()),
-                property("policy", io.github.actforever.kuudra.api.SessionSchedulingPolicy.class, "", "会话调度策略；未配置时继承根配置。", List.of("SERIAL", "PARALLEL"),
+                property("policy", io.github.actforever.kuudra.api.session.SessionSchedulingPolicy.class, "", "会话调度策略；未配置时继承根配置。", List.of("SERIAL", "PARALLEL"),
                         List.of("PARALLEL", "SERIAL", "IGNORE", "CANCEL_AND_REPLACE_PENDING", "CANCEL_AND_KEEP_PENDING", "TOGGLE")),
-                property("groupScope", io.github.actforever.kuudra.api.SessionGroupScope.class, "", "会话组隔离范围；未配置时继承根配置。", List.of("FLOW_BINDING", "INGRESS"),
+                property("groupScope", io.github.actforever.kuudra.api.session.SessionGroupScope.class, "", "会话组隔离范围；未配置时继承根配置。", List.of("FLOW_BINDING", "INGRESS"),
                         List.of("FLOW_BINDING", "INGRESS")),
                 property("maxParallelSessions", Integer.class, "", "每个会话组允许的最大并行会话数。", List.of(16, 64), List.of()),
                 property("queueCapacity", Integer.class, "", "每个会话组允许积压的事件数量。", List.of(128, 256), List.of()));

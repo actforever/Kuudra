@@ -1,11 +1,11 @@
 package io.github.actforever.kuudra.runtime;
 
-import io.github.actforever.kuudra.api.Action;
-import io.github.actforever.kuudra.api.ActionCall;
-import io.github.actforever.kuudra.api.EventHandler;
-import io.github.actforever.kuudra.api.KuudraEvent;
-import io.github.actforever.kuudra.api.ActionContext;
-import io.github.actforever.kuudra.api.ActionExecutionMode;
+import io.github.actforever.kuudra.api.action.Action;
+import io.github.actforever.kuudra.api.action.ActionCall;
+import io.github.actforever.kuudra.api.component.EventHandler;
+import io.github.actforever.kuudra.api.event.KuudraEvent;
+import io.github.actforever.kuudra.api.action.ActionContext;
+import io.github.actforever.kuudra.api.action.ActionExecutionMode;
 
 import java.util.List;
 import java.util.Map;

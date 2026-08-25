@@ -1,7 +1,7 @@
 package io.github.actforever.kuudra.plugin;
 
-import io.github.actforever.kuudra.api.EventSource;
-import io.github.actforever.kuudra.api.SourceRegistration;
+import io.github.actforever.kuudra.api.component.EventSource;
+import io.github.actforever.kuudra.api.component.SourceRegistration;
 
 import java.util.concurrent.CompletionStage;
 import java.util.UUID;

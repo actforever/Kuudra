@@ -1,9 +1,9 @@
 package io.github.actforever.kuudra.runtime;
 
-import io.github.actforever.kuudra.api.ActionContext;
-import io.github.actforever.kuudra.api.ActionResult;
-import io.github.actforever.kuudra.api.KuudraEvent;
-import io.github.actforever.kuudra.api.SessionContext;
+import io.github.actforever.kuudra.api.action.ActionContext;
+import io.github.actforever.kuudra.api.action.ActionResult;
+import io.github.actforever.kuudra.api.event.KuudraEvent;
+import io.github.actforever.kuudra.api.context.SessionContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -18,8 +18,8 @@ class ActionActorTest {
     @Test
     void serialBindingsPreserveDeclarationOrder() {
         List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
-        var first = (io.github.actforever.kuudra.api.Action) call -> { calls.add("first"); return CompletableFuture.completedFuture(ActionResult.empty()); };
-        var second = (io.github.actforever.kuudra.api.Action) call -> { calls.add("second"); return CompletableFuture.completedFuture(ActionResult.empty()); };
+        var first = (io.github.actforever.kuudra.api.action.Action) call -> { calls.add("first"); return CompletableFuture.completedFuture(ActionResult.empty()); };
+        var second = (io.github.actforever.kuudra.api.action.Action) call -> { calls.add("second"); return CompletableFuture.completedFuture(ActionResult.empty()); };
         ActionActor actor = new ActionActor(List.of(new ActionActor.Binding(event -> true, first, Map.of()), new ActionActor.Binding(event -> true, second, Map.of())));
         actor.handle(KuudraEvent.of("input", Map.of()), context()).toCompletableFuture().join();
         assertEquals(List.of("first", "second"), calls);

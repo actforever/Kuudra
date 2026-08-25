@@ -39,13 +39,13 @@ final class PluginComponentScanner {
     private java.util.Optional<PluginComponentDefinition> component(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> type,
                                                                      io.github.actforever.kuudra.plugin.annotation.InstancePolicy policy) {
         Class<?> expected = switch (kind) {
-            case EVENT_SOURCE -> io.github.actforever.kuudra.api.EventSource.class;
-            case EVENT_INTERPRETER -> io.github.actforever.kuudra.api.EventInterpreter.class;
-            case EVENT_ADAPTER -> io.github.actforever.kuudra.api.EventAdapter.class;
-            case INGRESS -> io.github.actforever.kuudra.api.Ingress.class;
-            case EVENT_HANDLER -> io.github.actforever.kuudra.api.EventHandler.class;
-            case EGRESS -> io.github.actforever.kuudra.api.Egress.class;
-            case ACTION -> io.github.actforever.kuudra.api.Action.class;
+            case EVENT_SOURCE -> io.github.actforever.kuudra.api.component.EventSource.class;
+            case EVENT_INTERPRETER -> io.github.actforever.kuudra.api.component.EventInterpreter.class;
+            case EVENT_ADAPTER -> io.github.actforever.kuudra.api.component.EventAdapter.class;
+            case INGRESS -> io.github.actforever.kuudra.api.component.Ingress.class;
+            case EVENT_HANDLER -> io.github.actforever.kuudra.api.component.EventHandler.class;
+            case EGRESS -> io.github.actforever.kuudra.api.component.Egress.class;
+            case ACTION -> io.github.actforever.kuudra.api.action.Action.class;
         };
         if (!expected.isAssignableFrom(type)) throw new IllegalArgumentException(type.getName() + " annotated as " + kind + " but does not implement " + expected.getName());
         ComponentInstancePolicy instancePolicy = new ComponentInstancePolicy(policy.maxInstances(), policy.limitScope(),
@@ -56,7 +56,7 @@ final class PluginComponentScanner {
 
     private PluginComponentDocumentation documentation(Class<?> type) {
         var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.ComponentDoc.class);
-        boolean lifecycle = io.github.actforever.kuudra.api.Lifecycle.class.isAssignableFrom(type)
+        boolean lifecycle = io.github.actforever.kuudra.api.lifecycle.Lifecycle.class.isAssignableFrom(type)
                 || PluginComponentLifecycle.class.isAssignableFrom(type);
         List<String> desiredStates = supportedDesiredStates(type);
         if (annotation == null) return new PluginComponentDocumentation("", "", lifecycle, List.of(), desiredStates, List.of(), List.of());
@@ -78,15 +78,15 @@ final class PluginComponentScanner {
 
     private static List<Object> parseExamples(String[] examples) {
         return java.util.Arrays.stream(examples)
-                .map(io.github.actforever.kuudra.api.ContextCodecs.defaultCodec()::parseLiteral)
+                .map(io.github.actforever.kuudra.api.context.ContextCodecs.defaultCodec()::parseLiteral)
                 .toList();
     }
 
     private static List<String> supportedDesiredStates(Class<?> type) {
-        if (io.github.actforever.kuudra.api.PausableLifecycle.class.isAssignableFrom(type)) {
+        if (io.github.actforever.kuudra.api.lifecycle.PausableLifecycle.class.isAssignableFrom(type)) {
             return List.of("RUNNING", "PAUSED", "STOPPED");
         }
-        if (io.github.actforever.kuudra.api.Lifecycle.class.isAssignableFrom(type)) {
+        if (io.github.actforever.kuudra.api.lifecycle.Lifecycle.class.isAssignableFrom(type)) {
             return List.of("RUNNING", "STOPPED");
         }
         return List.of("ACTIVE", "INACTIVE");

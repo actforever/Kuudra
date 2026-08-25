@@ -17,7 +17,7 @@ The tracked Maven reactor is:
 
 | Module | Responsibility |
 | --- | --- |
-| `kuudra-api` | Shared public contracts: KuudraEvent wrappers, component interfaces, session and App snapshots. |
+| `kuudra-api` | Shared public contracts, grouped into `action`, `app`, `component`, `context`, `event`, `lifecycle`, `runtime`, `session`, and `system` subpackages; only `KuudraException` remains at the API root. |
 | `kuudra-config` | Format-neutral configuration model and YAML loader. |
 | `kuudra-state` | MyBatis-backed SQLite desired/observed resource StateStore used by App reconciliation. SQL belongs in Mapper interfaces; persistence rows use Lombok and must not leak through the public StateStore API. |
 | `kuudra-plugin` | Plugin metadata, ClassLoader archive loader, annotations, component registry, dependency-aware lifecycle manager. |
@@ -52,6 +52,8 @@ For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins
 - Runtime, plugin and App lifecycle observability is expressed as `SystemEvent`; do not inject concrete loggers into those modules for ordinary lifecycle messages. The App owns the sole subscribable `SystemEventBus` and injects only the write-only API-level `SystemEventPublisher` into Runtime and plugin management. Runtime must not own or expose a second event bus. `SystemEventLevel.AUTO` preserves legacy type-based severity mapping; detailed reconciliation, component construction and Runtime task-path diagnostics must use explicit `DEBUG` and must not include full Event/context payloads. `kuudra-logging` owns a private Logback context and is an App-bus output adapter exposing framework-neutral `KuudraLogConfiguration`/`KuudraLogLevel` APIs. Root `logging.level`, `logging.console-enabled`, and `logging.file-enabled` settings control the App log session; the log directory remains fixed. With file output enabled, it writes `<home-directory>/logs/latest.log` and archives it as `yyyy-MM-dd-N.log.gz` on normal kernel stop. The stopped run remains readable as `latest.log` until the next kernel start deletes that file and creates a new one. Home initialization must ensure `logs/` exists even when file output is disabled.
 
 See `docs/kuudra-event-architecture.md`, `docs/kuudra-architecture.md`, and `docs/kuudra-app-management.md` before changing these boundaries.
+
+Public API package ownership is documented in `docs/kuudra-api-layout.md`. Keep plugin imports and external demos synchronized when moving a public contract; do not repopulate the `io.github.actforever.kuudra.api` root package with unrelated interfaces.
 
 ## Current runnable bootstrap path
 

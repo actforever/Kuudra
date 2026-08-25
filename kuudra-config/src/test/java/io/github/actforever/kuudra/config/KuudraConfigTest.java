@@ -32,8 +32,8 @@ class KuudraConfigTest {
         assertEquals(99, config.runtime().maxEventHops());
         assertEquals(75, config.runtime().dispatcherPollIntervalMs());
         assertEquals(900, config.runtime().shutdownSessionDrainTimeoutMs());
-        assertEquals(io.github.actforever.kuudra.api.SessionSchedulingPolicy.SERIAL, config.runtime().sessionCoordinator().defaultPolicy());
-        assertEquals(io.github.actforever.kuudra.api.SessionGroupScope.INGRESS, config.runtime().sessionCoordinator().defaultGroupScope());
+        assertEquals(io.github.actforever.kuudra.api.session.SessionSchedulingPolicy.SERIAL, config.runtime().sessionCoordinator().defaultPolicy());
+        assertEquals(io.github.actforever.kuudra.api.session.SessionGroupScope.INGRESS, config.runtime().sessionCoordinator().defaultGroupScope());
         assertEquals(7, config.runtime().sessionCoordinator().maxParallelSessions());
         assertEquals(11, config.runtime().sessionCoordinator().queueCapacity());
         assertTrue(config.reconciliation().enabled());

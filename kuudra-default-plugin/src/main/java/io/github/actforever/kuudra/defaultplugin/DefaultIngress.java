@@ -1,9 +1,9 @@
 package io.github.actforever.kuudra.defaultplugin;
 
-import io.github.actforever.kuudra.api.EventContext;
-import io.github.actforever.kuudra.api.Ingress;
-import io.github.actforever.kuudra.api.IngressDecision;
-import io.github.actforever.kuudra.api.KuudraEvent;
+import io.github.actforever.kuudra.api.context.EventContext;
+import io.github.actforever.kuudra.api.component.Ingress;
+import io.github.actforever.kuudra.api.component.IngressDecision;
+import io.github.actforever.kuudra.api.event.KuudraEvent;
 
 /** Official unconditional RAW-to-SESSION boundary, grouped by configured groupKey or event type. */
 public final class DefaultIngress implements Ingress {

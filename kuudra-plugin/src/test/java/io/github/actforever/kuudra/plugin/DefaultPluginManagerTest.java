@@ -12,8 +12,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import io.github.actforever.kuudra.api.SystemEvent;
-import io.github.actforever.kuudra.api.SystemEventBus;
+import io.github.actforever.kuudra.api.system.SystemEvent;
+import io.github.actforever.kuudra.api.system.SystemEventBus;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -150,7 +150,7 @@ class DefaultPluginManagerTest {
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
         assertEquals("annotated", manager.components().find("event-source/test-plugin/test-source").orElseThrow().pluginId());
         assertEquals("[0.9.0,2.0.0)", manager.pluginView("test-plugin", "annotated").dependencies().get(0).versionRange());
-        assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.EventSource.class) instanceof TestSource);
+        assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.component.EventSource.class) instanceof TestSource);
     }
 
     @Test
@@ -163,7 +163,7 @@ class DefaultPluginManagerTest {
                 new RecordingPlugin("component", List.of(), calls),
                 List.of(new PluginComponentDefinition("component", "test-plugin", PluginComponentKind.EVENT_SOURCE, "managed", ManagedTestSource.class))));
         manager.startAll().toCompletableFuture().join();
-        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.EventSource.class,
+        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.component.EventSource.class,
                 Map.of("intervalMillis", 250));
         manager.close();
         assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);
@@ -269,15 +269,15 @@ class DefaultPluginManagerTest {
     }
 
     @io.github.actforever.kuudra.plugin.annotation.EventSource("test-source")
-    public static final class TestSource implements io.github.actforever.kuudra.api.EventSource {
-        @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter emitter) { }
+    public static final class TestSource implements io.github.actforever.kuudra.api.component.EventSource {
+        @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
     }
 
-    public static final class ManagedTestSource implements io.github.actforever.kuudra.api.EventSource, PluginComponentLifecycle {
+    public static final class ManagedTestSource implements io.github.actforever.kuudra.api.component.EventSource, PluginComponentLifecycle {
         static List<String> calls;
-        @Override public void setEmitter(io.github.actforever.kuudra.api.EventEmitter emitter) { }
+        @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> initialize(PluginComponentContext context) {

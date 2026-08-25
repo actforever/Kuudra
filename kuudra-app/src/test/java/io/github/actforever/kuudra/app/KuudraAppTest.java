@@ -3,11 +3,11 @@ package io.github.actforever.kuudra.app;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.github.actforever.kuudra.api.EventEmitter;
-import io.github.actforever.kuudra.api.EventSource;
-import io.github.actforever.kuudra.api.EventDomain;
+import io.github.actforever.kuudra.api.event.EventEmitter;
+import io.github.actforever.kuudra.api.component.EventSource;
+import io.github.actforever.kuudra.api.event.EventDomain;
 import io.github.actforever.kuudra.api.KuudraException;
-import io.github.actforever.kuudra.api.PausableLifecycle;
+import io.github.actforever.kuudra.api.lifecycle.PausableLifecycle;
 import io.github.actforever.kuudra.config.KuudraConfigResource;
 import io.github.actforever.kuudra.runtime.FlowNode;
 import io.github.actforever.kuudra.runtime.KuudraFlow;
@@ -57,11 +57,11 @@ class KuudraAppTest {
                 try { release.await(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
                 return java.util.List.of();
             }, EventDomain.RAW)), Map.of()));
-            assertTrue(app.publish("blocking", "node", io.github.actforever.kuudra.api.KuudraEvent.of("blocking", Map.of())));
+            assertTrue(app.publish("blocking", "node", io.github.actforever.kuudra.api.event.KuudraEvent.of("blocking", Map.of())));
             assertTrue(executing.await(1, TimeUnit.SECONDS));
             CompletableFuture<Void> pausing = CompletableFuture.runAsync(app::pause);
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-            while (app.snapshot().status() != io.github.actforever.kuudra.api.AppStatus.PAUSING && System.nanoTime() < deadline) Thread.onSpinWait();
+            while (app.snapshot().status() != io.github.actforever.kuudra.api.app.AppStatus.PAUSING && System.nanoTime() < deadline) Thread.onSpinWait();
             assertEquals("PAUSING", app.snapshot().status().name());
             app.stop();
             pausing.get(1, TimeUnit.SECONDS);

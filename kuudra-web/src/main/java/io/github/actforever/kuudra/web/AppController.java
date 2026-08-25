@@ -1,7 +1,7 @@
 package io.github.actforever.kuudra.web;
 
-import io.github.actforever.kuudra.api.AppSnapshot;
-import io.github.actforever.kuudra.api.SystemEvent;
+import io.github.actforever.kuudra.api.app.AppSnapshot;
+import io.github.actforever.kuudra.api.system.SystemEvent;
 import io.github.actforever.kuudra.app.KuudraApp;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.http.HttpStatus;

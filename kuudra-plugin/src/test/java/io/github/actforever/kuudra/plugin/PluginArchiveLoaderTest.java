@@ -39,16 +39,20 @@ class PluginArchiveLoaderTest {
                             purpose = "Recognizes a parent sequence",
                             usageExample = "windowMillis: 100",
                             lifecyclePhases = {"start", "stop"},
-                            configuration = @io.github.actforever.kuudra.plugin.annotation.SpecProperty(
+                            configuration = {@io.github.actforever.kuudra.plugin.annotation.SpecProperty(
                                 path = "windowMillis", type = Long.class, required = true,
                                 description = "Sequence matching window", examples = {"100", "250"}),
+                                @io.github.actforever.kuudra.plugin.annotation.SpecProperty(
+                                path = "rule", type = java.util.Map.class,
+                                description = "Sequence matching rule",
+                                examples = {"{\\\"keys\\\":[\\\"A\\\",\\\"B\\\"],\\\"ordered\\\":true}"})},
                             emittedEvents = @io.github.actforever.kuudra.plugin.annotation.EventEmission(
                                 stage = "sequence matched", eventType = "parent.matched",
                                 description = "A recognized parent event", dataExample = "{key: A}"))
-                        public final class ParentInterpreter implements io.github.actforever.kuudra.api.EventInterpreter {
-                            public java.util.List<io.github.actforever.kuudra.api.KuudraEvent> interpret(
-                                    io.github.actforever.kuudra.api.KuudraEvent event,
-                                    io.github.actforever.kuudra.api.EventContext context) {
+                        public final class ParentInterpreter implements io.github.actforever.kuudra.api.component.EventInterpreter {
+                            public java.util.List<io.github.actforever.kuudra.api.event.KuudraEvent> interpret(
+                                    io.github.actforever.kuudra.api.event.KuudraEvent event,
+                                    io.github.actforever.kuudra.api.context.EventContext context) {
                                 return java.util.List.of(event);
                             }
                         }
@@ -61,7 +65,7 @@ class PluginArchiveLoaderTest {
                 "child.ChildPlugin", """
                         package child;
                         import base.ParentType;
-                        import io.github.actforever.kuudra.api.ContextCodecs;
+                        import io.github.actforever.kuudra.api.context.ContextCodecs;
                         import io.github.actforever.kuudra.plugin.KuudraPlugin;
                         import java.util.concurrent.CompletableFuture;
                         import java.util.concurrent.CompletionStage;
@@ -93,6 +97,9 @@ class PluginArchiveLoaderTest {
             assertEquals("windowMillis", interpreter.documentation().configuration().get(0).path());
             assertEquals("java.lang.Long", interpreter.documentation().configuration().get(0).type());
             assertTrue(interpreter.documentation().configuration().get(0).required());
+            assertEquals(List.of(100, 250), interpreter.documentation().configuration().get(0).examples());
+            assertEquals(Map.of("keys", List.of("A", "B"), "ordered", true),
+                    interpreter.documentation().configuration().get(1).examples().get(0));
             assertEquals("parent.matched", interpreter.documentation().emittedEvents().get(0).eventType());
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));

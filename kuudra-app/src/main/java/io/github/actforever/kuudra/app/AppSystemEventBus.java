@@ -1,7 +1,7 @@
 package io.github.actforever.kuudra.app;
 
-import io.github.actforever.kuudra.api.SystemEvent;
-import io.github.actforever.kuudra.api.SystemEventBus;
+import io.github.actforever.kuudra.api.system.SystemEvent;
+import io.github.actforever.kuudra.api.system.SystemEventBus;
 
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;

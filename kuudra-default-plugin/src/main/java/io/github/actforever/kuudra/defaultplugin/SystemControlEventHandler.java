@@ -1,8 +1,8 @@
 package io.github.actforever.kuudra.defaultplugin;
 
-import io.github.actforever.kuudra.api.ActionContext;
-import io.github.actforever.kuudra.api.EventHandler;
-import io.github.actforever.kuudra.api.KuudraEvent;
+import io.github.actforever.kuudra.api.action.ActionContext;
+import io.github.actforever.kuudra.api.component.EventHandler;
+import io.github.actforever.kuudra.api.event.KuudraEvent;
 import io.github.actforever.kuudra.plugin.KernelControlAction;
 import io.github.actforever.kuudra.plugin.PluginComponentContext;
 import io.github.actforever.kuudra.plugin.PluginComponentLifecycle;

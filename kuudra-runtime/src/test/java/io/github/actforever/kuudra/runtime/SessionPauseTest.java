@@ -1,7 +1,7 @@
 package io.github.actforever.kuudra.runtime;
 
-import io.github.actforever.kuudra.api.ContextCodecs;
-import io.github.actforever.kuudra.api.SessionStatus;
+import io.github.actforever.kuudra.api.context.ContextCodecs;
+import io.github.actforever.kuudra.api.session.SessionStatus;
 import org.junit.jupiter.api.Test;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;

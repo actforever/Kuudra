@@ -4,8 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
-import io.github.actforever.kuudra.api.SystemEvent;
-import io.github.actforever.kuudra.api.SystemEventBus;
+import io.github.actforever.kuudra.api.system.SystemEvent;
+import io.github.actforever.kuudra.api.system.SystemEventBus;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

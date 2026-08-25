@@ -15,8 +15,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
-import io.github.actforever.kuudra.api.SystemEvent;
-import io.github.actforever.kuudra.api.SystemEventPublisher;
+import io.github.actforever.kuudra.api.system.SystemEvent;
+import io.github.actforever.kuudra.api.system.SystemEventPublisher;
 
 /**
  * Dependency-aware lifecycle manager for already loaded plugins.

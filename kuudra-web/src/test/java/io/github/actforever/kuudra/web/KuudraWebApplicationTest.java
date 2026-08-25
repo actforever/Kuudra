@@ -7,7 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import io.github.actforever.kuudra.api.SystemEvent;
+import io.github.actforever.kuudra.api.system.SystemEvent;
 
 import java.io.IOException;
 import java.util.Map;
