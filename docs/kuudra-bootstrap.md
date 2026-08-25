@@ -23,7 +23,7 @@ global-context: {}
 
 App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、重复 `namespace/pluginId` 身份、缺失依赖或依赖环都会令启动失败。`manifests/` 下的 YAML 递归加载，资源字段使用 K8s 风格 camelCase；一个文件可使用 `---` 声明多个资源。
 
-`state/kuudra.db` 是 SQLite StateStore。App 启动时事务性导入清单，按 `kind/namespace/name` 保存期望资源及 generation，再从数据库读取并装配资源；成功后写入 observedGeneration 和 `READY`。当前调谐发生在启动边界，尚未监听运行期文件变更。
+`state/kuudra.db` 是 SQLite StateStore，数据库访问由独立 `kuudra-state` 模块中的 MyBatis Mapper 管理。App 启动时在一个 MyBatis 事务中导入清单，按 `kind/namespace/name` 保存期望资源及 generation，再从数据库读取并装配资源；成功后写入 observedGeneration 和 `READY`。当前调谐发生在启动边界，尚未监听运行期文件变更。
 
 ## 具体组件资源与 Flow
 

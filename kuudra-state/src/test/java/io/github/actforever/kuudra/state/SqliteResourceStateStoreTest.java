@@ -26,7 +26,16 @@ class SqliteResourceStateStoreTest {
             assertTrue(store.states().stream().allMatch(state->state.observedGeneration()==1&&state.phase().equals("READY")));
             store.replaceDesired(resources);
             assertTrue(store.states().stream().allMatch(state->state.generation()==1));
+            var changed = new KuudraManifest.Component(id, metadata, "ingress",
+                    "kuudra-official/default", "active", Map.of("groupKey", "changed"));
+            store.replaceDesired(new KuudraManifest.Resources(Map.of(id, changed), Map.of()));
+            assertEquals(1, store.states().size());
+            assertEquals(2, store.states().get(0).generation());
+            assertEquals("PENDING", store.states().get(0).phase());
         }
-        try(var reopened=new SqliteResourceStateStore(database)){assertEquals(resources,reopened.desiredResources());}
+        try(var reopened=new SqliteResourceStateStore(database)){
+            assertEquals(1, reopened.desiredResources().components().size());
+            assertTrue(reopened.desiredResources().flows().isEmpty());
+        }
     }
 }

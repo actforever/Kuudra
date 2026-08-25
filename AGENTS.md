@@ -19,7 +19,7 @@ The tracked Maven reactor is:
 | --- | --- |
 | `kuudra-api` | Shared public contracts: KuudraEvent wrappers, component interfaces, session and App snapshots. |
 | `kuudra-config` | Format-neutral configuration model and YAML loader. |
-| `kuudra-state` | SQLite desired/observed resource StateStore used by App reconciliation. |
+| `kuudra-state` | MyBatis-backed SQLite desired/observed resource StateStore used by App reconciliation. SQL belongs in Mapper interfaces; persistence rows use Lombok and must not leak through the public StateStore API. |
 | `kuudra-plugin` | Plugin metadata, ClassLoader archive loader, annotations, component registry, dependency-aware lifecycle manager. |
 | `kuudra-default-plugin` | Built-in official plugin `kuudra-official/default`; provides manifest-instantiated default Ingress and Egress. |
 | `kuudra-runtime` | Dual-domain Flow graph, task queue, SessionManager, SessionCoordinator and asynchronous EventHandler scheduling. |

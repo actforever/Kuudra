@@ -1,69 +1,137 @@
 package io.github.actforever.kuudra.state;
 
-import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.actforever.kuudra.api.KuudraException;
 import io.github.actforever.kuudra.config.KuudraManifest;
+import org.apache.ibatis.mapping.Environment;
+import org.apache.ibatis.logging.nologging.NoLoggingImpl;
+import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.session.SqlSession;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
+import org.sqlite.SQLiteDataSource;
 
 import java.nio.file.Path;
-import java.sql.*;
 import java.time.Instant;
-import java.util.*;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-/** SQLite implementation used as the App reconciliation source of truth. */
+/** SQLite StateStore whose SQL mapping is isolated behind MyBatis. */
 public final class SqliteResourceStateStore implements ResourceStateStore {
-    private final Connection connection;
-    private final ObjectMapper json = new ObjectMapper()
+    private final SqlSessionFactory sessions;
+    private final ObjectMapper json = JsonMapper.builder()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-            .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY);
+            .build();
+    private volatile boolean closed;
 
     public SqliteResourceStateStore(Path database) {
-        try {
-            connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath().normalize());
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("PRAGMA busy_timeout=5000");
-                statement.execute("CREATE TABLE IF NOT EXISTS resources (kind TEXT NOT NULL, namespace TEXT NOT NULL, name TEXT NOT NULL, resource_type TEXT NOT NULL, generation INTEGER NOT NULL, desired_json TEXT NOT NULL, observed_generation INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL, message TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(kind, namespace, name))");
-            }
-        } catch (SQLException error) { throw KuudraException.wrap("Failed to open StateStore " + database, error); }
+        Path normalized = database.toAbsolutePath().normalize();
+        SQLiteDataSource dataSource = new SQLiteDataSource();
+        dataSource.setUrl("jdbc:sqlite:" + normalized);
+        Environment environment = new Environment("kuudra-state", new JdbcTransactionFactory(), dataSource);
+        Configuration configuration = new Configuration(environment);
+        configuration.setLogImpl(NoLoggingImpl.class);
+        configuration.addMapper(ResourceStateMapper.class);
+        sessions = new SqlSessionFactoryBuilder().build(configuration);
+        try (SqlSession session = sessions.openSession(true)) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection();
+            mapper.createSchema();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to open StateStore " + normalized, error);
+        }
     }
 
     @Override public synchronized void replaceDesired(KuudraManifest.Resources resources) {
-        try {
-            connection.setAutoCommit(false);
+        requireOpen();
+        try (SqlSession session = sessions.openSession(false)) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection();
             Set<KuudraManifest.ResourceId> retained = new HashSet<>();
-            for (KuudraManifest.Component value : resources.components().values()) { upsert(value.id(), "component", json.writeValueAsString(value)); retained.add(value.id()); }
-            for (KuudraManifest.Flow value : resources.flows().values()) { upsert(value.id(), "flow", json.writeValueAsString(value)); retained.add(value.id()); }
-            try (PreparedStatement all = connection.prepareStatement("SELECT kind, namespace, name FROM resources"); ResultSet rows = all.executeQuery();
-                 PreparedStatement delete = connection.prepareStatement("DELETE FROM resources WHERE kind=? AND namespace=? AND name=?")) {
-                while (rows.next()) {
-                    KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(rows.getString(1), rows.getString(2), rows.getString(3));
-                    if (!retained.contains(id)) { bindId(delete, id); delete.addBatch(); }
-                }
-                delete.executeBatch();
-            }
-            connection.commit();
-        } catch (Exception error) { rollback(error); throw KuudraException.wrap("Failed to persist desired resource state", error); }
-        finally { try { connection.setAutoCommit(true); } catch (SQLException ignored) { } }
+            resources.components().values().forEach(value -> persist(mapper, value.id(), "component", value, retained));
+            resources.flows().values().forEach(value -> persist(mapper, value.id(), "flow", value, retained));
+            mapper.findAll().stream().map(SqliteResourceStateStore::id).filter(id -> !retained.contains(id))
+                    .forEach(id -> mapper.delete(id.kind(), id.namespace(), id.name()));
+            session.commit();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to persist desired resource state", error);
+        }
     }
 
-    private void upsert(KuudraManifest.ResourceId id, String type, String payload) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO resources(kind,namespace,name,resource_type,generation,desired_json,observed_generation,phase,message,updated_at) VALUES(?,?,?,?,1,?,0,'PENDING','',?) ON CONFLICT(kind,namespace,name) DO UPDATE SET resource_type=excluded.resource_type, generation=CASE WHEN resources.desired_json=excluded.desired_json THEN resources.generation ELSE resources.generation+1 END, desired_json=excluded.desired_json, phase=CASE WHEN resources.desired_json=excluded.desired_json THEN resources.phase ELSE 'PENDING' END, message=CASE WHEN resources.desired_json=excluded.desired_json THEN resources.message ELSE '' END, updated_at=excluded.updated_at")) {
-            statement.setString(1,id.kind()); statement.setString(2,id.namespace()); statement.setString(3,id.name()); statement.setString(4,type); statement.setString(5,payload); statement.setString(6, Instant.now().toString()); statement.executeUpdate();
+    private void persist(ResourceStateMapper mapper, KuudraManifest.ResourceId id, String type,
+                         Object value, Set<KuudraManifest.ResourceId> retained) {
+        try {
+            mapper.upsert(id.kind(), id.namespace(), id.name(), type,
+                    json.writeValueAsString(value), Instant.now().toString());
+            retained.add(id);
+        } catch (Exception error) {
+            throw KuudraException.wrap("Failed to serialize desired resource " + id, error);
         }
     }
 
     @Override public synchronized KuudraManifest.Resources desiredResources() {
-        Map<KuudraManifest.ResourceId,KuudraManifest.Component> components=new LinkedHashMap<>(); Map<KuudraManifest.ResourceId,KuudraManifest.Flow> flows=new LinkedHashMap<>();
-        try (Statement statement=connection.createStatement(); ResultSet rows=statement.executeQuery("SELECT resource_type, desired_json FROM resources ORDER BY namespace, kind, name")) {
-            while(rows.next()) if(rows.getString(1).equals("component")){var value=json.readValue(rows.getString(2),KuudraManifest.Component.class);components.put(value.id(),value);}else{var value=json.readValue(rows.getString(2),KuudraManifest.Flow.class);flows.put(value.id(),value);}
-            return new KuudraManifest.Resources(components,flows);
-        } catch(Exception error){throw KuudraException.wrap("Failed to read desired resource state",error);}
+        requireOpen();
+        Map<KuudraManifest.ResourceId, KuudraManifest.Component> components = new LinkedHashMap<>();
+        Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = new LinkedHashMap<>();
+        try (SqlSession session = sessions.openSession()) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection();
+            for (ResourceStateRow row : mapper.findAll()) {
+                if ("component".equals(row.getResourceType())) {
+                    KuudraManifest.Component value = json.readValue(row.getDesiredJson(), KuudraManifest.Component.class);
+                    components.put(value.id(), value);
+                } else if ("flow".equals(row.getResourceType())) {
+                    KuudraManifest.Flow value = json.readValue(row.getDesiredJson(), KuudraManifest.Flow.class);
+                    flows.put(value.id(), value);
+                } else {
+                    throw new KuudraException("Unknown persisted resource type: " + row.getResourceType());
+                }
+            }
+            return new KuudraManifest.Resources(components, flows);
+        } catch (Exception error) {
+            throw KuudraException.wrap("Failed to read desired resource state", error);
+        }
     }
 
-    @Override public synchronized List<ResourceState> states(){List<ResourceState> result=new ArrayList<>();try(Statement s=connection.createStatement();ResultSet r=s.executeQuery("SELECT kind,namespace,name,generation,observed_generation,phase,message FROM resources ORDER BY namespace,kind,name")){while(r.next())result.add(new ResourceState(new KuudraManifest.ResourceId(r.getString(1),r.getString(2),r.getString(3)),r.getLong(4),r.getLong(5),r.getString(6),r.getString(7)));return List.copyOf(result);}catch(SQLException e){throw KuudraException.wrap("Failed to query resource states",e);}}
-    @Override public synchronized void markAllObserved(String phase,String message){try(PreparedStatement s=connection.prepareStatement("UPDATE resources SET observed_generation=generation,phase=?,message=?,updated_at=?")){s.setString(1,phase);s.setString(2,message);s.setString(3,Instant.now().toString());s.executeUpdate();}catch(SQLException e){throw KuudraException.wrap("Failed to update observed resource state",e);}}
-    private static void bindId(PreparedStatement statement,KuudraManifest.ResourceId id)throws SQLException{statement.setString(1,id.kind());statement.setString(2,id.namespace());statement.setString(3,id.name());}
-    private void rollback(Exception original){try{connection.rollback();}catch(SQLException rollback){original.addSuppressed(rollback);}}
-    @Override public synchronized void close(){try{connection.close();}catch(SQLException e){throw KuudraException.wrap("Failed to close StateStore",e);}}
+    @Override public synchronized List<ResourceState> states() {
+        requireOpen();
+        try (SqlSession session = sessions.openSession()) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection();
+            return mapper.findAll().stream()
+                    .map(row -> new ResourceState(id(row), row.getGeneration(), row.getObservedGeneration(),
+                            row.getPhase(), row.getMessage())).toList();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to query resource states", error);
+        }
+    }
+
+    @Override public synchronized void markAllObserved(String phase, String message) {
+        requireOpen();
+        try (SqlSession session = sessions.openSession(false)) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.configureConnection();
+            mapper.markAllObserved(phase, message, Instant.now().toString());
+            session.commit();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to update observed resource state", error);
+        }
+    }
+
+    private static KuudraManifest.ResourceId id(ResourceStateRow row) {
+        return new KuudraManifest.ResourceId(row.getKind(), row.getNamespace(), row.getName());
+    }
+
+    private void requireOpen() {
+        if (closed) throw new KuudraException("StateStore is closed");
+    }
+
+    /** MyBatis owns short-lived sessions; SQLiteDataSource itself has no pool requiring shutdown. */
+    @Override public synchronized void close() { closed = true; }
 }
