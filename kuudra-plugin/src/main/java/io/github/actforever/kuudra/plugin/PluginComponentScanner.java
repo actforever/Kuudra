@@ -32,7 +32,6 @@ final class PluginComponentScanner {
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Ingress.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Ingress.class); return component(pluginId, namespace, PluginComponentKind.INGRESS, annotation.value(), type, annotation.instancePolicy()); }
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.EventHandler.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.EventHandler.class); return component(pluginId, namespace, PluginComponentKind.EVENT_HANDLER, annotation.value(), type, annotation.instancePolicy()); }
         if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Egress.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Egress.class); return component(pluginId, namespace, PluginComponentKind.EGRESS, annotation.value(), type, annotation.instancePolicy()); }
-        if (type.isAnnotationPresent(io.github.actforever.kuudra.plugin.annotation.Action.class)) { var annotation = type.getAnnotation(io.github.actforever.kuudra.plugin.annotation.Action.class); return component(pluginId, namespace, PluginComponentKind.ACTION, annotation.value(), type, annotation.instancePolicy()); }
         return java.util.Optional.empty();
     }
 
@@ -45,7 +44,6 @@ final class PluginComponentScanner {
             case INGRESS -> io.github.actforever.kuudra.api.component.Ingress.class;
             case EVENT_HANDLER -> io.github.actforever.kuudra.api.component.EventHandler.class;
             case EGRESS -> io.github.actforever.kuudra.api.component.Egress.class;
-            case ACTION -> io.github.actforever.kuudra.api.action.Action.class;
         };
         if (!expected.isAssignableFrom(type)) throw new IllegalArgumentException(type.getName() + " annotated as " + kind + " but does not implement " + expected.getName());
         ComponentInstancePolicy instancePolicy = new ComponentInstancePolicy(policy.maxInstances(), policy.limitScope(),

@@ -4,7 +4,7 @@
 
 | 包 | 职责 |
 | --- | --- |
-| `api.action` | Action 调用、执行上下文、结果与执行模式 |
+| `api.action` | EventHandler 的异步执行上下文（`ActionContext`） |
 | `api.app` | App 生命周期状态及传输安全快照 |
 | `api.component` | EventSource、Interpreter、Adapter、Ingress、Handler、Egress 等组件 SPI |
 | `api.context` | 四级上下文、类型转换、占位符编译和 ContextCodec |

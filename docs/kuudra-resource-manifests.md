@@ -154,7 +154,7 @@ threadSafe: true
 
 插件元数据是硬约束，资源清单不能放宽它。清单可以选择更严格的部署策略，但不能把 `maxInstances: 1` 的组件扩成多例，也不能把非 shareable 组件强制跨 Flow 共享。调谐前必须先对完整期望状态执行数量与能力校验，违反约束时不创建任何一半成功的实例。
 
-对于 AWT Robot，更推荐插件在自身生命周期内维护一个共享底层服务，多个轻量 Actor 使用该服务；如果 Actor 本身无状态且线程安全，也可直接声明为 shareable 并由多个 Flow 导入同一个 Component 资源。
+对于 AWT Robot，更推荐插件在自身生命周期内维护一个共享底层服务，多个轻量 EventHandler 使用该服务；如果 EventHandler 本身无状态且线程安全，也可直接声明为 shareable 并由多个 Flow 导入同一个 Component 资源。
 
 ## 生命周期能力
 
