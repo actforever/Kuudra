@@ -122,6 +122,17 @@ class KuudraRuntimeTest {
     }
 
     @Test
+    void reportsGracefulShutdownWaitBoundaries() {
+        CopyOnWriteArrayList<String> events = new CopyOnWriteArrayList<>();
+        KuudraRuntime runtime = new KuudraRuntime(8, 1, Map.of(), 32, event -> events.add(event.type()));
+        runtime.close();
+        assertTrue(events.contains("runtime.shutdown.started"));
+        assertTrue(events.contains("runtime.shutdown.sessions.draining"));
+        assertTrue(events.contains("runtime.shutdown.sessions.drain.completed"));
+        assertTrue(events.contains("runtime.shutdown.completed"));
+    }
+
+    @Test
     void rawIngressSessionHandlerAndEgressFormClosedPipeline() throws Exception {
         CountDownLatch handled = new CountDownLatch(1); CountDownLatch exported = new CountDownLatch(1);
         AtomicReference<UUID> sessionId = new AtomicReference<>(); AtomicReference<Set<UUID>> lineage = new AtomicReference<>();

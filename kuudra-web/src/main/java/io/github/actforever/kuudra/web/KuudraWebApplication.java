@@ -1,11 +1,14 @@
 package io.github.actforever.kuudra.web;
 
 import io.github.actforever.kuudra.app.KuudraApp;
+import io.github.actforever.kuudra.api.system.SystemEvent;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.system.ApplicationHome;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.context.annotation.Bean;
@@ -50,6 +53,13 @@ public class KuudraWebApplication {
     @Bean(destroyMethod = "close")
     KuudraApp kuudraApp() throws IOException {
         return KuudraApp.createFromDefaultLocations(executableDirectoryOrWorkingDirectory());
+    }
+
+    /** Emits before Spring destroys the App bean, including when Ctrl-C triggers JVM shutdown. */
+    @Bean
+    ApplicationListener<ContextClosedEvent> kuudraShutdownListener(KuudraApp app) {
+        return ignored -> app.systemEvents().publish(SystemEvent.of("web.shutdown.requested", java.util.Map.of(
+                "trigger", "process-signal", "action", "stop-kernel")));
     }
 
     private static Path executableDirectoryOrWorkingDirectory() {

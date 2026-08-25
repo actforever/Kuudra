@@ -8,9 +8,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import io.github.actforever.kuudra.api.system.SystemEvent;
+import io.github.actforever.kuudra.app.KuudraApp;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,6 +26,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class KuudraWebApplicationTest {
     @Autowired
     private MockMvc mvc;
+    @Autowired
+    private KuudraApp app;
+
+    @Test
+    void publishesShutdownRequestBeforeSpringDestroysTheApp() throws Exception {
+        CopyOnWriteArrayList<String> events = new CopyOnWriteArrayList<>();
+        try (AutoCloseable ignored = app.systemEvents().subscribe(event -> events.add(event.type()))) {
+            new KuudraWebApplication().kuudraShutdownListener(app).onApplicationEvent(null);
+        }
+        assertTrue(events.contains("web.shutdown.requested"));
+    }
 
     @Test
     void silentlyUnsubscribesWhenAnSseClientDisconnects() {

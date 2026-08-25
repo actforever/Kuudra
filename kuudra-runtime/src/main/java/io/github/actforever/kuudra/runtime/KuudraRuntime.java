@@ -379,7 +379,43 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private Map<String,Object> taskData(RuntimeTask.EventTask task){return Map.of("flowId",task.flowId(),"revision",task.flowRevision(),"nodeId",task.nodeId(),"domain",task.wrapper().domain().name(),"eventId",task.wrapper().event().id().toString(),"queuedTasks",queue.size());}
     private Map<String,Object> completionData(RuntimeTask.EventTask task,Throwable failure){return Map.of("flowId",task.flowId(),"nodeId",task.nodeId(),"eventId",task.wrapper().event().id().toString(),"outcome",failure==null?"success":"failed");}
     private static boolean active(SessionStatus s){return s==SessionStatus.ACTIVE||s==SessionStatus.PAUSED||s==SessionStatus.CANCELLATION_REQUESTED;}
-    @Override public void close(){if(!closed.compareAndSet(false,true))return;synchronized(monitor){paused=false;signalControlChange();monitor.notifyAll();}List<ManagedSource> copy; synchronized(monitor){copy=List.copyOf(sources);}copy.forEach(s->unregister(s).toCompletableFuture().join());sessionManager.cancelAll();try{sessionManager.awaitDrained(shutdownSessionDrainTimeoutMs);}catch(InterruptedException e){Thread.currentThread().interrupt();}queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}catch(RuntimeException ignored){}componentLifecycles.clear();synchronized(monitor){disabledComponents.clear();pausedComponents.clear();}workers.shutdownNow();}
+    @Override public void close(){
+        if(!closed.compareAndSet(false,true))return;
+        long started=System.nanoTime();
+        event("runtime.shutdown.started",Map.of("queuedTasks",queue.size(),"activeSessions",activeSessionCount()));
+        synchronized(monitor){paused=false;signalControlChange();monitor.notifyAll();}
+
+        List<ManagedSource> copy;
+        synchronized(monitor){copy=List.copyOf(sources);}
+        event("runtime.shutdown.sources.started",Map.of("sources",copy.size()));
+        copy.forEach(s->unregister(s).toCompletableFuture().join());
+        event("runtime.shutdown.sources.completed",Map.of("sources",copy.size()));
+
+        sessionManager.cancelAll();
+        int beforeDrain=activeSessionCount();
+        event("runtime.shutdown.sessions.draining",Map.of("activeSessions",beforeDrain,
+                "timeoutMs",shutdownSessionDrainTimeoutMs));
+        long drainStarted=System.nanoTime();
+        try{sessionManager.awaitDrained(shutdownSessionDrainTimeoutMs);}
+        catch(InterruptedException e){Thread.currentThread().interrupt();}
+        int remaining=activeSessionCount();
+        event("runtime.shutdown.sessions.drain.completed",Map.of("remainingSessions",remaining,
+                "timedOut",remaining>0,"elapsedMs",elapsedMillis(drainStarted)));
+
+        queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();
+        List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);
+        event("runtime.shutdown.components.started",Map.of("components",lifecycles.size()));
+        for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}
+        catch(RuntimeException error){event("runtime.shutdown.component.failed",Map.of("error",error.toString()));}
+        componentLifecycles.clear();
+        event("runtime.shutdown.components.completed",Map.of("components",lifecycles.size()));
+        synchronized(monitor){disabledComponents.clear();pausedComponents.clear();}
+        workers.shutdownNow();
+        event("runtime.shutdown.completed",Map.of("elapsedMs",elapsedMillis(started)));
+    }
+
+    private int activeSessionCount(){return (int)sessionManager.snapshots().stream().filter(snapshot->active(snapshot.status())).count();}
+    private static long elapsedMillis(long started){return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);}
     private record ManagedSource(EventSource source,List<SourceTarget> targets,AtomicBoolean closed){ManagedSource(EventSource source,List<SourceTarget>targets){this(source,targets,new AtomicBoolean());}}
     private static final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;
