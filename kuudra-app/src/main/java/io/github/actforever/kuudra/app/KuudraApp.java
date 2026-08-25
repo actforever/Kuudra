@@ -34,6 +34,8 @@ import io.github.actforever.kuudra.logging.KuudraLog;
 import io.github.actforever.kuudra.logging.KuudraLogConfiguration;
 import io.github.actforever.kuudra.logging.KuudraLogLevel;
 import io.github.actforever.kuudra.logging.KuudraLogSession;
+import io.github.actforever.kuudra.i18n.MessageResolver;
+import io.github.actforever.kuudra.i18n.MessageResolvers;
 import io.github.actforever.kuudra.defaultplugin.DefaultPluginBundle;
 import io.github.actforever.kuudra.plugin.KernelControlAction;
 import io.github.actforever.kuudra.plugin.PluginRuntimeServices;
@@ -60,6 +62,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final KuudraConfig.RuntimeConfig bootstrapConfig;
     private Map<String, Object> globalContext = Map.of();
     private final SystemEventBus events = new AppSystemEventBus();
+    private volatile MessageResolver externalMessageResolver = MessageResolver.none();
+    private final MessageResolver messageResolver = (key, arguments) ->
+            externalMessageResolver.resolve(key, arguments).or(() -> MessageResolvers.english().resolve(key, arguments));
     private final List<PluginArchiveLoader.LoadedArchive> archives = new ArrayList<>();
     private final Map<ResourceKey, ManagedEventSource> eventSources = new LinkedHashMap<>();
     private final Map<KuudraManifest.ResourceId, Object> manifestInstances = new LinkedHashMap<>();
@@ -79,17 +84,36 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private String detail = "not started";
 
     public KuudraApp(int queueCapacity, int workerThreads) { this(queueCapacity, workerThreads, null); }
-    private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig) { this.queueCapacity = queueCapacity; this.workerThreads = workerThreads; this.bootstrapConfig = bootstrapConfig; start(); }
+    private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig) {
+        this(queueCapacity, workerThreads, bootstrapConfig, MessageResolver.none());
+    }
+    private KuudraApp(int queueCapacity, int workerThreads, KuudraConfig.RuntimeConfig bootstrapConfig,
+                      MessageResolver externalMessages) {
+        this.queueCapacity = queueCapacity;
+        this.workerThreads = workerThreads;
+        this.bootstrapConfig = bootstrapConfig;
+        this.externalMessageResolver = java.util.Objects.requireNonNull(externalMessages, "externalMessages");
+        start();
+    }
     public static KuudraApp createDefault() { return new KuudraApp(1_024, Math.max(2, Runtime.getRuntime().availableProcessors() / 2)); }
     public static KuudraApp createConfigured(Path configFile) throws IOException {
+        return createConfigured(configFile, MessageResolver.none());
+    }
+    /** Creates App from a configuration path with external I18n active before startup. */
+    public static KuudraApp createConfigured(Path configFile, MessageResolver messages) throws IOException {
         KuudraConfigResource explicit = KuudraYamlLoader.readResource(configFile);
         KuudraConfig.RuntimeConfig config = loadConfiguration(explicit.baseDirectory(), explicit);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
     }
     /** Creates App using a programmatic configuration as the highest-priority layer. */
     public static KuudraApp createConfigured(KuudraConfigResource resource) throws IOException {
+        return createConfigured(resource, MessageResolver.none());
+    }
+    /** Creates App with an external I18n layer active before the first startup event is logged. */
+    public static KuudraApp createConfigured(KuudraConfigResource resource,
+                                             MessageResolver messages) throws IOException {
         KuudraConfig.RuntimeConfig config = loadConfiguration(resource.baseDirectory(), resource);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
     }
     /** Creates App from its home config, falling back to the packaged defaults. */
     public static KuudraApp createDefaultOrClasspathConfigured() throws IOException {
@@ -101,9 +125,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     /** Uses the supplied directory as the base for all relative App configuration paths. */
     public static KuudraApp createFromDefaultLocations(Path baseDirectory) throws IOException {
+        return createFromDefaultLocations(baseDirectory, MessageResolver.none());
+    }
+    /** Uses external I18n before startup and packaged English for every unresolved message key. */
+    public static KuudraApp createFromDefaultLocations(Path baseDirectory,
+                                                       MessageResolver messages) throws IOException {
         Path base = baseDirectory.toAbsolutePath().normalize();
         KuudraConfig.RuntimeConfig config = loadConfiguration(base, null);
-        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config);
+        return new KuudraApp(config.runtime().queueCapacity(), config.runtime().workerThreads(), config, messages);
     }
 
     private static KuudraConfig.RuntimeConfig loadConfiguration(Path baseDirectory, KuudraConfigResource explicit) throws IOException {
@@ -156,7 +185,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     ? KuudraLogConfiguration.DEFAULT
                     : new KuudraLogConfiguration(KuudraLogLevel.valueOf(bootstrapConfig.logging().level()),
                     bootstrapConfig.logging().consoleEnabled(), bootstrapConfig.logging().fileEnabled());
-            logSession = KuudraLog.openSession(home.resolve("logs"), events, logging);
+            logSession = KuudraLog.openSession(home.resolve("logs"), events, logging, messageResolver);
             status = AppStatus.STARTING; publish("app.starting");
             KuudraBanner.print();
             globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
@@ -218,6 +247,16 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return new Status(snapshot, flows, activeSessions);
     }
     public SystemEventBus systemEvents() { return events; }
+    /** Replaces the external I18n layer; unresolved keys continue to fall back to packaged English messages. */
+    public void setSystemEventMessageResolver(MessageResolver resolver) {
+        externalMessageResolver = java.util.Objects.requireNonNull(resolver, "resolver");
+    }
+    /** Effective external-first, packaged-English-second resolver used by the active logging session. */
+    public MessageResolver systemEventMessageResolver() { return messageResolver; }
+    /** Creates a reusable JSON message catalog with {name} placeholders. */
+    public static MessageResolver readSystemEventMessages(java.io.InputStream input) throws IOException {
+        return MessageResolvers.json(input);
+    }
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
     public synchronized Map<String, Object> globalContext() { return globalContext; }
     public List<Plugin> plugins() { return requirePlugins().pluginViews().stream().map(KuudraApp::plugin).toList(); }
@@ -488,9 +527,23 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private void releaseResources() {
         stopReconciliationLoop();
-        if (runtime != null) try { runtime.close(); } catch (RuntimeException ignored) { }
-        if (plugins != null) try { plugins.close(); } catch (RuntimeException ignored) { }
-        for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); } catch (IOException ignored) { }
+        if (runtime != null) {
+            events.publish(SystemEvent.of("app.shutdown.runtime.started", Map.of()));
+            try { runtime.close(); }
+            catch (RuntimeException error) { events.publish(SystemEvent.of("app.shutdown.runtime.failed", Map.of("error", error.toString()))); }
+            events.publish(SystemEvent.of("app.shutdown.runtime.completed", Map.of()));
+        }
+        if (plugins != null) {
+            events.publish(SystemEvent.of("app.shutdown.plugins.started", Map.of()));
+            try { plugins.close(); }
+            catch (RuntimeException error) { events.publish(SystemEvent.of("app.shutdown.plugins.failed", Map.of("error", error.toString()))); }
+            events.publish(SystemEvent.of("app.shutdown.plugins.completed", Map.of()));
+        }
+        events.publish(SystemEvent.of("app.shutdown.archives.started", Map.of("archives", archives.size())));
+        for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); }
+        catch (IOException error) { events.publish(SystemEvent.of("app.shutdown.archive.failed", Map.of(
+                "archive", archive.archive().toString(), "error", error.toString()))); }
+        events.publish(SystemEvent.of("app.shutdown.archives.completed", Map.of("archives", archives.size())));
         archives.clear();
         eventSources.clear();
         manifestInstances.clear();
@@ -548,6 +601,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private void closeLogSession() {
         if (logSession == null) return;
+        events.publish(SystemEvent.of("app.shutdown.logging.started", Map.of("operation", "flush-and-archive")));
         try { logSession.close(); } finally { logSession = null; }
     }
 

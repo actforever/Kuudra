@@ -15,6 +15,7 @@ import io.github.actforever.kuudra.runtime.KuudraFlow;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -27,6 +28,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class KuudraAppTest {
+    @Test void providesEnglishMessagesAndAllowsExternalI18nOverrides() {
+        try (KuudraApp app = new KuudraApp(8, 1)) {
+            assertTrue(app.systemEventMessageResolver().resolve("runtime.shutdown.started",
+                    Map.of("activeSessions", 2, "queuedTasks", 3)).orElseThrow().startsWith("Runtime shutdown started"));
+            app.setSystemEventMessageResolver((key, arguments) -> key.equals("runtime.shutdown.started")
+                    ? Optional.of("CUSTOM " + arguments.get("activeSessions")) : Optional.empty());
+            assertEquals("CUSTOM 2", app.systemEventMessageResolver().resolve("runtime.shutdown.started",
+                    Map.of("activeSessions", 2, "queuedTasks", 3)).orElseThrow());
+            assertTrue(app.systemEventMessageResolver().resolve("app.stopping",
+                    Map.of("status", "STOPPING")).orElseThrow().startsWith("Kuudra App is stopping"));
+        }
+    }
+
     @Test void pauseAndResumePreserveTheRunningKernel() {
         try (KuudraApp app = new KuudraApp(8, 1)) {
             app.pause(); assertEquals("PAUSED", app.snapshot().status().name());
@@ -151,16 +165,16 @@ class KuudraAppTest {
         assertTrue(Files.isDirectory(home.resolve("manifests")));
         assertTrue(Files.isDirectory(home.resolve("logs")));
         assertTrue(Files.isDirectory(home.resolve("state")));
-        assertTrue(Files.readString(home.resolve("logs/latest.log")).contains("app.stopped"));
+        assertTrue(Files.readString(home.resolve("logs/latest.log")).contains("Kuudra App has stopped"));
         Path archive;
         try (var files = Files.list(home.resolve("logs"))) {
             archive = files.filter(path -> path.getFileName().toString().endsWith(".log.gz")).findFirst().orElseThrow();
         }
         try (var input = new java.util.zip.GZIPInputStream(Files.newInputStream(archive))) {
             String log = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            assertTrue(log.contains("app.running"));
-            assertTrue(log.contains("plugin.scan.completed"));
-            assertTrue(log.contains("app.stopped"));
+            assertTrue(log.contains("Kuudra App is running"));
+            assertTrue(log.contains("Plugin archive scan completed"));
+            assertTrue(log.contains("Kuudra App has stopped"));
         }
     }
 

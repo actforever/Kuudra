@@ -29,6 +29,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 | 模块 | 职责 |
 | --- | --- |
 | `kuudra-api` | 事件、Wrapper、组件、上下文、Session 与 App 公共契约 |
+| `kuudra-i18n` | I18n Resolver、JSON 消息目录、占位符插值和默认英文文本 |
 | `kuudra-config` | YAML 和 K8s 风格资源清单模型 |
 | `kuudra-plugin` | 插件元数据、依赖 ClassLoader、注解组件发现、清单配置和生命周期 |
 | `kuudra-default-plugin` | 内置官方插件 `kuudra-official/default`，提供按清单实例化的默认 Ingress/Egress |

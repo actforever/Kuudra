@@ -46,8 +46,17 @@ public final class KuudraLog {
     /** Opens one configured kernel log lifecycle. */
     public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.system.SystemEventBus events,
                                                KuudraLogConfiguration configuration) throws IOException {
+        return openSession(logsDirectory, events, configuration,
+                io.github.actforever.kuudra.i18n.MessageResolver.none());
+    }
+
+    /** Opens one configured kernel log lifecycle with an externally supplied I18n resolver. */
+    public static KuudraLogSession openSession(Path logsDirectory, io.github.actforever.kuudra.api.system.SystemEventBus events,
+                                               KuudraLogConfiguration configuration,
+                                               io.github.actforever.kuudra.i18n.MessageResolver messages) throws IOException {
         Objects.requireNonNull(events, "events");
         Objects.requireNonNull(configuration, "configuration");
+        Objects.requireNonNull(messages, "messages");
         Path directory = logsDirectory.toAbsolutePath().normalize();
         Files.createDirectories(directory);
         Path latest = directory.resolve("latest.log");
@@ -66,7 +75,7 @@ public final class KuudraLog {
             file.start();
             logger.addAppender(file);
         }
-        AutoCloseable subscription = events.subscribe(event -> write(logger, event));
+        AutoCloseable subscription = events.subscribe(event -> write(logger, event, messages));
         return new Session(directory, latest, logger, file, subscription, configuration.fileEnabled());
     }
 
@@ -102,7 +111,8 @@ public final class KuudraLog {
         encoder.setContext(context); encoder.setPattern(pattern); encoder.start(); return encoder;
     }
 
-    private static void write(Logger logger, io.github.actforever.kuudra.api.system.SystemEvent event) {
+    private static void write(Logger logger, io.github.actforever.kuudra.api.system.SystemEvent event,
+                              io.github.actforever.kuudra.i18n.MessageResolver messages) {
         if (event.type().equals("plugin.log")) {
             String plugin = "[plugin=" + event.data().get("namespace") + "/" + event.data().get("pluginId") + "] ";
             String message = plugin + event.data().get("message") + fields(event.data().get("fields"));
@@ -116,7 +126,8 @@ public final class KuudraLog {
             }
             return;
         }
-        String message = event.type() + (event.data().isEmpty() ? "" : " " + event.data());
+        String message = messages.resolve(event.type(), event.data())
+                .orElseGet(() -> event.type() + (event.data().isEmpty() ? "" : " " + event.data()));
         switch (event.level()) {
             case TRACE -> logger.trace(message);
             case DEBUG -> logger.debug(message);

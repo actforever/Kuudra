@@ -10,7 +10,22 @@ Runtime、插件管理和 App 生命周期不直接依赖具体 Logger。`kuudra
 - 类型包含 `rejected` 或 `cancel` 的事件记为 WARN；
 - 其他生命周期、扫描、注册和资源事件记为 INFO。
 
-当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。App API、当前 Web SSE 和未来 WebSocket 等其他观察者可同时订阅同一总线，日志不会反向进入业务 Event 管线。
+系统事件不携带硬编码的自然语言日志正文：稳定的 `type`（例如 `web.shutdown.requested`）同时作为 I18n 消息键，`data` 中的 `trigger`、`action`、数量、耗时等结构化字段作为消息模板占位参数。日志适配器只打印 Resolver 渲染后的文本；增加语言时不需要修改事件生产者。
+
+独立的 `kuudra-i18n` 默认加载 `classpath:/i18n/en.json`，其中 JSON key 是 SystemEvent 消息键，value 是带 `{placeholder}` 的英文模板；通配键 `*` 保证任何新事件仍经过模板渲染。该模块不依赖 App、日志框架或插件系统，提供 `MessageResolver`、`JsonMessageResolver` 与 `MessageResolvers`。App 对外暴露有效的 `MessageResolver`：
+
+```java
+app.setSystemEventMessageResolver((messageKey, arguments) ->
+        myI18n.lookup(locale, messageKey, arguments));
+```
+
+外部 Resolver 优先，返回 `Optional.empty()` 时回退到内置英文目录。`KuudraApp.readSystemEventMessages(InputStream)` 可以直接读取相同格式的外部 JSON 目录。Resolver 是动态委托，App 启动后替换也会作用于当前日志会话。`plugin.log` 是插件作者主动提交的自由文本，不参与内核消息键翻译。
+
+插件 I18n 将采用身份隔离的目录，而不是把全局 Resolver 直接交给插件修改：插件键统一限定为 `plugin.<namespace>.<pluginId>.<key>`，`PluginContext` 未来暴露的门面只能注册和解析本插件目录；键式 `PluginLogger` 再把 key 与 arguments 投影为 SystemEvent。这样插件可以提供多语言文本，但不能覆盖 `app.*`、`runtime.*` 或其他插件的消息。当前版本先稳定通用 I18n 模块和 App/日志链路，插件目录发现与 locale 选择仍为后续能力。
+
+当前覆盖 App 启停与失败、Runtime 启停、Flow 与 Session 生命周期、队列/路由错误、插件扫描与归档加载、插件注册/初始化/启动/停止/失败、组件初始化/销毁，以及 EventSource 资源启停。Web 收到 Spring Context 关闭事件（包括终端 Ctrl-C）时会先发布 `web.shutdown.requested`；随后 App 与 Runtime 会逐段报告 EventSource 停止、Session 取消与排空、组件停止、插件停止、ClassLoader 关闭和日志归档。App API、当前 Web SSE 和未来 WebSocket 等其他观察者可同时订阅同一总线，日志不会反向进入业务 Event 管线。
+
+正常退出最显著的固定等待是 `runtime.shutdown-session-drain-timeout-ms`：Runtime 先取消全部活跃 Session，再等待工作租约释放，默认最多 5000ms。日志中的 `runtime.shutdown.sessions.draining` 会显示超时配置和初始会话数，`runtime.shutdown.sessions.drain.completed` 会显示实际耗时、剩余会话数及是否超时。EventSource、组件和插件各自返回的异步 `stop/destroy` 目前没有内核统一超时，若某一阶段长期不返回，最后一条 `*.started` 日志即可定位阻塞边界。
 
 Web SSE 客户端关闭页面、网络切换或主动断开时，发送端只原子取消该订阅并静默结束，不调用 `completeWithError` 将连接关闭重新包装成 MVC 异常。此类断连不是内核失败，也不应产生 `AsyncRequestNotUsableException` WARN；真正的 App/SystemEvent 生产错误仍按原级别记录。
 

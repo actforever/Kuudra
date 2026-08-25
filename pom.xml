@@ -11,6 +11,7 @@
 
     <modules>
         <module>kuudra-api</module>
+        <module>kuudra-i18n</module>
         <module>kuudra-logging</module>
         <module>kuudra-config</module>
         <module>kuudra-state</module>
