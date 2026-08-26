@@ -17,31 +17,27 @@ CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 | `GET` | `/api/v1/app` | App 状态、队列长度和 Flow 数。 |
 | `GET` | `/api/v1/app/status` | 当前 App 内核汇总：App 状态、队列、全部 Flow 摘要与活跃 Session 总数。 |
 | `GET` | `/api/v1/app/checkpoint` | 查询本次暂停在安全点生成的组件、Flow context、Session 与队列检查点；非暂停状态返回 404。 |
-| `GET` | `/api/v1/app/plugins` | 列出当前已加载插件及其版本、命名空间和状态。 |
-| `GET` | `/api/v1/app/plugins/{namespace}/{pluginId}` | 按规范插件身份查询插件及其组件引用。 |
-| `GET` | `/api/v1/app/plugins/{namespace}/{pluginId}/components` | 查询指定插件的结构化组件文档。 |
-| `GET` | `/api/v1/app/resource-documentation` | 查询内核资源规约文档。 |
-| `GET` | `/api/v1/app/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
-| `GET` | `/api/v1/app/components` | 列出所有已注册插件组件。 |
-| `GET` | `/api/v1/app/components/{type}/{namespace}/{name}` | 按完整组件引用查询用途、示例、生命周期和输出事件。 |
-| `GET` | `/api/v1/app/resources/components` | 列出清单声明的全部 Component 实例及实际状态。 |
-| `GET` | `/api/v1/app/resources/components/{type}` | 按六类组件类型过滤资源实例。 |
-| `GET` | `/api/v1/app/resources/components/{type}/{namespace}/{name}` | 查询具体资源实例、期望/实际状态、导入它的 Flow 和生命周期能力。 |
-| `GET` | `/api/v1/app/resources/{kind}/{namespace}/{name}` | 按规范 `kind/namespace/name` 查询组件资源。 |
-| `POST` | `/api/v1/app/resources/{kind}/{namespace}/{name}/desired-state/{state}` | 先持久化期望状态，再由 App 调谐该组件并更新 observedGeneration。 |
-| `GET` | `/api/v1/app/namespaces/{namespace}/resources` | 列出指定命名空间中的组件资源。 |
+| `GET` | `/api/v1/plugins` | 列出当前已加载插件及其版本、命名空间和状态。 |
+| `GET` | `/api/v1/plugins/{namespace}/{pluginId}` | 按规范插件身份查询插件；详情携带该插件提供的 Component 模板快照。 |
+| `GET` | `/api/v1/component-templates` | 列出插件注册表中的 Component 模板。 |
+| `GET` | `/api/v1/component-templates/{type}/{namespace}/{name}` | 按组件引用查询模板、实例约束和结构化文档。 |
+| `GET` | `/api/v1/component-templates/{type}/{namespace}/{name}/documentation` | 查询 Component 模板的配置、生命周期和事件说明。 |
+| `GET` | `/api/v1/resource-documentation` | 查询内核资源规约文档。 |
+| `GET` | `/api/v1/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
+| `GET` | `/api/v1/components?type={type}&namespace={namespace}` | 列出清单声明并由 App 调谐的 Component 实例，可按类型和命名空间过滤。 |
+| `GET` | `/api/v1/components/{kind}/{namespace}/{name}` | 查询 Component 实例的期望/实际状态、导入它的 Flow 和生命周期能力。 |
+| `POST` | `/api/v1/components/{kind}/{namespace}/{name}/desired-state/{state}` | 先持久化期望状态，再由 App 调谐该实例并更新 observedGeneration。 |
+| `GET` | `/api/v1/components/reconciliation-states` | 查询 Component 实例的持久 generation 与观测状态。 |
 | `POST` | `/api/v1/app/start` | 创建并启动内核。 |
 | `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
 | `POST` | `/api/v1/app/pause`、`/resume` | 无损冻结/恢复内核事件流转。 |
 | `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |
-| `GET` | `/api/v1/app/flows` | 列出 Flow。 |
-| `GET` | `/api/v1/app/namespaces/{namespace}/flows` | 列出指定命名空间中的 Flow。 |
-| `GET` | `/api/v1/app/namespaces/{namespace}/flows/{name}` | 按 namespace/name 查询 Flow。 |
-| `GET` | `/api/v1/app/sessions/{id}` | 查询 Session。 |
-| `POST` | `/api/v1/app/sessions/{id}/cancel` | 请求协作式取消。 |
-| `POST` | `/api/v1/app/sessions/{id}/pause|resume` | 保留上下文和队列并冻结/恢复该会话。 |
-| `GET` | `/api/v1/app/resources/state` | 查询持久 generation 与观测状态。 |
-| `GET` | `/api/v1/app/events` | SSE 系统事件流。 |
+| `GET` | `/api/v1/flows?namespace={namespace}` | 列出 Flow，可按命名空间过滤。 |
+| `GET` | `/api/v1/flows/{namespace}/{name}` | 按 namespace/name 查询 Flow。 |
+| `GET` | `/api/v1/sessions/{id}` | 查询 Session。 |
+| `POST` | `/api/v1/sessions/{id}/cancel` | 请求协作式取消。 |
+| `POST` | `/api/v1/sessions/{id}/pause|resume` | 保留上下文和队列并冻结/恢复该会话。 |
+| `GET` | `/api/v1/system-events` | SSE 系统事件流。 |
 
 暂停由 App 编排：先把状态切换为 `PAUSING`，再要求 Runtime 关闭内核执行闸门并等待已经进入节点的工作抵达安全点，随后生成一致检查点。只有这些步骤全部完成后 App 才进入 `PAUSED`，所以 `POST /pause` 成功返回本身就是“内核事件流已经静止”的确认。该流程不调用任何组件的 `pause()/stop()`，也不改写组件或 Session 状态；组件实例、内部状态、上下文和队列均保留。恢复只重新开放内核闸门，不重建组件、Session 或上下文。
 

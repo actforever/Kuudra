@@ -8,9 +8,42 @@ knife4j:
   enable: true
   setting:
     enable-group: true
+    language: zh_cn
 springdoc:
   api-docs:
     path: /v3/api-docs
+
   swagger-ui:
-    path: /doc.html
+    path: /swagger-ui.html
     urls-primary-name: all
+    tags-sorter: alpha
+    operations-sorter: alpha
+  group-configs:
+    - group: all
+      paths-to-match:
+        - /api/v1/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: app
+      paths-to-match: /api/v1/app/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: flows
+      paths-to-match: /api/v1/flows/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: resource-documentation
+      paths-to-match: /api/v1/resource-documentation/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: components
+      paths-to-match: /api/v1/components/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: component-templates
+      paths-to-match: /api/v1/component-templates/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: sessions
+      paths-to-match: /api/v1/sessions/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: system-events
+      paths-to-match: /api/v1/system-events/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: plugins
+      paths-to-match: /api/v1/plugins/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller

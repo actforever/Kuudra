@@ -3,6 +3,7 @@ package io.github.actforever.kuudra.web.controller;
 import io.github.actforever.kuudra.api.system.SystemEvent;
 import io.github.actforever.kuudra.app.KuudraApp;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,7 +16,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** HTTP adapter for the App-owned SystemEvent stream. */
 @RestController
-@RequestMapping("/api/v1/app")
+@RequestMapping("/api/v1/system-events")
+@Tag(name = "SystemEvent")
 public class SystemEventController {
     private final KuudraApp app;
 
@@ -23,8 +25,8 @@ public class SystemEventController {
         this.app = app;
     }
 
-    @Operation(summary = "订阅系统事件", tags = "系统事件")
-    @GetMapping(path = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "订阅系统事件")
+    @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events() {
         SseEmitter emitter = new SseEmitter(0L);
         EventStreamSubscription stream = new EventStreamSubscription(emitter);
