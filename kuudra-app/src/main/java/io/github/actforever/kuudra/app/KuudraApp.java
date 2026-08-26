@@ -599,22 +599,22 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private void releaseResources() {
         stopReconciliationLoop();
         if (runtime != null) {
-            events.publish(SystemEvent.of("app.shutdown.runtime.started", Map.of()));
+            debug("app.shutdown.runtime.started", Map.of());
             try { runtime.close(); }
             catch (RuntimeException error) { events.publish(SystemEvent.of("app.shutdown.runtime.failed", Map.of("error", error.toString()))); }
-            events.publish(SystemEvent.of("app.shutdown.runtime.completed", Map.of()));
+            debug("app.shutdown.runtime.completed", Map.of());
         }
         if (plugins != null) {
-            events.publish(SystemEvent.of("app.shutdown.plugins.started", Map.of()));
+            debug("app.shutdown.plugins.started", Map.of());
             try { plugins.close(); }
             catch (RuntimeException error) { events.publish(SystemEvent.of("app.shutdown.plugins.failed", Map.of("error", error.toString()))); }
-            events.publish(SystemEvent.of("app.shutdown.plugins.completed", Map.of()));
+            debug("app.shutdown.plugins.completed", Map.of());
         }
-        events.publish(SystemEvent.of("app.shutdown.archives.started", Map.of("archives", archives.size())));
+        debug("app.shutdown.archives.started", Map.of("archives", archives.size()));
         for (PluginArchiveLoader.LoadedArchive archive : archives) try { archive.close(); }
         catch (IOException error) { events.publish(SystemEvent.of("app.shutdown.archive.failed", Map.of(
                 "archive", archive.archive().toString(), "error", error.toString()))); }
-        events.publish(SystemEvent.of("app.shutdown.archives.completed", Map.of("archives", archives.size())));
+        debug("app.shutdown.archives.completed", Map.of("archives", archives.size()));
         archives.clear();
         eventSources.clear();
         manifestInstances.clear();
@@ -698,7 +698,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private void closeLogSession() {
         if (logSession == null) return;
-        events.publish(SystemEvent.of("app.shutdown.logging.started", Map.of("operation", "flush-and-archive")));
+        debug("app.shutdown.logging.started", Map.of("operation", "flush-and-archive"));
         try { logSession.close(); } finally { logSession = null; }
     }
 

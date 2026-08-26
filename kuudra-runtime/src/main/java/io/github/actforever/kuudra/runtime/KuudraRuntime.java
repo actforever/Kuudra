@@ -382,36 +382,38 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     @Override public void close(){
         if(!closed.compareAndSet(false,true))return;
         long started=System.nanoTime();
-        event("runtime.shutdown.started",Map.of("queuedTasks",queue.size(),"activeSessions",activeSessionCount()));
+        debugEvent("runtime.shutdown.started",Map.of("queuedTasks",queue.size(),"activeSessions",activeSessionCount()));
         synchronized(monitor){paused=false;signalControlChange();monitor.notifyAll();}
 
         List<ManagedSource> copy;
         synchronized(monitor){copy=List.copyOf(sources);}
-        event("runtime.shutdown.sources.started",Map.of("sources",copy.size()));
+        debugEvent("runtime.shutdown.sources.started",Map.of("sources",copy.size()));
         copy.forEach(s->unregister(s).toCompletableFuture().join());
-        event("runtime.shutdown.sources.completed",Map.of("sources",copy.size()));
+        debugEvent("runtime.shutdown.sources.completed",Map.of("sources",copy.size()));
 
         sessionManager.cancelAll();
         int beforeDrain=activeSessionCount();
-        event("runtime.shutdown.sessions.draining",Map.of("activeSessions",beforeDrain,
+        debugEvent("runtime.shutdown.sessions.draining",Map.of("activeSessions",beforeDrain,
                 "timeoutMs",shutdownSessionDrainTimeoutMs));
         long drainStarted=System.nanoTime();
         try{sessionManager.awaitDrained(shutdownSessionDrainTimeoutMs);}
         catch(InterruptedException e){Thread.currentThread().interrupt();}
         int remaining=activeSessionCount();
-        event("runtime.shutdown.sessions.drain.completed",Map.of("remainingSessions",remaining,
-                "timedOut",remaining>0,"elapsedMs",elapsedMillis(drainStarted)));
+        Map<String,Object> drainResult=Map.of("remainingSessions",remaining,
+                "timedOut",remaining>0,"elapsedMs",elapsedMillis(drainStarted));
+        if(remaining>0)event("runtime.shutdown.sessions.drain.completed",drainResult);
+        else debugEvent("runtime.shutdown.sessions.drain.completed",drainResult);
 
         queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();
         List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);
-        event("runtime.shutdown.components.started",Map.of("components",lifecycles.size()));
+        debugEvent("runtime.shutdown.components.started",Map.of("components",lifecycles.size()));
         for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}
         catch(RuntimeException error){event("runtime.shutdown.component.failed",Map.of("error",error.toString()));}
         componentLifecycles.clear();
-        event("runtime.shutdown.components.completed",Map.of("components",lifecycles.size()));
+        debugEvent("runtime.shutdown.components.completed",Map.of("components",lifecycles.size()));
         synchronized(monitor){disabledComponents.clear();pausedComponents.clear();}
         workers.shutdownNow();
-        event("runtime.shutdown.completed",Map.of("elapsedMs",elapsedMillis(started)));
+        debugEvent("runtime.shutdown.completed",Map.of("elapsedMs",elapsedMillis(started)));
     }
 
     private int activeSessionCount(){return (int)sessionManager.snapshots().stream().filter(snapshot->active(snapshot.status())).count();}

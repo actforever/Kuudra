@@ -279,7 +279,7 @@ public final class DefaultPluginManager implements AutoCloseable {
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> {
                     mark(pluginId, PluginState.ACTIVE);
-                    event("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace));
+                    debugEvent("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace));
                 })
                 .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }
@@ -300,7 +300,7 @@ public final class DefaultPluginManager implements AutoCloseable {
                 .thenRun(() -> closeResources(pluginId))
                 .thenRun(() -> {
                     mark(pluginId, PluginState.STOPPED);
-                    event("plugin.stopped", Map.of("pluginId", plugin.id(), "namespace", namespace));
+                    debugEvent("plugin.stopped", Map.of("pluginId", plugin.id(), "namespace", namespace));
                 })
                 .exceptionallyCompose(error -> failed(pluginId, error));
     }
@@ -405,7 +405,7 @@ public final class DefaultPluginManager implements AutoCloseable {
             chain = chain.thenCompose(ignored -> {
                 try {
                     debugEvent("plugin.component.destroying", Map.of("componentClass", component.getClass().getName()));
-                    return component.destroy().thenRun(() -> event("plugin.component.destroyed", Map.of("componentClass", component.getClass().getName())));
+                    return component.destroy().thenRun(() -> debugEvent("plugin.component.destroyed", Map.of("componentClass", component.getClass().getName())));
                 } catch (RuntimeException error) {
                     return CompletableFuture.failedFuture(error);
                 }

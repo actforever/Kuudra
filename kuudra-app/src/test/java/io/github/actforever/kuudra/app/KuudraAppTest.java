@@ -171,6 +171,11 @@ class KuudraAppTest {
             String log = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
             assertTrue(log.contains("Kuudra App is running"));
             assertFalse(log.contains("Plugin archive scan completed"));
+            assertFalse(log.contains("Stopping Runtime"));
+            assertFalse(log.contains("Runtime shutdown started"));
+            assertFalse(log.contains("Stopping plugins"));
+            assertFalse(log.contains("Closing plugin archives"));
+            assertFalse(log.contains("Flushing and archiving the current run log"));
             assertTrue(log.contains("Kuudra App has stopped"));
         }
     }

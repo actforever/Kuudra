@@ -123,13 +123,15 @@ class KuudraRuntimeTest {
 
     @Test
     void reportsGracefulShutdownWaitBoundaries() {
-        CopyOnWriteArrayList<String> events = new CopyOnWriteArrayList<>();
-        KuudraRuntime runtime = new KuudraRuntime(8, 1, Map.of(), 32, event -> events.add(event.type()));
+        CopyOnWriteArrayList<SystemEvent> events = new CopyOnWriteArrayList<>();
+        KuudraRuntime runtime = new KuudraRuntime(8, 1, Map.of(), 32, events::add);
         runtime.close();
-        assertTrue(events.contains("runtime.shutdown.started"));
-        assertTrue(events.contains("runtime.shutdown.sessions.draining"));
-        assertTrue(events.contains("runtime.shutdown.sessions.drain.completed"));
-        assertTrue(events.contains("runtime.shutdown.completed"));
+        assertTrue(events.stream().filter(event -> event.type().startsWith("runtime.shutdown."))
+                .allMatch(event -> event.level() == SystemEventLevel.DEBUG));
+        assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.shutdown.started")));
+        assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.shutdown.sessions.draining")));
+        assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.shutdown.sessions.drain.completed")));
+        assertTrue(events.stream().anyMatch(event -> event.type().equals("runtime.shutdown.completed")));
     }
 
     @Test
