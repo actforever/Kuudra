@@ -126,6 +126,18 @@ class KuudraAppTest {
     }
 
     @Test
+    void exposesManifestReadyKindsForComponentTemplates() throws Exception {
+        installDefaultTestPlugin();
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            Map<String, String> kinds = app.components().stream().collect(java.util.stream.Collectors.toMap(
+                    KuudraApp.Component::reference, KuudraApp.Component::kind));
+            assertEquals("EventSource", kinds.get("event-source/kuudra-official/standalone-source"));
+            assertEquals("Ingress", kinds.get("ingress/kuudra-official/default"));
+            assertEquals("Egress", kinds.get("egress/kuudra-official/default"));
+        }
+    }
+
+    @Test
     void eventSourceIsAnIndependentlyControllableFlowResource() {
         AtomicInteger starts = new AtomicInteger();
         AtomicInteger stops = new AtomicInteger();

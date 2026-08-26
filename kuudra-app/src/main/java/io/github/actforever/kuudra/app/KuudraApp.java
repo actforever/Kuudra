@@ -378,7 +378,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public Optional<ComponentDocumentation> pluginComponentDocumentation(String namespace, String pluginId,
                                                                          String type, String name) {
         return plugin(namespace, pluginId).flatMap(owner -> owner.components().stream()
-                .filter(component -> component.kind().equals(type) && component.name().equals(name))
+                .filter(component -> component.reference().equals(type + "/" + namespace + "/" + name))
                 .map(Component::documentation).findFirst());
     }
 
@@ -530,7 +530,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     private static Component component(DefaultPluginManager.ComponentView view) {
         var documentation = view.documentation();
-        return new Component(view.reference(), view.pluginId(), view.namespace(), view.kind().prefix(), view.name(),
+        return new Component(view.reference(), view.pluginId(), view.namespace(), view.kind().manifestKind(), view.name(),
                 view.implementation(), new InstancePolicy(view.instancePolicy().maxInstances(),
                 view.instancePolicy().limitScope().name(), view.instancePolicy().exclusivityDomain(),
                 view.instancePolicy().shareable(), view.instancePolicy().threadSafe()),

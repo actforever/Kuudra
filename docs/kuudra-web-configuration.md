@@ -2,7 +2,7 @@
 
 `kuudra-web` 只使用 Spring 的 Web 配置（例如 `server.port`、SpringDoc 与 Knife4j），不再从 Spring `Environment` 或 `application.yaml` 读取任何 Kuudra App 配置。
 
-HTTP 适配层按领域组织在 `io.github.actforever.kuudra.web.controller` 包中。Kuudra 内核生命周期、观测和内建资源文档统一使用 `/api/v1/kuudra`；Flow、Component 和 Session 归入 `/api/v1/runtime`；Plugin 与 ComponentTemplate 归入 `/api/v1/plugin`；SystemEvent 保持独立资源域。所有 Controller 只依赖 `KuudraApp`，`runtime` 路径仅表达执行资源归属，不得直接暴露或访问 Runtime 对象。插件注册的 `Component` 在 HTTP 语义中称为 ComponentTemplate，清单声明并由 App 调谐的资源称为 Component。
+HTTP 适配层按领域组织在 `io.github.actforever.kuudra.web.controller` 包中。Kuudra 内核生命周期、观测和内建资源文档统一使用 `/api/v1/kuudra`；Flow、Component 和 Session 归入 `/api/v1/runtime`；Plugin 与 ComponentTemplate 归入 `/api/v1/plugin`；SystemEvent 保持独立资源域。所有 Controller 只依赖 `KuudraApp`，`runtime` 路径仅表达执行资源归属，不得直接暴露或访问 Runtime 对象。插件注册的 `Component` 在 HTTP 语义中称为 ComponentTemplate，清单声明并由 App 调谐的资源称为 Component。ComponentTemplate 响应中的 `kind` 使用可直接写入清单的 PascalCase 名称（如 `EventSource`、`EventHandler`）；组件引用 `type/namespace/name` 仍使用 `event-source`、`event-handler` 等小写前缀。
 
 Web 创建 `KuudraApp` 时，将可执行 JAR 所在目录作为 App 的配置基目录；开发期从 classes 目录运行时使用当前工作目录。App 按以下优先级深度合并配置：
 
