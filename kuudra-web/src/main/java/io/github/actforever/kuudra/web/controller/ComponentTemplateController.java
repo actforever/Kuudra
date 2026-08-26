@@ -14,7 +14,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 
 /** HTTP adapter for plugin-provided Component templates. */
 @RestController
-@RequestMapping("/api/v1/component-templates")
+@RequestMapping("/api/v1/plugin/component-templates")
 @Tag(name = "Component 模板")
 public class ComponentTemplateController {
     private final KuudraApp app;

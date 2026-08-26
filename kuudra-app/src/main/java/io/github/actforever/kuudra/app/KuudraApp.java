@@ -567,14 +567,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     "components", config.manifests().components().size(), "flows", config.manifests().flows().size()));
             Path pluginDirectory = config.homeDirectory().resolve("plugins");
             Files.createDirectories(pluginDirectory);
-            events.publish(SystemEvent.of("plugin.scan.started", Map.of("directory", pluginDirectory.toString())));
+            debug("plugin.scan.started", Map.of("directory", pluginDirectory.toString()));
             List<Path> pluginArchives;
             try (var files = Files.list(pluginDirectory)) {
                 pluginArchives = files.filter(Files::isRegularFile)
                         .filter(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".jar"))
                         .sorted().toList();
             }
-            events.publish(SystemEvent.of("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size())));
+            debug("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size()));
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
             if (stateStore == null) stateStore = new SqliteResourceStateStore(

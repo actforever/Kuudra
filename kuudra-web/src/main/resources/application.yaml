@@ -26,24 +26,15 @@ springdoc:
     - group: app
       paths-to-match: /api/v1/app/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: flows
-      paths-to-match: /api/v1/flows/**
-      packages-to-scan: io.github.actforever.kuudra.web.controller
     - group: resource-documentation
       paths-to-match: /api/v1/resource-documentation/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: components
-      paths-to-match: /api/v1/components/**
-      packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: component-templates
-      paths-to-match: /api/v1/component-templates/**
-      packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: sessions
-      paths-to-match: /api/v1/sessions/**
+    - group: runtime
+      paths-to-match: /api/v1/runtime/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
     - group: system-events
       paths-to-match: /api/v1/system-events/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: plugins
-      paths-to-match: /api/v1/plugins/**
+    - group: plugin
+      paths-to-match: /api/v1/plugin/**
       packages-to-scan: io.github.actforever.kuudra.web.controller

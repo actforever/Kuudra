@@ -2,7 +2,7 @@
 
 本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用同命名空间的组件资源并配置路由，组件资源不引用 Flow。组件 desired-state 写入和后台失败重试已经接入同一调谐链路；通用资源 apply/delete 仍是后续工作。
 
-当前 App/Web 通过统一的 `GET /api/v1/components` 查询所有清单 Component 实例，而不再为 EventSource 维护重复的专用 HTTP API。结果返回类型、插件 Component 模板引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型、命名空间或 `kind/namespace/name` 定位。实例期望状态统一通过 Component 资源域控制，不伪造与能力不匹配的 start/stop 操作。
+当前 App/Web 通过统一的 `GET /api/v1/runtime/components` 查询所有清单 Component 实例，而不再为 EventSource 维护重复的专用 HTTP API。结果返回类型、插件 Component 模板引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型、命名空间或 `kind/namespace/name` 定位。实例期望状态统一通过 Runtime 下的 Component 资源域控制，不伪造与能力不匹配的 start/stop 操作。
 
 ## 设计目标
 
@@ -223,7 +223,7 @@ DELETE /api/v1/resources/{kind}/{namespace}/{name}
 GET    /api/v1/resources/{kind}/{namespace}/{name}/status
 ```
 
-当前通用入口是 `POST /api/v1/components/{kind}/{namespace}/{name}/desired-state/{state}`。所有 Component 实例（包括 EventSource）使用同一个 App 调谐入口；HTTP 继续只暴露 App 资源，不暴露 Runtime。
+当前通用入口是 `POST /api/v1/runtime/components/{kind}/{namespace}/{name}/desired-state/{state}`。所有 Component 实例（包括 EventSource）使用同一个 App 调谐入口；`runtime` 只是 HTTP 资源分域，Controller 仍只依赖 App 外观，不直接暴露 Runtime 对象。
 
 未来 `kuudractl apply -f xxx.yaml` 会把同一清单提交给 ResourceService，以资源身份和 generation 幂等更新，然后观察调谐状态。当前 App 启动和 desired-state API 已使用相同的 SQLite 持久模型与后台重试循环，但运行期通用 apply 和文件监听尚未开放。
 

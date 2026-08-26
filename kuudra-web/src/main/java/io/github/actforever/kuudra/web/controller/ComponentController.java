@@ -18,7 +18,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 
 /** HTTP adapter for manifest-declared Component instances. */
 @RestController
-@RequestMapping("/api/v1/components")
+@RequestMapping("/api/v1/runtime/components")
 @Tag(name = "Component 实例")
 public class ComponentController {
     private final KuudraApp app;

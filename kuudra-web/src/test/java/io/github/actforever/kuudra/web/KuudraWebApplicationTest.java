@@ -89,17 +89,17 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.app.status").value("RUNNING"))
                 .andExpect(jsonPath("$.activeSessions").value(0));
-        mvc.perform(get("/api/v1/plugins"))
+        mvc.perform(get("/api/v1/plugin"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
-        mvc.perform(get("/api/v1/component-templates"))
+        mvc.perform(get("/api/v1/plugin/component-templates"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
-        mvc.perform(get("/api/v1/plugins/kuudra-official/default"))
+        mvc.perform(get("/api/v1/plugin/kuudra-official/default"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/v1/component-templates/ingress/kuudra-official/default"))
+        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/v1/component-templates/ingress/kuudra-official/default/documentation"))
+        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default/documentation"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/v1/components"))
+        mvc.perform(get("/api/v1/runtime/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/resource-documentation/kuudra-official/Flow"))
                 .andExpect(status().isOk())
@@ -115,55 +115,46 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$['urls.primaryName']").value("all"))
                 .andExpect(jsonPath("$.urls[?(@.name == 'all')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'app')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'flows')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == 'resource-documentation')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'components')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'component-templates')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'sessions')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'system-events')]").exists());
+                .andExpect(jsonPath("$.urls[?(@.name == 'runtime')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == 'system-events')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == 'plugin')]").exists());
 
 
         mvc.perform(get("/v3/api-docs/app"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/app/checkpoint']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/flows']").doesNotExist());
-        mvc.perform(get("/v3/api-docs/components"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/flows']").doesNotExist());
+        mvc.perform(get("/v3/api-docs/runtime"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/components']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/components/{kind}/{namespace}/{name}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/components/{kind}/{namespace}/{name}/desired-state/{desiredState}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates']").doesNotExist());
-        mvc.perform(get("/v3/api-docs/component-templates"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components/{kind}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components/{kind}/{namespace}/{name}/desired-state/{desiredState}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/flows']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/flows/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/sessions/{sessionId}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin']").doesNotExist());
+        mvc.perform(get("/v3/api-docs/plugin"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates/{type}/{namespace}/{name}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates/{type}/{namespace}/{name}/documentation']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/components']").doesNotExist());
-        mvc.perform(get("/v3/api-docs/flows"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/flows']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/flows/{namespace}/{name}']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/plugin']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/{namespace}/{pluginId}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").doesNotExist());
         mvc.perform(get("/v3/api-docs/resource-documentation"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/resource-documentation']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/resource-documentation/{namespace}/{kind}']").exists());
-        mvc.perform(get("/v3/api-docs/sessions"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/sessions/{sessionId}']").exists());
         mvc.perform(get("/v3/api-docs/system-events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/system-events']").exists());
-        mvc.perform(get("/v3/api-docs/plugins"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/plugins']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/plugins/{namespace}/{pluginId}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates']").doesNotExist());
         mvc.perform(get("/v3/api-docs/all"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/plugins']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/components']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/component-templates']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/plugin']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates']").exists());
     }
 }

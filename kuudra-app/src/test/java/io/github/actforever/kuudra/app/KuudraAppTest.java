@@ -170,7 +170,7 @@ class KuudraAppTest {
         try (var input = new java.util.zip.GZIPInputStream(Files.newInputStream(archive))) {
             String log = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
             assertTrue(log.contains("Kuudra App is running"));
-            assertTrue(log.contains("Plugin archive scan completed"));
+            assertFalse(log.contains("Plugin archive scan completed"));
             assertTrue(log.contains("Kuudra App has stopped"));
         }
     }

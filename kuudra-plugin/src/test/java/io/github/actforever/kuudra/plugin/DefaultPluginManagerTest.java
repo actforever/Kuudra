@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import io.github.actforever.kuudra.api.system.SystemEvent;
 import io.github.actforever.kuudra.api.system.SystemEventBus;
+import io.github.actforever.kuudra.api.system.SystemEventLevel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -66,10 +67,10 @@ class DefaultPluginManagerTest {
 
     @Test
     void publishesPluginLifecycleEventsWithoutDependingOnLogging() {
-        List<String> eventTypes = new ArrayList<>();
+        List<SystemEvent> events = new ArrayList<>();
         SystemEventBus bus = new SystemEventBus() {
             @Override public AutoCloseable subscribe(Consumer<SystemEvent> listener) { return () -> { }; }
-            @Override public void publish(SystemEvent event) { eventTypes.add(event.type()); }
+            @Override public void publish(SystemEvent event) { events.add(event); }
         };
         DefaultPluginManager manager = new DefaultPluginManager(temporaryDirectory.resolve("events"),
                 PluginRuntimeServices.unavailable(), bus);
@@ -78,8 +79,12 @@ class DefaultPluginManagerTest {
         manager.startAll().toCompletableFuture().join();
         manager.stopAll().toCompletableFuture().join();
 
+        List<String> eventTypes = events.stream().map(SystemEvent::type).toList();
         assertTrue(eventTypes.containsAll(List.of("plugin.registered", "plugin.initializing", "plugin.initialized",
                 "plugin.starting", "plugin.active", "plugin.stopping", "plugin.stopped")));
+        assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.initialized"));
+        assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.starting"));
+        assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.active"));
     }
 
     @Test
@@ -202,6 +207,10 @@ class DefaultPluginManagerTest {
         assertEquals("periodically emits greetings", plugin.components().get(0).documentation().purpose());
         assertEquals("hello.tick", plugin.components().get(0).documentation().emittedEvents().get(0).eventType());
         manager.close();
+    }
+
+    private static SystemEventLevel levelOf(List<SystemEvent> events, String type) {
+        return events.stream().filter(event -> event.type().equals(type)).findFirst().orElseThrow().level();
     }
 
     @Test

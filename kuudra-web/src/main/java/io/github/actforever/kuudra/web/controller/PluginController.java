@@ -14,7 +14,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 
 /** HTTP adapter for loaded plugins. */
 @RestController
-@RequestMapping("/api/v1/plugins")
+@RequestMapping("/api/v1/plugin")
 @Tag(name = "Plugin")
 public class PluginController {
     private final KuudraApp app;

@@ -238,10 +238,10 @@ public final class DefaultPluginManager implements AutoCloseable {
         event("plugin.initializing", Map.of("pluginId", declaredId, "namespace", namespace, "home", home.toString()));
         return invoke(plugin, current -> current.initialize(context))
                 .thenRun(() -> { synchronized (this) { contexts.put(pluginId, context); } })
-                .thenRun(() -> { mark(pluginId, PluginState.INITIALIZED); event("plugin.initialized", Map.of("pluginId", declaredId, "namespace", namespace)); })
-                .thenRun(() -> event("plugin.starting", Map.of("pluginId", declaredId, "namespace", namespace)))
+                .thenRun(() -> { mark(pluginId, PluginState.INITIALIZED); debugEvent("plugin.initialized", Map.of("pluginId", declaredId, "namespace", namespace)); })
+                .thenRun(() -> debugEvent("plugin.starting", Map.of("pluginId", declaredId, "namespace", namespace)))
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
-                .thenRun(() -> { mark(pluginId, PluginState.ACTIVE); event("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace)); })
+                .thenRun(() -> { mark(pluginId, PluginState.ACTIVE); debugEvent("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace)); })
                 .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }
 
