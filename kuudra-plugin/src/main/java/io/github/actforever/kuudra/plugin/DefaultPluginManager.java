@@ -279,7 +279,7 @@ public final class DefaultPluginManager implements AutoCloseable {
                 .thenCompose(ignored -> invoke(plugin, KuudraPlugin::start))
                 .thenRun(() -> {
                     mark(pluginId, PluginState.ACTIVE);
-                    debugEvent("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace));
+                    event("plugin.active", Map.of("pluginId", declaredId, "namespace", namespace));
                 })
                 .exceptionallyCompose(error -> cleanupFailedStart(pluginId, plugin, error));
     }

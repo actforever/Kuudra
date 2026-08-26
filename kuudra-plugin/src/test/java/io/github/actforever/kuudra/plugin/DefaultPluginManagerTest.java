@@ -84,7 +84,7 @@ class DefaultPluginManagerTest {
                 "plugin.starting", "plugin.active", "plugin.stopping", "plugin.stopped")));
         assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.initialized"));
         assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.starting"));
-        assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.active"));
+        assertEquals(SystemEventLevel.AUTO, levelOf(events, "plugin.active"));
         assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.stopping"));
         assertEquals(SystemEventLevel.DEBUG, levelOf(events, "plugin.stopped"));
     }

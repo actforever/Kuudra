@@ -56,7 +56,7 @@ logging:
 
 - App 配置应用起止、清单校验、StateStore desired set 替换；
 - 单资源调谐起止、组件物化和 Flow 编译；
-- 插件归档扫描、依赖解析、组件创建和初始化边界，以及 `initialized`、`starting`、`active` 启动阶段；
+- 插件归档扫描、依赖解析、组件创建和初始化边界，以及 `initialized`、`starting` 启动阶段；插件进入 `active` 后按 INFO 输出其 namespace/ID，明确本次实际载入的插件；
 - App/Runtime 正常停止子阶段、Session 正常排空、插件与插件组件停止/销毁；
 - Runtime 事件入队、队列拒绝、分派、节点执行起止及缺失 Session 丢弃。
 
