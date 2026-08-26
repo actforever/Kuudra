@@ -501,6 +501,9 @@ class KuudraAppTest {
             assertTrue(observedEvents.stream().anyMatch(event -> event.type().equals("component.state.changed")
                     && event.level() == io.github.actforever.kuudra.api.system.SystemEventLevel.DEBUG
                     && event.data().get("from").equals("ACTIVE") && event.data().get("to").equals("INACTIVE")));
+            assertTrue(observedEvents.stream().anyMatch(event -> event.type().equals("resource.state.changed")
+                    && event.level() == io.github.actforever.kuudra.api.system.SystemEventLevel.AUTO
+                    && event.data().get("from").equals("ACTIVE") && event.data().get("to").equals("INACTIVE")));
             }
         }
     }

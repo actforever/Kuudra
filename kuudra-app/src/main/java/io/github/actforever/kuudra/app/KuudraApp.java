@@ -856,9 +856,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private void recordComponentStateChange(KuudraManifest.Component component, String state) {
         String previous = manifestObservedStates.put(component.id(), state);
         if (!java.util.Objects.equals(previous, state)) {
-            debug("component.state.changed", Map.of("resource", component.id().toString(),
+            Map<String, Object> data = Map.of("resource", component.id().toString(),
                     "from", previous == null ? "UNOBSERVED" : previous, "to", state,
-                    "desiredState", component.desiredState()));
+                    "desiredState", component.desiredState());
+            debug("component.state.changed", data);
+            events.publish(SystemEvent.of("resource.state.changed", data));
         }
     }
 

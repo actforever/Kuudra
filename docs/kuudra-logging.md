@@ -62,6 +62,8 @@ logging:
 
 这些事件只携带标识、状态、数量、执行域和结果等诊断元数据，不记录完整 Event 数据或上下文，避免日志泄漏业务载荷。任务级 DEBUG 事件频率可能较高，只应在排障期间启用。
 
+组件 observed state 真正发生变化时会同时发布两个层级的事件：`component.state.changed` 是便于跟踪内部调谐步骤的 DEBUG 诊断；`resource.state.changed` 是默认 INFO 可见的稳定资源状态变化。两者共享 resource、from、to 和 desiredState 字段，未发生变化的重复调谐不会重复打印状态变化。
+
 关闭文件输出时不会创建、删除或归档 `latest.log`；已有日志文件保持不变。日志目录仍固定为 `<home-directory>/logs`，不会通过配置改变。
 
 ## 文件策略
