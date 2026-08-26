@@ -12,10 +12,10 @@ import java.util.List;
 
 import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFound;
 
-/** HTTP adapter for loaded plugins. */
+/** HTTP adapter for loaded plugins and their ComponentTemplate definitions. */
 @RestController
 @RequestMapping("/api/v1/plugin")
-@Tag(name = "Plugins")
+@Tag(name = "Plugin")
 public class PluginController {
     private final KuudraApp app;
 
@@ -36,5 +36,32 @@ public class PluginController {
             @PathVariable("pluginId") String pluginId) {
         return app.plugin(namespace, pluginId)
                 .orElseThrow(() -> notFound("Plugin", namespace + "/" + pluginId));
+    }
+
+    @Operation(summary = "列出 ComponentTemplate")
+    @GetMapping("/component-templates")
+    List<KuudraApp.Component> componentTemplates() {
+        return app.components();
+    }
+
+    @Operation(summary = "获取 ComponentTemplate")
+    @GetMapping("/component-templates/{type}/{namespace}/{name}")
+    KuudraApp.Component componentTemplate(
+            @PathVariable("type") String type,
+            @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        String reference = type + "/" + namespace + "/" + name;
+        return app.pluginComponent(reference).orElseThrow(() -> notFound("ComponentTemplate", reference));
+    }
+
+    @Operation(summary = "获取 ComponentTemplate 说明文档")
+    @GetMapping("/component-templates/{type}/{namespace}/{name}/documentation")
+    KuudraApp.ComponentDocumentation documentation(
+            @PathVariable("type") String type,
+            @PathVariable("namespace") String namespace,
+            @PathVariable("name") String name) {
+        String reference = type + "/" + namespace + "/" + name;
+        return app.pluginComponentDocumentation(reference)
+                .orElseThrow(() -> notFound("ComponentTemplate", reference));
     }
 }

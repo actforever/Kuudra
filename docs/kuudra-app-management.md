@@ -14,24 +14,24 @@ CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 
 | 方法 | 路径 | 含义 |
 | --- | --- | --- |
-| `GET` | `/api/v1/app` | App 状态、队列长度和 Flow 数。 |
-| `GET` | `/api/v1/app/status` | 当前 App 内核汇总：App 状态、队列、全部 Flow 摘要与活跃 Session 总数。 |
-| `GET` | `/api/v1/app/checkpoint` | 查询本次暂停在安全点生成的组件、Flow context、Session 与队列检查点；非暂停状态返回 404。 |
+| `GET` | `/api/v1/kuudra` | Kuudra 内核状态、队列长度和 Flow 数。 |
+| `GET` | `/api/v1/kuudra/status` | 当前 Kuudra 内核汇总：状态、队列、全部 Flow 摘要与活跃 Session 总数。 |
+| `GET` | `/api/v1/kuudra/checkpoint` | 查询本次暂停在安全点生成的组件、Flow context、Session 与队列检查点；非暂停状态返回 404。 |
 | `GET` | `/api/v1/plugin` | 列出当前已加载插件及其版本、命名空间和状态。 |
-| `GET` | `/api/v1/plugin/{namespace}/{pluginId}` | 按规范插件身份查询插件；详情携带该插件提供的 Component 模板快照。 |
-| `GET` | `/api/v1/plugin/component-templates` | 列出插件注册表中的 Component 模板。 |
+| `GET` | `/api/v1/plugin/{namespace}/{pluginId}` | 按规范插件身份查询插件；详情携带该插件提供的 ComponentTemplate 快照。 |
+| `GET` | `/api/v1/plugin/component-templates` | 列出插件注册表中的 ComponentTemplate。 |
 | `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{name}` | 按组件引用查询模板、实例约束和结构化文档。 |
-| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation` | 查询 Component 模板的配置、生命周期和事件说明。 |
-| `GET` | `/api/v1/resource-documentation` | 查询内核资源规约文档。 |
-| `GET` | `/api/v1/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
-| `GET` | `/api/v1/runtime/components?type={type}&namespace={namespace}` | 列出清单声明并由 App 调谐的 Component 实例，可按类型和命名空间过滤。 |
-| `GET` | `/api/v1/runtime/components/{kind}/{namespace}/{name}` | 查询 Component 实例的期望/实际状态、导入它的 Flow 和生命周期能力。 |
+| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation` | 查询 ComponentTemplate 的配置、生命周期和事件说明。 |
+| `GET` | `/api/v1/kuudra/resource-documentation` | 查询内核资源规约文档。 |
+| `GET` | `/api/v1/kuudra/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
+| `GET` | `/api/v1/runtime/components?type={type}&namespace={namespace}` | 列出清单声明并由 App 调谐的 Component，可按类型和命名空间过滤。 |
+| `GET` | `/api/v1/runtime/components/{kind}/{namespace}/{name}` | 查询 Component 的期望/实际状态、导入它的 Flow 和生命周期能力。 |
 | `POST` | `/api/v1/runtime/components/{kind}/{namespace}/{name}/desired-state/{state}` | 先持久化期望状态，再由 App 调谐该实例并更新 observedGeneration。 |
-| `GET` | `/api/v1/runtime/components/reconciliation-states` | 查询 Component 实例的持久 generation 与观测状态。 |
-| `POST` | `/api/v1/app/start` | 创建并启动内核。 |
-| `POST` | `/api/v1/app/stop` | 停止内核，适配器继续运行。 |
-| `POST` | `/api/v1/app/pause`、`/resume` | 无损冻结/恢复内核事件流转。 |
-| `POST` | `/api/v1/app/restart` | 停止并重新创建内核。 |
+| `GET` | `/api/v1/runtime/components/reconciliation-states` | 查询 Component 的持久 generation 与观测状态。 |
+| `POST` | `/api/v1/kuudra/start` | 创建并启动内核。 |
+| `POST` | `/api/v1/kuudra/stop` | 停止内核，适配器继续运行。 |
+| `POST` | `/api/v1/kuudra/pause`、`/resume` | 无损冻结/恢复内核事件流转。 |
+| `POST` | `/api/v1/kuudra/restart` | 停止并重新创建内核。 |
 | `GET` | `/api/v1/runtime/flows?namespace={namespace}` | 列出 Flow，可按命名空间过滤。 |
 | `GET` | `/api/v1/runtime/flows/{namespace}/{name}` | 按 namespace/name 查询 Flow。 |
 | `GET` | `/api/v1/runtime/sessions/{id}` | 查询 Session。 |

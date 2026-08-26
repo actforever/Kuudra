@@ -62,7 +62,7 @@ mvn test -DskipTests=false
 java -jar kuudra-web/target/kuudra-web-v0.4.0-alpha-3.jar
 ```
 
-启动后可访问 `GET /api/v1/app/status`、`GET /api/v1/app/sessions/{id}`、`POST /api/v1/app/sessions/{id}/cancel` 和 `/doc.html`。
+启动后可访问 `GET /api/v1/kuudra/status`、`GET /api/v1/runtime/sessions/{id}`、`POST /api/v1/runtime/sessions/{id}/cancel` 和 `/doc.html`。
 
 ## 上下文与占位符
 

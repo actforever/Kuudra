@@ -16,7 +16,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 /** HTTP adapter for Flow resources. */
 @RestController
 @RequestMapping("/api/v1/runtime/flows")
-@Tag(name = "Flows")
+@Tag(name = "Runtime")
 public class FlowController {
     private final KuudraApp app;
 

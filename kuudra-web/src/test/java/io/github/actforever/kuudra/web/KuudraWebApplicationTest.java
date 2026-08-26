@@ -10,12 +10,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import io.github.actforever.kuudra.api.system.SystemEvent;
 import io.github.actforever.kuudra.app.KuudraApp;
-import io.github.actforever.kuudra.web.controller.AppLifecycleController;
 import io.github.actforever.kuudra.web.controller.ComponentController;
-import io.github.actforever.kuudra.web.controller.ComponentTemplateController;
 import io.github.actforever.kuudra.web.controller.FlowController;
+import io.github.actforever.kuudra.web.controller.KuudraController;
 import io.github.actforever.kuudra.web.controller.PluginController;
-import io.github.actforever.kuudra.web.controller.ResourceDocumentationController;
 import io.github.actforever.kuudra.web.controller.SessionController;
 import io.github.actforever.kuudra.web.controller.SystemEventController;
 
@@ -42,11 +40,9 @@ class KuudraWebApplicationTest {
 
     @Test
     void registersOneHttpAdapterForEachApiDomain() {
-        assertEquals(1, context.getBeansOfType(AppLifecycleController.class).size());
+        assertEquals(1, context.getBeansOfType(KuudraController.class).size());
         assertEquals(1, context.getBeansOfType(FlowController.class).size());
-        assertEquals(1, context.getBeansOfType(ResourceDocumentationController.class).size());
         assertEquals(1, context.getBeansOfType(ComponentController.class).size());
-        assertEquals(1, context.getBeansOfType(ComponentTemplateController.class).size());
         assertEquals(1, context.getBeansOfType(SessionController.class).size());
         assertEquals(1, context.getBeansOfType(PluginController.class).size());
         assertEquals(1, context.getBeansOfType(SystemEventController.class).size());
@@ -77,15 +73,15 @@ class KuudraWebApplicationTest {
     }
 
     @Test
-    void exposesAppStatusOverRest() throws Exception {
-        mvc.perform(get("/api/v1/app"))
+    void exposesKuudraStatusOverRest() throws Exception {
+        mvc.perform(get("/api/v1/kuudra"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RUNNING"));
     }
 
     @Test
     void exposesCurrentAppKernelStatusWithoutRuntimeEndpoint() throws Exception {
-        mvc.perform(get("/api/v1/app/status"))
+        mvc.perform(get("/api/v1/kuudra/status"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.app.status").value("RUNNING"))
                 .andExpect(jsonPath("$.activeSessions").value(0));
@@ -101,7 +97,7 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/runtime/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
-        mvc.perform(get("/api/v1/resource-documentation/kuudra-official/Flow"))
+        mvc.perform(get("/api/v1/kuudra/resource-documentation/kuudra-official/Flow"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.namespace").value("kuudra-official"))
                 .andExpect(jsonPath("$.kind").value("Flow"))
@@ -114,54 +110,54 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$['urls.primaryName']").value("00 - 全部接口"))
                 .andExpect(jsonPath("$.urls[?(@.name == '00 - 全部接口')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == '01 - App 生命周期')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '01 - Kuudra 内核')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == '02 - Runtime 运行资源')]").exists())
                 .andExpect(jsonPath("$.urls[?(@.name == '03 - Plugin 扩展资源')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == '04 - 资源规约文档')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == '05 - 系统事件')]").exists());
+                .andExpect(jsonPath("$.urls[?(@.name == '04 - 系统事件')]").exists());
 
 
-        mvc.perform(get("/v3/api-docs/app"))
+        mvc.perform(get("/v3/api-docs/kuudra"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/app/start'].post.tags[0]").value("App Lifecycle"))
-                .andExpect(jsonPath("$.paths['/api/v1/app/start'].post.summary").value("启动 App 内核"))
-                .andExpect(jsonPath("$.paths['/api/v1/app/checkpoint']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/start']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/start'].post.tags[0]").value("Kuudra"))
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/start'].post.summary").value("启动 Kuudra 内核"))
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/checkpoint']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/resource-documentation']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/resource-documentation'].get.tags[0]").value("Kuudra"))
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/resource-documentation/{namespace}/{kind}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/flows']").doesNotExist());
         mvc.perform(get("/v3/api-docs/runtime"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/runtime/components'].get.tags[0]").value("Components"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components'].get.tags[0]").value("Runtime"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/components'].get.summary").value("列出 Component"))
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components/{kind}/{namespace}/{name}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components/{kind}/{namespace}/{name}/desired-state/{desiredState}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/flows']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/runtime/flows'].get.tags[0]").value("Flows"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/flows'].get.tags[0]").value("Runtime"))
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/flows/{namespace}/{name}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/sessions/{sessionId}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/runtime/sessions/{sessionId}'].get.tags[0]").value("Sessions"))
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/sessions/{sessionId}'].get.tags[0]").value("Runtime"))
                 .andExpect(jsonPath("$.paths['/api/v1/plugin']").doesNotExist());
         mvc.perform(get("/v3/api-docs/plugin"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/plugin'].get.tags[0]").value("Plugins"))
+                .andExpect(jsonPath("$.paths['/api/v1/plugin'].get.tags[0]").value("Plugin"))
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/{namespace}/{pluginId}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates'].get.tags[0]").value("Component Templates"))
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates'].get.tags[0]").value("Plugin"))
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates'].get.summary").value("列出 ComponentTemplate"))
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").doesNotExist());
-        mvc.perform(get("/v3/api-docs/resource-documentation"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/resource-documentation']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/resource-documentation'].get.tags[0]").value("Resource Documentation"))
-                .andExpect(jsonPath("$.paths['/api/v1/resource-documentation/{namespace}/{kind}']").exists());
         mvc.perform(get("/v3/api-docs/system-events"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/system-events']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/system-events'].get.tags[0]").value("System Events"));
         mvc.perform(get("/v3/api-docs/all"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/app/start']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/start']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/kuudra/resource-documentation']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates']").exists());
