@@ -7,6 +7,7 @@ import io.github.actforever.kuudra.plugin.KuudraPlugin;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestDefaultPlugin implements KuudraPlugin {
     @Override public String id() { return "default"; }
@@ -26,5 +27,20 @@ public final class TestDefaultPlugin implements KuudraPlugin {
     public static final class TestSource implements io.github.actforever.kuudra.api.component.EventSource {
         public TestSource() { }
         @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
+    }
+
+    @io.github.actforever.kuudra.plugin.annotation.EventSource("flaky-source")
+    public static final class FlakySource implements io.github.actforever.kuudra.api.component.EventSource {
+        private static final AtomicInteger REMAINING_FAILURES = new AtomicInteger();
+
+        public FlakySource() { }
+        static void failNextStart() { REMAINING_FAILURES.set(1); }
+        @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
+        @Override public CompletionStage<Void> start() {
+            if (REMAINING_FAILURES.getAndUpdate(value -> Math.max(0, value - 1)) > 0) {
+                return CompletableFuture.failedFuture(new IllegalStateException("planned first-start failure"));
+            }
+            return CompletableFuture.completedFuture(null);
+        }
     }
 }

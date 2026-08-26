@@ -528,6 +528,42 @@ class KuudraAppTest {
         }
     }
 
+    @Test void periodicReconciliationRetriesAFailedGenerationUntilItConverges() throws Exception {
+        installDefaultTestPlugin();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("flaky.yaml"), component(
+                "EventSource", "flaky", "kuudra-official/flaky-source").replace("desiredState: active", "desiredState: stopped"));
+        KuudraConfigResource configuration = new KuudraConfigResource(Map.of(
+                "home-directory", ".kuudra",
+                "reconciliation", Map.of("enabled", true, "interval-ms", 10),
+                "logging", Map.of("level", "off", "console-enabled", false, "file-enabled", false)),
+                directory, "retry reconciliation test");
+
+        try (KuudraApp app = KuudraApp.createConfigured(configuration)) {
+            CopyOnWriteArrayList<io.github.actforever.kuudra.api.system.SystemEvent> events = new CopyOnWriteArrayList<>();
+            try (AutoCloseable ignored = app.systemEvents().subscribe(events::add)) {
+                TestDefaultPlugin.FlakySource.failNextStart();
+                assertThrows(RuntimeException.class,
+                        () -> app.setDesiredState("EventSource", "test", "flaky", "running"));
+                assertEquals("FAILED", app.resourceStates().stream()
+                        .filter(state -> state.id().name().equals("flaky")).findFirst().orElseThrow().phase());
+
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                while (!"RUNNING".equals(app.resource("EventSource", "test", "flaky").orElseThrow().status())
+                        && System.nanoTime() < deadline) Thread.sleep(5);
+
+                assertEquals("RUNNING", app.resource("EventSource", "test", "flaky").orElseThrow().status());
+                var state = app.resourceStates().stream()
+                        .filter(item -> item.id().name().equals("flaky")).findFirst().orElseThrow();
+                assertEquals("READY", state.phase());
+                assertEquals(state.generation(), state.observedGeneration());
+                assertTrue(events.stream().anyMatch(event -> event.type().equals("resource.reconcile.retry")));
+                assertTrue(events.stream().anyMatch(event -> event.type().equals("resource.state.changed")
+                        && event.data().get("to").equals("RUNNING")));
+            }
+        }
+    }
+
     @Test
     void startupManifestOverridesAConflictingPersistedDesiredState() throws Exception {
         installDefaultTestPlugin();
@@ -598,7 +634,8 @@ class KuudraAppTest {
                     entrypoint = "io.github.actforever.kuudra.app.TestDefaultPlugin"
                     """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             for (Class<?> type : java.util.List.of(TestDefaultPlugin.class, TestDefaultPlugin.TestIngress.class,
-                    TestDefaultPlugin.TestEgress.class, TestDefaultPlugin.TestSource.class)) {
+                    TestDefaultPlugin.TestEgress.class, TestDefaultPlugin.TestSource.class,
+                    TestDefaultPlugin.FlakySource.class)) {
                 String resource = type.getName().replace('.', '/') + ".class";
                 try (var input = type.getClassLoader().getResourceAsStream(resource)) {
                     write(output, resource, java.util.Objects.requireNonNull(input).readAllBytes());
