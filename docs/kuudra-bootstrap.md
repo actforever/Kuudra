@@ -4,6 +4,8 @@
 
 App 按优先级深度合并：初始化时显式配置、`<home-directory>/config.yaml`、包内 `config.yaml`。默认家目录是 `.kuudra`。启动会确保 `plugins/`、`manifests/`、`logs/`、`state/`、`locale/` 存在；家目录缺少 `config.yaml` 时复制包内默认文件，已有文件绝不覆盖。每个实际补建的目录以及恢复的配置文件都会在日志会话建立后提交一条 INFO 系统事件；已经存在的项目不会重复报告，restart 也不会重复回放首次初始化记录。
 
+Web 中的 `POST /api/v1/kuudra/restart` 会重建 App 内核并重新读取 manifests，但不会重新创建承载 App 的 Spring Bean，因此不会重新合并根 `config.yaml`。修改日志、调谐、命名空间选择等根配置后需要重启 Web 进程；仅修改资源清单时使用内核 restart 即可。
+
 ```yaml
 home-directory: .kuudra
 banner-enabled: true

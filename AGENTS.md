@@ -88,6 +88,7 @@ kuudra-web
 - Component and Flow resources live under fixed `<home-directory>/manifests`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 - Logging event coverage, isolation and file rotation are documented in `docs/kuudra-logging.md`.
+- The repeatable real-plugin verification matrix is documented in `docs/kuudra-e2e-verification.md`; keep it aligned with lifecycle, reconciliation, manifest reload and HTTP control semantics.
 
 Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, static cycle diagnostics, `kuudra.system.*` handling, and cross-language bridges remain future work. All Flows are peers. Runtime compiles placeholders with the node input domain at Flow registration; keep parsing out of the event hot path and match changes with tests.
 
