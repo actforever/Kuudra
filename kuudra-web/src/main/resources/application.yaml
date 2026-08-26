@@ -15,26 +15,32 @@ springdoc:
 
   swagger-ui:
     path: /swagger-ui.html
-    urls-primary-name: all
+    urls-primary-name: 00 - 全部接口
     tags-sorter: alpha
     operations-sorter: alpha
   group-configs:
     - group: all
+      display-name: 00 - 全部接口
       paths-to-match:
         - /api/v1/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
     - group: app
+      display-name: 01 - App 生命周期
       paths-to-match: /api/v1/app/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: resource-documentation
-      paths-to-match: /api/v1/resource-documentation/**
-      packages-to-scan: io.github.actforever.kuudra.web.controller
     - group: runtime
+      display-name: 02 - Runtime 运行资源
       paths-to-match: /api/v1/runtime/**
       packages-to-scan: io.github.actforever.kuudra.web.controller
-    - group: system-events
-      paths-to-match: /api/v1/system-events/**
-      packages-to-scan: io.github.actforever.kuudra.web.controller
     - group: plugin
+      display-name: 03 - Plugin 扩展资源
       paths-to-match: /api/v1/plugin/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: resource-documentation
+      display-name: 04 - 资源规约文档
+      paths-to-match: /api/v1/resource-documentation/**
+      packages-to-scan: io.github.actforever.kuudra.web.controller
+    - group: system-events
+      display-name: 05 - 系统事件
+      paths-to-match: /api/v1/system-events/**
       packages-to-scan: io.github.actforever.kuudra.web.controller

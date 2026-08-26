@@ -27,14 +27,15 @@ global-context:
 
 ## OpenAPI 分组
 
-`doc.html` 提供聚合的 `all` 分组，并按 Controller 资源域提供独立 OpenAPI 分组；每组内部使用类级中文 Tag 和操作摘要：
+`doc.html` 提供聚合的 `all` 分组，并按 Controller 资源域提供独立 OpenAPI 分组；Knife4j 下拉框使用带顺序号的中文显示名，分组标识与 `/v3/api-docs/{group}` 地址保持稳定。每组内部使用类级中文 Tag 和操作摘要：
 
 | 分组 | 内容 |
 | --- | --- |
-| `app` | App 快照、详细状态、启动、停止、暂停、恢复和重启。 |
-| `resource-documentation` | 内核资源规约文档。 |
-| `runtime` | Flow、清单 Component 实例和 Session 的查询与控制。 |
-| `system-events` | SystemEvent SSE 订阅。 |
-| `plugin` | 已加载 Plugin、Component 模板与结构化文档查询。 |
+| `all`（00 - 全部接口） | 所有 HTTP API，也是 `doc.html` 默认分组。 |
+| `app`（01 - App 生命周期） | App 快照、详细状态、启动、停止、暂停、恢复和重启。 |
+| `runtime`（02 - Runtime 运行资源） | Flow、清单 Component 实例和 Session 的查询与控制。 |
+| `plugin`（03 - Plugin 扩展资源） | 已加载 Plugin、Component 模板与结构化文档查询。 |
+| `resource-documentation`（04 - 资源规约文档） | 内核资源规约文档。 |
+| `system-events`（05 - 系统事件） | SystemEvent SSE 订阅。 |
 
 各组规范位于 `/v3/api-docs/{group}`，Swagger 配置入口为 `/v3/api-docs/swagger-config`。分组只改变文档呈现，不改变任何 REST 路径或 App 边界。

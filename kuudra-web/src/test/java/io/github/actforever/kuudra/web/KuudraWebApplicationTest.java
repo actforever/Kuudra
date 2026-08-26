@@ -112,13 +112,13 @@ class KuudraWebApplicationTest {
     void publishesSeparateOpenApiGroups() throws Exception {
         mvc.perform(get("/v3/api-docs/swagger-config"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$['urls.primaryName']").value("all"))
-                .andExpect(jsonPath("$.urls[?(@.name == 'all')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'app')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'resource-documentation')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'runtime')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'system-events')]").exists())
-                .andExpect(jsonPath("$.urls[?(@.name == 'plugin')]").exists());
+                .andExpect(jsonPath("$['urls.primaryName']").value("00 - 全部接口"))
+                .andExpect(jsonPath("$.urls[?(@.name == '00 - 全部接口')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '01 - App 生命周期')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '02 - Runtime 运行资源')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '03 - Plugin 扩展资源')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '04 - 资源规约文档')]").exists())
+                .andExpect(jsonPath("$.urls[?(@.name == '05 - 系统事件')]").exists());
 
 
         mvc.perform(get("/v3/api-docs/app"))
