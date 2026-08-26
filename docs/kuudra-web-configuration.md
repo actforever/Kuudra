@@ -2,6 +2,8 @@
 
 `kuudra-web` 只使用 Spring 的 Web 配置（例如 `server.port`、SpringDoc 与 Knife4j），不再从 Spring `Environment` 或 `application.yaml` 读取任何 Kuudra App 配置。
 
+HTTP 适配层按领域组织在 `io.github.actforever.kuudra.web.controller` 包中：`AppLifecycleController`、`FlowController`、`EventSourceController`、`ComponentResourceController`、`SessionController`、`PluginController` 和 `SystemEventController` 分别负责对应领域。所有 Controller 只依赖 `KuudraApp`，不得直接暴露或访问 Runtime；拆分类不改变既有 `/api/v1/app` REST 路径。
+
 Web 创建 `KuudraApp` 时，将可执行 JAR 所在目录作为 App 的配置基目录；开发期从 classes 目录运行时使用当前工作目录。App 按以下优先级深度合并配置：
 
 1. 初始化 `KuudraApp` 时直接传入的 `KuudraConfigResource` 或配置文件；

@@ -4,11 +4,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import io.github.actforever.kuudra.api.system.SystemEvent;
 import io.github.actforever.kuudra.app.KuudraApp;
+import io.github.actforever.kuudra.web.controller.AppLifecycleController;
+import io.github.actforever.kuudra.web.controller.ComponentResourceController;
+import io.github.actforever.kuudra.web.controller.EventSourceController;
+import io.github.actforever.kuudra.web.controller.FlowController;
+import io.github.actforever.kuudra.web.controller.PluginController;
+import io.github.actforever.kuudra.web.controller.SessionController;
+import io.github.actforever.kuudra.web.controller.SystemEventController;
 
 import java.io.IOException;
 import java.util.Map;
@@ -28,6 +36,19 @@ class KuudraWebApplicationTest {
     private MockMvc mvc;
     @Autowired
     private KuudraApp app;
+    @Autowired
+    private ApplicationContext context;
+
+    @Test
+    void registersOneHttpAdapterForEachApiDomain() {
+        assertEquals(1, context.getBeansOfType(AppLifecycleController.class).size());
+        assertEquals(1, context.getBeansOfType(FlowController.class).size());
+        assertEquals(1, context.getBeansOfType(EventSourceController.class).size());
+        assertEquals(1, context.getBeansOfType(ComponentResourceController.class).size());
+        assertEquals(1, context.getBeansOfType(SessionController.class).size());
+        assertEquals(1, context.getBeansOfType(PluginController.class).size());
+        assertEquals(1, context.getBeansOfType(SystemEventController.class).size());
+    }
 
     @Test
     void publishesShutdownRequestBeforeSpringDestroysTheApp() throws Exception {
@@ -44,7 +65,8 @@ class KuudraWebApplicationTest {
         SseEmitter disconnected = new SseEmitter() {
             @Override public void send(SseEventBuilder builder) throws IOException { throw new IOException("client disconnected"); }
         };
-        AppController.EventStreamSubscription stream = new AppController.EventStreamSubscription(disconnected);
+        SystemEventController.EventStreamSubscription stream =
+                new SystemEventController.EventStreamSubscription(disconnected);
         stream.attach(closes::incrementAndGet);
         stream.send(SystemEvent.of("app.paused", Map.of()));
         stream.send(SystemEvent.of("app.resumed", Map.of()));
