@@ -27,7 +27,7 @@ global-context:
 
 ## OpenAPI 分组
 
-`doc.html` 提供聚合的 `all` 分组，并按 Controller 资源域提供独立 OpenAPI 分组；Knife4j 下拉框使用带顺序号的中文显示名，分组标识与 `/v3/api-docs/{group}` 地址保持稳定。每组内部使用类级中文 Tag 和操作摘要：
+`doc.html` 提供聚合的 `all` 分组，并按 Controller 资源域提供独立 OpenAPI 分组；Knife4j 下拉框使用带顺序号的中文显示名，分组标识与 `/v3/api-docs/{group}` 地址保持稳定。Controller 的 Tag 使用统一的英文资源名，具体操作摘要使用中文：
 
 | 分组 | 内容 |
 | --- | --- |

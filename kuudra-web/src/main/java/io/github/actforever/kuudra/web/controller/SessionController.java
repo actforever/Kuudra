@@ -17,7 +17,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 /** HTTP adapter for live Session observation and controls. */
 @RestController
 @RequestMapping("/api/v1/runtime/sessions")
-@Tag(name = "Session")
+@Tag(name = "Sessions")
 public class SessionController {
     private final KuudraApp app;
 

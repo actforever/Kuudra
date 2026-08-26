@@ -15,7 +15,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 /** HTTP adapter for kernel resource documentation. */
 @RestController
 @RequestMapping("/api/v1/resource-documentation")
-@Tag(name = "资源文档")
+@Tag(name = "Resource Documentation")
 public class ResourceDocumentationController {
     private final KuudraApp app;
 

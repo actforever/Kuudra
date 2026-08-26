@@ -14,7 +14,7 @@ import static io.github.actforever.kuudra.web.controller.ControllerSupport.notFo
 /** HTTP adapter for App kernel lifecycle and observation. */
 @RestController
 @RequestMapping("/api/v1/app")
-@Tag(name = "Kuudra App")
+@Tag(name = "App Lifecycle")
 public class AppLifecycleController {
     private final KuudraApp app;
 

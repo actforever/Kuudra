@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /** HTTP adapter for the App-owned SystemEvent stream. */
 @RestController
 @RequestMapping("/api/v1/system-events")
-@Tag(name = "SystemEvent")
+@Tag(name = "System Events")
 public class SystemEventController {
     private final KuudraApp app;
 
