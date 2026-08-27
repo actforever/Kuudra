@@ -74,6 +74,7 @@ java -jar ./kuudra-e2e.jar
 - `GET /api/v1/plugin`；
 - `GET /api/v1/runtime/components`；
 - `GET /api/v1/runtime/flows`；
+- `GET /api/v1/runtime/sessions/dependencies`；
 - `GET /api/v1/runtime/components/reconciliation-states`。
 
 当前闭环判定矩阵如下：
@@ -96,6 +97,18 @@ java -jar ./kuudra-e2e.jar
 | 清单重载 | 修改 EventSource interval 后 `/restart` | 新实例采用新间隔；运行期间不会隐式扫描磁盘 |
 | 清单诊断 | 将 `spec.edges` 误写后 `/restart` | 返回失败并进入 FAILED，错误包含文件、文档号、附近行、资源身份、字段和正确格式；修复后 `/start` 可恢复 |
 | 文件日志 | 正常停止并再次启动 | 停止产生日期序号 gzip 且保留 latest.log；下一次启动才新建 latest.log |
+
+### 会话依赖真实插件验证
+
+会话依赖不能只依赖单元测试。发布前还应使用真实插件 JAR 声明两个 Flow：窗口 Flow B 持有一个有界时长的 Session，作业 Flow A 使用 `SERIAL` 调度两个事件，并通过 Ingress 声明 `UNIQUE + CANCEL_DEPENDENT` 依赖 B。验证顺序如下：
+
+1. 先启动 B，再准入 A，依赖查询接口必须在二者存活期间返回一条活动边；
+2. B 正常结束后，SystemEvent 必须依次包含 `session.dependency.established` 和 `session.dependency.termination-propagated`，A 的协作式执行控制必须观察到取消；
+3. A 的第二个事件只能在首个 Session 终止后从 SERIAL 队列出队；此时 B 已不存在，依赖应在实际启动时重新解析并产生 `session.dependency.rejected`；
+4. 被拒绝的 Session 不得路由到 EventHandler，最终活动 Session、依赖边和延迟任务均归零；
+5. 通过 App 停止接口关闭内核后，状态应为 `STOPPED`，Flow、Session、依赖边及任务队列均已释放。
+
+该用例同时证明：调度策略先于依赖解析、排队任务不会沿用过期选择结果、终止传播可被插件通过协作式检查观察，以及依赖图能够通过 App/Web 查询而不泄露 Runtime。
 
 `POST /api/v1/kuudra/restart` 重建的是 App 内核，并按约定重新读取 manifests；`config.yaml` 在 Web 宿主创建 App Bean 时合并，修改根配置（包括调谐开关、日志级别）后需要重启 Web 进程。二者不要混为同一种重载语义。
 
