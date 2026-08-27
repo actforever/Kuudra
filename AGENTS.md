@@ -4,6 +4,7 @@
 
 - This file is a living handoff document, not a static specification. After an Agent makes an important architectural, module, build, configuration, plugin, lifecycle, or deployment change, update the relevant sections here in the same change set.
 - `docs/` is the project's design and operational documentation. Keep it synchronized with implementation changes; do not treat code as the only source of truth.
+- `docs/kuudra-user-guide.md` is the user-facing configuration and usage entry point. Any change to App configuration, manifest schema, resource kinds, namespace selection, Flow/session semantics, component desired states, official example components, startup commands, or HTTP verification endpoints must update and revalidate the corresponding guide text and runnable YAML in the same change set.
 - Preserve unrelated user changes. `docs/session-arch.png` is a tracked architecture asset; do not overwrite it unless explicitly requested.
 - Use Chinese commit messages. Create a commit at meaningful implementation milestones, after verification.
 

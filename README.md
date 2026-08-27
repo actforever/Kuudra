@@ -59,7 +59,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 
 ```powershell
 mvn test -DskipTests=false
-java -jar kuudra-web/target/kuudra-web-v0.4.4.-alpha-1.jar
+java -jar kuudra-web/target/kuudra-web-v0.4.4-alpha-1.jar
 ```
 
 启动后可访问 `GET /api/v1/kuudra/status`、`GET /api/v1/runtime/sessions/{id}`、`POST /api/v1/runtime/sessions/{id}/cancel` 和 `/doc.html`。
@@ -74,4 +74,4 @@ Flow 注册时预编译模板并校验作用域，事件热路径只执行查值
 
 当前版本聚焦可运行的最小内核：严格插件加载、双域路由、声明式资源、SQLite 状态调谐、可暂停的 App/Session、会话调度和 Web 管理接口。Flow 只是路由声明，不拥有状态机。后续演进方向包括资源版本迁移与热重载、持续调谐、`kuudractl` 以及多语言组件桥接。
 
-更多信息见 [架构设计](docs/kuudra-architecture.md)、[启动与配置](docs/kuudra-bootstrap.md)、[插件布局](docs/kuudra-plugin-layout.md)、[App 管理](docs/kuudra-app-management.md) 和 [日志](docs/kuudra-logging.md)。
+第一次配置和使用 Kuudra 请从 [Kuudra 配置与使用指南](docs/kuudra-user-guide.md) 开始。更深入的信息见 [架构设计](docs/kuudra-architecture.md)、[启动与配置](docs/kuudra-bootstrap.md)、[插件布局](docs/kuudra-plugin-layout.md)、[App 管理](docs/kuudra-app-management.md) 和 [日志](docs/kuudra-logging.md)。
