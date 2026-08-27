@@ -667,7 +667,7 @@ class KuudraAppTest {
                 "EventSource", "flaky", "kuudra-official/flaky-source").replace("desiredState: active", "desiredState: stopped"));
         KuudraConfigResource configuration = new KuudraConfigResource(Map.of(
                 "home-directory", ".kuudra",
-                "reconciliation", Map.of("enabled", true, "interval-ms", 10),
+                "reconciliation", Map.of("enabled", true, "interval-ms", 100),
                 "logging", Map.of("level", "off", "console-enabled", false, "file-enabled", false)),
                 directory, "retry reconciliation test");
 
