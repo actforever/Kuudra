@@ -96,6 +96,15 @@ kuudra-web
 
 Current scope is a usable minimal kernel, not the complete long-term design. JSON/TOML loaders, reload/migration, static cycle diagnostics, `kuudra.system.*` handling, and cross-language bridges remain future work. All Flows are peers. Runtime compiles placeholders with the node input domain at Flow registration; keep parsing out of the event hot path and match changes with tests.
 
+## About creating commit
+
+When creating Git commits:
+
+- Keep the repository owner's configured Git identity as the commit author and committer.
+- Add the following trailer to every commit created with Codex assistance:
+
+  Co-authored-by: Codex <codex@openai.com>
+
 ## Build and verification
 
 Core reactor:
