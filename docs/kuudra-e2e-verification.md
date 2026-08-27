@@ -68,7 +68,7 @@ EventSource 和 EventHandler 实现生命周期，因此期望状态是 `running
 
 ```powershell
 mvn -pl kuudra-web -am package -DskipTests
-Copy-Item kuudra-web/target/kuudra-web-v0.4.3-SNAPSHOT.jar ./kuudra-e2e.jar
+Copy-Item kuudra-web/target/kuudra-web-v0.4.3.jar ./kuudra-e2e.jar
 java -jar ./kuudra-e2e.jar
 ```
 
