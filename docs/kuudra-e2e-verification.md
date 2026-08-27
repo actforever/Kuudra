@@ -100,7 +100,7 @@ java -jar ./kuudra-e2e.jar
 
 ### 会话依赖真实插件验证
 
-会话依赖不能只依赖单元测试。发布前还应使用真实插件 JAR 声明两个 Flow：窗口 Flow B 持有一个有界时长的 Session，作业 Flow A 使用 `SERIAL` 调度两个事件，并通过 Ingress 声明 `UNIQUE + CANCEL_DEPENDENT` 依赖 B。验证顺序如下：
+会话依赖不能只依赖单元测试。发布前还应使用官方 `kuudra-official/session-probe` 与 `kuudra-official/conditional-boundary` 真实插件 JAR 声明两个 Flow（可直接采用官方插件仓库的 `examples/session-dependency/manifests.yaml`）：窗口 Flow B 持有一个有界时长的 Session，作业 Flow A 使用 `SERIAL` 调度两个事件，并通过 Ingress 声明 `UNIQUE + CANCEL_DEPENDENT` 依赖 B。验证顺序如下：
 
 1. 先启动 B，再准入 A，依赖查询接口必须在二者存活期间返回一条活动边；
 2. B 正常结束后，SystemEvent 必须依次包含 `session.dependency.established` 和 `session.dependency.termination-propagated`，A 的协作式执行控制必须观察到取消；
