@@ -82,7 +82,7 @@ Session 不建立父子生命周期。Egress 后再次进入 Ingress 会创建�
 
 EventAdapter 的组件实现和 Component 资源都是 domain-neutral；RAW/SESSION 是一次 Flow import binding 的编译结果，而不是资源属性。同一个 Adapter 实现可以分别出现在 `Source -> Adapter -> Ingress` 和 `Ingress -> Adapter -> Handler` 中，前者推导为 RAW，后者推导为 SESSION。每个 binding 独立编译配置：RAW binding 只允许 Event/Flow/Global，占位符中出现 `${session#...}` 会在注册 Flow 时失败；SESSION binding 额外允许 Session。
 
-同一个 Component 资源能否被多个 binding（包括同一 Flow 的不同 alias 或不同 Flow）同时引用，仍由插件声明的 `InstancePolicy` 决定。只有 `shareable=true` 且 `threadSafe=true` 时，App 才允许这些 binding 共享同一个实例；否则必须声明两个 Component 资源。默认策略两项均为 `false`，因此“Adapter 实现支持双域”不等于“Adapter 实例默认允许跨域共享”。无论是否共享实例，App 都按 binding 分别推导域并执行占位符域校验。
+同一个 Component 资源被多个 binding（包括同一 Flow 的不同 alias 或不同 Flow）引用时，所有 binding 始终指向同一个 App 所有实例，共享配置、状态与生命周期；alias 只标识图节点，不能提供实例隔离。需要独立实例时必须使用不同 `metadata.name` 声明资源。`InstancePolicy.threadSafe=false` 时 Runtime 按资源实例串行化跨 binding 调用，`true` 才允许并发。无论是否复用，App 都按 binding 分别推导 Adapter 域并执行占位符域校验。
 
 Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `ContextCodec` 把 POJO 编码为不可变 JSON 兼容树，读取方用 `get(key, Type.class)` 按需反序列化。插件共享 POJO 必须来自声明的上游依赖，确保双方使用同一 `Class<?>`。
 

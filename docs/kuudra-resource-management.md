@@ -16,7 +16,7 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 
 ## 跨 Flow 组件复用方向
 
-Component 资源是 App 所有的命名实例；满足 `shareable` 与 `threadSafe` 约束时，同一个 EventSource 可被多个 FlowBinding 复用并扇出 RAW 事件。
+Component 资源是 App 所有的命名实例；同一个 `kind/namespace/name` 被任意 FlowBinding 引用时始终复用该实例。不同 `metadata.name` 才表示不同实例。
 
 后续应引入“组件定义、命名实例、Flow 绑定”三层模型，而不是按 Java 类型或插件组件引用隐式全局单例：
 
@@ -25,13 +25,13 @@ Component 资源是 App 所有的命名实例；满足 `shareable` 与 `threadSa
                                       └──绑定──→ Flow B / node input
 ```
 
-- 插件组件定义描述实现及其是否支持共享、并发能力和建议的默认作用域；
+- 插件组件定义描述实现、实例数量限制、并发能力和建议的默认作用域；
 - App 级配置显式声明命名实例及 options，实例 ID 才是复用身份；
 - Flow 只声明对命名实例的绑定和目标节点，同一 EventSource 可以向多个 Flow 投递；
 - App 启动共享实例一次，并在全部绑定解除或 App 停止时停止一次；Flow 启停仍不隐式改变资源生命周期；
-- 未显式引用同一实例的组件保持 Flow 级多例，不能仅因组件引用相同就自动合并。
+- 多个资源可以引用同一个插件组件定义，但它们是不同实例；只有资源身份相同才表示复用。
 
-EventHandler 同样采用显式复用。插件声明 `shareable/thread-safe` 能力，配置者选择 App 级命名实例；内核同时满足两者才允许跨 Flow 复用。对于 `awt.Robot` 一类稀缺对象，可把 Robot 封装成插件生命周期内的共享服务，让轻量 Handler 实例保持隔离。
+EventHandler 同样采用显式资源复用。插件声明 `threadSafe` 能力；非线程安全实例可被多个 Flow 引用，但 Runtime 会按实例串行调用。对于 `awt.Robot` 一类稀缺对象，可以让多个 binding 引用同一个命名 Handler 资源；若要隔离状态，则声明多个不同名称的资源。
 
 这套三层模型已经进入当前 YAML schema：插件注册定义，具体 kind 清单声明 App 级命名实例，Flow 通过 import 建立绑定。SQLite 已持久化启动期调谐状态；运行期写 API、后台持续调谐和热卸载仍是后续工作。完整格式见 [资源清单与调谐模型](kuudra-resource-manifests.md)。
 

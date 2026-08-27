@@ -142,21 +142,21 @@ Ingress 必须显式声明为 `kind: Ingress` 资源。官方无条件准入实�
 maxInstances: 1
 limitScope: app
 exclusivityDomain: native-input/jnativehook
-shareable: true
 threadSafe: true
 ```
 
 - `maxInstances`：同一限制键允许存在的最大实例数；缺省为不限制。
 - `limitScope`：首期支持 `app` 和 `flow`。App 范围覆盖全部 Flow；Flow 范围只在单个 Flow 内计数。
 - `exclusivityDomain`：把不同组件定义纳入同一个资源冲突域，例如所有会安装 JNativeHook 全局钩子的实现。
-- `shareable`：是否允许一个实例被多个 Flow 导入。
-- `threadSafe`：共享调用是否可并行；为 false 时即使允许共享，Runtime 也必须串行化调用或拒绝并发绑定。
+- `threadSafe`：同一资源实例经多个 binding 调用时是否可并行；为 false 时 Runtime 按实例串行化全部调用。
 
 有效限制键为 `(limitScope-owner, exclusivityDomain)`，不是实现类名。互斥域必须使用限定名称 `<authority>/<name>`；插件自己的域默认以插件 namespace 为 authority，跨插件协议则由共同依赖的契约插件或 `kuudra.system/*` 保留域定义。这样既避免无意同名冲突，也允许两个不同插件明确声明它们竞争同一个全局钩子。
 
-插件元数据是硬约束，资源清单不能放宽它。清单可以选择更严格的部署策略，但不能把 `maxInstances: 1` 的组件扩成多例，也不能把非 shareable 组件强制跨 Flow 共享。调谐前必须先对完整期望状态执行数量与能力校验，违反约束时不创建任何一半成功的实例。
+插件元数据是硬约束，资源清单不能放宽它。清单可以通过不同 `metadata.name` 声明多个独立资源，但不能突破 `maxInstances` 与互斥域限制。Flow 重复引用同一 `kind/namespace/name` 时始终复用同一个 App 所有实例；alias 不会创建或隔离实例。调谐前必须先对完整期望状态执行数量与能力校验，违反约束时不创建任何一半成功的实例。
 
-对于 AWT Robot，更推荐插件在自身生命周期内维护一个共享底层服务，多个轻量 EventHandler 使用该服务；如果 EventHandler 本身无状态且线程安全，也可直接声明为 shareable 并由多个 Flow 导入同一个 Component 资源。
+Flow 中 alias 的唯一性由 `spec.imports` 映射保证，edge 只连接 alias。一个 alias 可以拥有多个入边或出边，分别表达 fan-in/fan-out；完全相同的 `from -> to` 重复 edge 会被拒绝，避免同一事件被意外重复投递。同一 EventSource 资源在一个 Flow 中只能导入一次，需要扇出时应从该 source alias 声明多条不同出边。其他组件资源可以通过多个 alias 或多个 Flow 绑定，所有绑定仍共享同一实例。
+
+对于 AWT Robot 等稀缺对象，可以只声明一个 EventHandler 资源并让多个 binding 引用它；插件若声明 `threadSafe=false`，Runtime 会跨 Flow 串行化该实例的调用。需要并行且相互隔离时，应使用不同 `metadata.name` 声明不同资源。
 
 ## 生命周期能力
 
