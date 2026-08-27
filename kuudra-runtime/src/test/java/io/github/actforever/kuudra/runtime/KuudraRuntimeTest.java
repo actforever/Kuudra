@@ -345,7 +345,7 @@ class KuudraRuntimeTest {
         AtomicReference<UUID> active = new AtomicReference<>();
         AtomicInteger launches = new AtomicInteger();
         Runnable launch = () -> { UUID id = UUID.randomUUID(); active.set(id); launches.incrementAndGet(); coordinator.activated(group,
-                new SessionCoordinator.CoordinatedSession(id, "flow", "ingress/test/component", "key"), List.of()); };
+                new SessionCoordinator.CoordinatedSession(id, "flow", "ingress/test/component", "key", Map.of()), List.of()); };
         assertTrue(coordinator.admit(group, configuration, launch, ignored -> { }));
         assertTrue(coordinator.admit(group, configuration, launch, id -> coordinator.terminal(group, id, ignored -> { })));
         assertEquals(2, launches.get());

@@ -255,6 +255,33 @@ class KuudraConfigTest {
     }
 
     @Test
+    void loadsLabelSelectedSessionCoordinationPolicy() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve("manifests"));
+        Files.writeString(manifests.resolve("policy.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: SessionCoordinationPolicy
+                metadata: {namespace: demo, name: jobs-in-window}
+                spec:
+                  selector:
+                    matchLabels: {role: job}
+                  scheduling:
+                    policy: SERIAL
+                    queueCapacity: 8
+                  dependencies:
+                    - requiredSessionSelector:
+                        matchLabels: {role: window}
+                        matchPolicy: UNIQUE
+                      terminationPropagation: CANCEL_DEPENDENT
+                """);
+
+        KuudraManifest.Resources resources = KuudraYamlLoader.loadManifests(manifests);
+        KuudraManifest.CoordinationPolicy policy = resources.coordinationPolicies().values().stream().findFirst().orElseThrow();
+        assertEquals(Map.of("role", "job"), policy.matchLabels());
+        assertEquals(io.github.actforever.kuudra.api.session.SessionSchedulingPolicy.SERIAL, policy.scheduling().policy());
+        assertEquals(Map.of("role", "window"), policy.dependencies().get(0).selector().matchLabels());
+    }
+
+    @Test
     void rejectsDuplicateFlowEdges() {
         KuudraManifest.Metadata metadata = new KuudraManifest.Metadata("demo", "flow", Map.of(), Map.of());
         Map<String, KuudraManifest.ResourceReference> imports = Map.of(

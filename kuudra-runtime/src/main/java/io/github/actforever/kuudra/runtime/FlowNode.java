@@ -26,10 +26,11 @@ public sealed interface FlowNode permits FlowNode.AdapterNode, FlowNode.Interpre
     record InterpreterNode(String id, EventInterpreter interpreter, Map<String, Object> configuration) implements FlowNode {
         public InterpreterNode { requireId(id); Objects.requireNonNull(interpreter); configuration = Map.copyOf(configuration); }
     }
-    record IngressNode(String id, String instanceId, Ingress ingress, IngressConfiguration scheduling, Map<String, Object> configuration) implements FlowNode {
-        public IngressNode { requireId(id); requireId(instanceId); Objects.requireNonNull(ingress); Objects.requireNonNull(scheduling); configuration = Map.copyOf(configuration); }
-        public IngressNode(String id, Ingress ingress, IngressConfiguration scheduling, Map<String, Object> configuration) {
-            this(id, id, ingress, scheduling, configuration);
+    record IngressNode(String id, String instanceId, Ingress ingress, IngressConfiguration defaultScheduling,
+                       Map<String, Object> configuration) implements FlowNode {
+        public IngressNode { requireId(id); requireId(instanceId); Objects.requireNonNull(ingress); Objects.requireNonNull(defaultScheduling); configuration = Map.copyOf(configuration); }
+        public IngressNode(String id, Ingress ingress, IngressConfiguration defaultScheduling, Map<String, Object> configuration) {
+            this(id, id, ingress, defaultScheduling, configuration);
         }
     }
     record HandlerNode(String id, EventHandler handler, Map<String, Object> configuration) implements FlowNode {

@@ -17,7 +17,7 @@ class SqliteResourceStateStoreTest {
         var flowId=new KuudraManifest.ResourceId("Flow","demo","route");
         var flowMeta=new KuudraManifest.Metadata("demo","route",Map.of(),Map.of());
         var flow=new KuudraManifest.Flow(flowId,flowMeta,Map.of("gate",new KuudraManifest.ResourceReference("Ingress","demo","gate")),java.util.List.<KuudraConfig.EdgeConfig>of());
-        var resources=new KuudraManifest.Resources(Map.of(id,component),Map.of(flowId,flow));
+        var resources=new KuudraManifest.Resources(Map.of(id,component),Map.of(flowId,flow),Map.of());
         Path database=directory.resolve("kuudra.db");
         try(var store=new SqliteResourceStateStore(database)) {
             store.replaceDesired(resources); assertEquals(resources,store.desiredResources());
@@ -28,7 +28,7 @@ class SqliteResourceStateStoreTest {
             assertTrue(store.states().stream().allMatch(state->state.generation()==1));
             var changed = new KuudraManifest.Component(id, metadata,
                     "kuudra-official/default", "active", Map.of("groupKey", "changed"));
-            store.replaceDesired(new KuudraManifest.Resources(Map.of(id, changed), Map.of()));
+            store.replaceDesired(new KuudraManifest.Resources(Map.of(id, changed), Map.of(), Map.of()));
             assertEquals(1, store.states().size());
             assertEquals(2, store.states().get(0).generation());
             assertEquals("PENDING", store.states().get(0).phase());

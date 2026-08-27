@@ -34,8 +34,9 @@ public final class SessionManager {
         this(executor, codec, terminalListener, () -> { });
     }
 
-    ManagedSession create(String flowId, long revision, String ingressId, String groupKey, Map<String, Object> initial) {
-        ManagedSession session = new ManagedSession(UUID.randomUUID(), flowId, revision, ingressId, groupKey,
+    ManagedSession create(String flowId, long revision, String ingressId, String groupKey,
+                          Map<String, String> labels, Map<String, Object> initial) {
+        ManagedSession session = new ManagedSession(UUID.randomUUID(), flowId, revision, ingressId, groupKey, labels,
                 new AtomicValueContext(codec, initial), executor);
         synchronized (monitor) { sessions.put(session.id, session); }
         return session;
@@ -105,6 +106,7 @@ public final class SessionManager {
 
     static final class ManagedSession {
         final UUID id; final String flowId; final long revision; final String ingressId; final String groupKey;
+        final Map<String, String> labels;
         final AtomicValueContext context; final Executor executor; final AtomicBoolean cancelled = new AtomicBoolean();
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicBoolean terminal = new AtomicBoolean(); final AtomicInteger leases = new AtomicInteger();
@@ -112,15 +114,17 @@ public final class SessionManager {
         final Object pauseMonitor = new Object(); volatile boolean paused;
         volatile java.util.concurrent.CompletableFuture<Void> resumeSignal = java.util.concurrent.CompletableFuture.completedFuture(null);
         private java.util.concurrent.CompletableFuture<Void> serial = java.util.concurrent.CompletableFuture.completedFuture(null);
-        ManagedSession(UUID id, String flowId, long revision, String ingressId, String groupKey, AtomicValueContext context, Executor executor) {
-            this.id=id; this.flowId=flowId; this.revision=revision; this.ingressId=ingressId; this.groupKey=groupKey; this.context=context; this.executor=executor;
+        ManagedSession(UUID id, String flowId, long revision, String ingressId, String groupKey,
+                       Map<String, String> labels, AtomicValueContext context, Executor executor) {
+            this.id=id; this.flowId=flowId; this.revision=revision; this.ingressId=ingressId; this.groupKey=groupKey;
+            this.labels=Map.copyOf(labels); this.context=context; this.executor=executor;
         }
         boolean active() { return !terminal.get(); }
         void awaitResumed() throws InterruptedException { synchronized (pauseMonitor) { while (paused && !terminal.get() && !cancelled.get()) pauseMonitor.wait(); } }
         java.util.concurrent.CompletionStage<Void> resumed() { return resumeSignal; }
         synchronized void submit(Runnable task) { serial = serial.handle((v,e)->null).thenRunAsync(task, executor); }
         SessionReference reference() { return new SessionReference(id, flowId); }
-        SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, status, cancelled.get(), leases.get()); }
+        SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, labels, status, cancelled.get(), leases.get()); }
     }
 
     static final class AtomicValueContext implements SessionContext, FlowContext, GlobalContext {

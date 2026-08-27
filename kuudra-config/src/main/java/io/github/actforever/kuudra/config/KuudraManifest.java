@@ -4,6 +4,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import io.github.actforever.kuudra.api.component.IngressConfiguration;
+import io.github.actforever.kuudra.api.session.SessionDependencyRequirement;
 
 /** Format-neutral K8s-style resource manifests discovered under the Kuudra home. */
 public final class KuudraManifest {
@@ -70,10 +72,27 @@ public final class KuudraManifest {
         }
     }
 
-    public record Resources(Map<ResourceId, Component> components, Map<ResourceId, Flow> flows) {
-        public static final Resources EMPTY = new Resources(Map.of(), Map.of());
-        public Resources { components = Map.copyOf(components); flows = Map.copyOf(flows); }
-        public boolean isEmpty() { return components.isEmpty() && flows.isEmpty(); }
+    public record CoordinationPolicy(ResourceId id, Metadata metadata, Map<String, String> matchLabels,
+                                     IngressConfiguration scheduling,
+                                     List<SessionDependencyRequirement> dependencies) {
+        public CoordinationPolicy {
+            Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
+            if (!"SessionCoordinationPolicy".equals(id.kind())) throw new IllegalArgumentException("Invalid policy kind: " + id.kind());
+            matchLabels = Map.copyOf(matchLabels);
+            if (matchLabels.isEmpty()) throw new IllegalArgumentException("spec.selector.matchLabels must not be empty");
+            Objects.requireNonNull(scheduling, "scheduling");
+            dependencies = List.copyOf(dependencies);
+        }
+    }
+
+    public record Resources(Map<ResourceId, Component> components, Map<ResourceId, Flow> flows,
+                            Map<ResourceId, CoordinationPolicy> coordinationPolicies) {
+        public static final Resources EMPTY = new Resources(Map.of(), Map.of(), Map.of());
+        public Resources {
+            components = Map.copyOf(components); flows = Map.copyOf(flows);
+            coordinationPolicies = Map.copyOf(coordinationPolicies);
+        }
+        public boolean isEmpty() { return components.isEmpty() && flows.isEmpty() && coordinationPolicies.isEmpty(); }
     }
 
     private static void requireDnsLabel(String value, String location) {

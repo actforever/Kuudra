@@ -1,22 +1,13 @@
 package io.github.actforever.kuudra.api.session;
 
 /**
- * Selects active sessions for a dependency edge. Blank flow/component/group fields are wildcards.
- * The ingress component identity is its canonical {@code ingress/namespace/name} resource address.
+ * Selects active sessions by labels within the dependent Session's current Flow.
+ * Every configured label must match; cross-Flow selection is intentionally unsupported.
  */
-public record SessionSelector(String flowId, String ingressComponentId, String groupKey,
-                              SessionMatchPolicy matchPolicy) {
+public record SessionSelector(java.util.Map<String, String> matchLabels, SessionMatchPolicy matchPolicy) {
     public SessionSelector {
-        flowId = normalize(flowId);
-        ingressComponentId = normalize(ingressComponentId);
-        groupKey = normalize(groupKey);
-        if (flowId == null && ingressComponentId == null && groupKey == null) {
-            throw new IllegalArgumentException("A session selector must constrain flowId, ingressComponentId, or groupKey");
-        }
+        matchLabels = java.util.Map.copyOf(matchLabels);
+        if (matchLabels.isEmpty()) throw new IllegalArgumentException("matchLabels must not be empty");
         if (matchPolicy == null) matchPolicy = SessionMatchPolicy.UNIQUE;
-    }
-
-    private static String normalize(String value) {
-        return value == null || value.isBlank() ? null : value;
     }
 }

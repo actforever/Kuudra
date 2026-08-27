@@ -121,6 +121,7 @@ public final class KuudraYamlLoader {
     public static KuudraManifest.Resources loadManifests(Path directory) throws IOException {
         Map<KuudraManifest.ResourceId, KuudraManifest.Component> components = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = new LinkedHashMap<>();
+        Map<KuudraManifest.ResourceId, KuudraManifest.CoordinationPolicy> policies = new LinkedHashMap<>();
         if (!Files.exists(directory)) return KuudraManifest.Resources.EMPTY;
         if (!Files.isDirectory(directory)) throw new IOException("Manifest directory is not a directory: " + directory);
         try (Stream<Path> files = Files.walk(directory)) {
@@ -130,7 +131,7 @@ public final class KuudraYamlLoader {
                     document++;
                     if (manifest.value() == null) continue;
                     try {
-                        loadManifest(manifest, file, document, components, flows);
+                        loadManifest(manifest, file, document, components, flows, policies);
                     } catch (IOException invalid) {
                         throw new IOException("Invalid manifest " + file + "#document-" + document + ": "
                                 + invalid.getMessage(), invalid);
@@ -138,17 +139,18 @@ public final class KuudraYamlLoader {
                 }
             }
         }
-        return new KuudraManifest.Resources(components, flows);
+        return new KuudraManifest.Resources(components, flows, policies);
     }
 
     private static void loadManifest(ManifestDocument document, Path file, int documentIndex,
                                      Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
-                                     Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows) throws IOException {
+                                     Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows,
+                                     Map<KuudraManifest.ResourceId, KuudraManifest.CoordinationPolicy> policies) throws IOException {
                 String source = file + ":" + document.line("") + " (document " + documentIndex + ")";
                 Map<String, Object> root = mapping(document.value(), source);
                 String apiVersion = string(required(root, "apiVersion", document, "", "apiVersion: " + KuudraManifest.API_VERSION), source + ".apiVersion");
                 if (!KuudraManifest.API_VERSION.equals(apiVersion)) throw new IOException("Unsupported apiVersion at " + source + ": " + apiVersion);
-                String kind = string(required(root, "kind", document, "", "kind: EventSource|EventInterpreter|EventAdapter|Ingress|EventHandler|Egress|Flow"), source + ".kind");
+                String kind = string(required(root, "kind", document, "", "kind: EventSource|EventInterpreter|EventAdapter|Ingress|EventHandler|Egress|Flow|SessionCoordinationPolicy"), source + ".kind");
                 Map<String, Object> metadataMap = mapping(required(root, "metadata", document, "", "metadata: {namespace: default, name: resource-name}"), source + ".metadata");
                 String namespace = string(metadataMap.getOrDefault("namespace", "default"), source + ".metadata.namespace");
                 String name = string(required(metadataMap, "name", document, "metadata", "metadata.name: resource-name"), source + ".metadata.name");
@@ -197,6 +199,37 @@ public final class KuudraYamlLoader {
                             KuudraManifest.Flow flow = new KuudraManifest.Flow(id, metadata, imports, edges);
                             if (flows.putIfAbsent(id, flow) != null) throw new IOException("Duplicate resource identity: " + id);
                         }
+                        case "SessionCoordinationPolicy" -> {
+                            if (spec.containsKey("desiredState")) throw new IllegalArgumentException("SessionCoordinationPolicy is declarative and does not support spec.desiredState");
+                            KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
+                            Map<String, Object> selector = mapping(required(spec, "selector", document, "spec",
+                                    "spec.selector.matchLabels: {role: job}"), source + ".spec.selector");
+                            Map<String, String> matchLabels = stringMapping(selector, "matchLabels");
+                            Map<String, Object> scheduling = optionalMapping(spec, "scheduling");
+                            io.github.actforever.kuudra.api.component.IngressConfiguration configuration =
+                                    new io.github.actforever.kuudra.api.component.IngressConfiguration(
+                                            enumValue(io.github.actforever.kuudra.api.session.SessionSchedulingPolicy.class,
+                                                    scheduling.getOrDefault("policy", "PARALLEL")),
+                                            enumValue(io.github.actforever.kuudra.api.session.SessionGroupScope.class,
+                                                    scheduling.getOrDefault("groupScope", "FLOW_BINDING")),
+                                            integer(scheduling.getOrDefault("maxParallelSessions", 64), source + ".spec.scheduling.maxParallelSessions"),
+                                            integer(scheduling.getOrDefault("queueCapacity", 256), source + ".spec.scheduling.queueCapacity"));
+                            List<io.github.actforever.kuudra.api.session.SessionDependencyRequirement> dependencies = new ArrayList<>();
+                            for (Object item : optionalList(spec, "dependencies")) {
+                                Map<String, Object> dependency = mapping(item, source + ".spec.dependencies[]");
+                                Map<String, Object> requiredSelector = mapping(required(dependency, "requiredSessionSelector"), source + ".spec.dependencies[].requiredSessionSelector");
+                                Map<String, String> requiredLabels = stringMapping(requiredSelector, "matchLabels");
+                                dependencies.add(new io.github.actforever.kuudra.api.session.SessionDependencyRequirement(
+                                        new io.github.actforever.kuudra.api.session.SessionSelector(requiredLabels,
+                                                enumValue(io.github.actforever.kuudra.api.session.SessionMatchPolicy.class,
+                                                        requiredSelector.getOrDefault("matchPolicy", "UNIQUE"))),
+                                        enumValue(io.github.actforever.kuudra.api.session.SessionTerminationPolicy.class,
+                                                dependency.getOrDefault("terminationPropagation", "CANCEL_DEPENDENT"))));
+                            }
+                            KuudraManifest.CoordinationPolicy policy = new KuudraManifest.CoordinationPolicy(
+                                    id, metadata, matchLabels, configuration, dependencies);
+                            if (policies.putIfAbsent(id, policy) != null) throw new IOException("Duplicate resource identity: " + id);
+                        }
                         default -> throw new IOException("Unsupported manifest kind at " + source + ": " + kind);
                     }
                 } catch (IllegalArgumentException invalid) {
@@ -207,6 +240,17 @@ public final class KuudraYamlLoader {
     private static String defaultComponentState(Object type) {
         return java.util.Set.of("event-source", "event-interpreter", "event-handler").contains(type)
                 ? "running" : "active";
+    }
+    private static List<Object> optionalList(Map<String, Object> map, String key) throws IOException {
+        return map.containsKey(key) ? list(map.get(key)) : List.of();
+    }
+    private static int integer(Object value, String location) throws IOException {
+        if (value instanceof Number number) return number.intValue();
+        try { return Integer.parseInt(String.valueOf(value)); }
+        catch (NumberFormatException invalid) { throw new IOException("Expected integer at " + location + ": " + value, invalid); }
+    }
+    private static <E extends Enum<E>> E enumValue(Class<E> type, Object value) {
+        return Enum.valueOf(type, String.valueOf(value).replace('-', '_').toUpperCase(java.util.Locale.ROOT));
     }
     private static boolean isYaml(Path path) { String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT); return name.endsWith(".yaml") || name.endsWith(".yml"); }
     private static Map<String, String> stringMapping(Map<String, Object> map, String key) throws IOException {

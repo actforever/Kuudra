@@ -82,6 +82,25 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                                     "source", Map.of("kind", "EventSource", "name", "mysource"),
                                     "handler", Map.of("kind", "EventHandler", "name", "myhandler")),
                             "edges", List.of(Map.of("from", "source", "to", "handler"))))));
+    private static final ResourceDocumentation SESSION_POLICY_DOCUMENTATION = new ResourceDocumentation(
+            "kuudra.io/v1alpha1", "kuudra-official", "SessionCoordinationPolicy",
+            "Selects Ingress-produced Session labels within each Flow and declares group scheduling plus Session dependencies.",
+            List.of(
+                    new ResourceFieldDocumentation("spec.selector.matchLabels", "Map<String,String>", true,
+                            "Labels of newly admitted Sessions managed by this policy; exactly zero or one policy may match.", List.of(Map.of("role", "job"))),
+                    new ResourceFieldDocumentation("spec.scheduling", "Scheduling", false,
+                            "Group scheduling policy and bounds.", List.of(Map.of("policy", "SERIAL", "queueCapacity", 32))),
+                    new ResourceFieldDocumentation("spec.dependencies[].requiredSessionSelector.matchLabels", "Map<String,String>", false,
+                            "Labels used to select required active Sessions inside the same Flow.", List.of(Map.of("role", "window"))),
+                    new ResourceFieldDocumentation("spec.dependencies[].terminationPropagation", "String", false,
+                            "Terminal propagation direction.", List.of("CANCEL_DEPENDENT"))),
+            List.of(Map.of("apiVersion", "kuudra.io/v1alpha1", "kind", "SessionCoordinationPolicy",
+                    "metadata", Map.of("namespace", "dev", "name", "jobs-in-window"),
+                    "spec", Map.of("selector", Map.of("matchLabels", Map.of("role", "job")),
+                            "scheduling", Map.of("policy", "SERIAL"),
+                            "dependencies", List.of(Map.of("requiredSessionSelector", Map.of(
+                                    "matchLabels", Map.of("role", "window"), "matchPolicy", "UNIQUE"),
+                                    "terminationPropagation", "CANCEL_DEPENDENT"))))));
     private final int queueCapacity;
     private final int workerThreads;
     private final KuudraConfig.RuntimeConfig bootstrapConfig;
@@ -399,8 +418,20 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return flows().stream().filter(flow -> flow.id().equals(flowId)).findFirst();
     }
     public Optional<Flow> flow(String namespace, String name) { return flow(namespace + "/" + name); }
+    public synchronized List<CoordinationPolicy> sessionCoordinationPolicies() {
+        return desiredResources().coordinationPolicies().values().stream().map(policy ->
+                new CoordinationPolicy(policy.metadata().namespace(), policy.metadata().name(), policy.matchLabels(),
+                        policy.scheduling().policy().name(), policy.scheduling().maxParallelSessions(),
+                        policy.scheduling().queueCapacity(), policy.dependencies().stream().map(requirement ->
+                        new CoordinationDependency(requirement.selector().matchLabels(), requirement.selector().matchPolicy().name(),
+                                requirement.terminationPolicy().name())).toList(), selected(policy.metadata().namespace()))).toList();
+    }
+    public synchronized Optional<CoordinationPolicy> sessionCoordinationPolicy(String namespace, String name) {
+        return sessionCoordinationPolicies().stream().filter(policy -> policy.namespace().equals(namespace)
+                && policy.name().equals(name)).findFirst();
+    }
     /** Core resource schemas use a documentation-provider namespace, independent from resource instance namespaces. */
-    public List<ResourceDocumentation> resourceDocumentations() { return List.of(FLOW_DOCUMENTATION); }
+    public List<ResourceDocumentation> resourceDocumentations() { return List.of(FLOW_DOCUMENTATION, SESSION_POLICY_DOCUMENTATION); }
     public Optional<ResourceDocumentation> resourceDocumentation(String namespace, String kind) {
         return resourceDocumentations().stream().filter(documentation -> documentation.namespace().equals(namespace)
                 && documentation.kind().equalsIgnoreCase(kind)).findFirst();
@@ -467,7 +498,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 current.component(), desiredState.toLowerCase(java.util.Locale.ROOT), current.options());
         Map<KuudraManifest.ResourceId,KuudraManifest.Component> components = new LinkedHashMap<>(currentDesired.components());
         components.put(id, updated);
-        KuudraManifest.Resources desired = new KuudraManifest.Resources(components, currentDesired.flows());
+        KuudraManifest.Resources desired = new KuudraManifest.Resources(components, currentDesired.flows(), currentDesired.coordinationPolicies());
         validateDesiredStates(desired);
         debug("resource.reconcile.started", Map.of("resource", id.toString(), "from", current.desiredState(), "to", updated.desiredState()));
         stateStore.replaceDesired(desired);
@@ -530,7 +561,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
     }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
-    private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
+    private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.labels(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
     private static Plugin plugin(DefaultPluginManager.PluginView view) {
         return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies().stream()
                 .map(dependency -> new Dependency(dependency.namespace(), dependency.pluginId(), dependency.mandatory(), dependency.versionRange())).toList(),
@@ -719,12 +750,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 .filter(entry -> selected(entry.getKey().namespace()))
                 .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
                         (left, right) -> left, LinkedHashMap::new));
-        return new KuudraManifest.Resources(components, flows);
+        Map<KuudraManifest.ResourceId, KuudraManifest.CoordinationPolicy> policies = resources.coordinationPolicies().entrySet().stream()
+                .filter(entry -> selected(entry.getKey().namespace()))
+                .collect(java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                        (left, right) -> left, LinkedHashMap::new));
+        return new KuudraManifest.Resources(components, flows, policies);
     }
 
     private void markSelectedObserved(KuudraManifest.Resources selectedResources) {
         selectedResources.components().keySet().forEach(id -> stateStore.markObserved(id, "READY", "reconciled"));
         selectedResources.flows().keySet().forEach(id -> stateStore.markObserved(id, "READY", "reconciled"));
+        selectedResources.coordinationPolicies().keySet().forEach(id -> stateStore.markObserved(id, "READY", "reconciled"));
     }
 
     private boolean selected(String namespace) { return resourceSelection.selects(namespace); }
@@ -756,7 +792,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets = new LinkedHashMap<>();
         for (KuudraManifest.Flow flow : resources.flows().values()) {
             debug("flow.compiling", Map.of("flow", flow.id().qualifiedName(), "imports", flow.imports().size(), "edges", flow.edges().size()));
-            registerFlow(compile(flow, resources.components(), sourceTargets));
+            registerFlow(compile(flow, resources.components(), resources.coordinationPolicies(), sourceTargets));
         }
         for (KuudraManifest.Component component : resources.components().values()) {
             if (!component.type().equals("event-source") && manifestInstances.get(component.id()) instanceof Lifecycle) {
@@ -937,6 +973,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private KuudraFlow compile(KuudraManifest.Flow definition,
                                Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
+                               Map<KuudraManifest.ResourceId, KuudraManifest.CoordinationPolicy> coordinationPolicies,
                                Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets) {
         Map<String, FlowNode> nodes = new LinkedHashMap<>();
         Map<String, EventDomain> adapterDomains = inferAdapterDomains(definition, components);
@@ -950,7 +987,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 case "event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (EventInterpreter) instance, component.options());
                 case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
                 case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.type() + "/" + component.id().qualifiedName(),
-                        (Ingress) instance, ingressConfiguration(component.options()), component.options());
+                        (Ingress) instance, defaultIngressConfiguration(), component.options());
                 case "egress" -> new FlowNode.EgressNode(imported.getKey(), (Egress) instance, component.options());
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
@@ -966,7 +1003,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                         .add(new KuudraRuntime.SourceTarget(definition.id().qualifiedName(), edge.to()));
             } else edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
         }
-        return new KuudraFlow(definition.id().qualifiedName(), nodes, edges);
+        List<SessionCoordinationPolicy> policies = coordinationPolicies.values().stream()
+                .filter(policy -> policy.metadata().namespace().equals(definition.metadata().namespace()))
+                .map(policy -> new SessionCoordinationPolicy(policy.id().qualifiedName(), policy.matchLabels(),
+                        policy.scheduling(), policy.dependencies())).toList();
+        return new KuudraFlow(definition.id().qualifiedName(), 1, nodes, edges, policies);
     }
 
     static Map<String, EventDomain> inferAdapterDomains(KuudraManifest.Flow flow,
@@ -1018,6 +1059,18 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private void validateManifestPolicies(KuudraManifest.Resources resources) {
+        List<KuudraManifest.CoordinationPolicy> policies = new ArrayList<>(resources.coordinationPolicies().values());
+        for (int left = 0; left < policies.size(); left++) {
+            for (int right = left + 1; right < policies.size(); right++) {
+                KuudraManifest.CoordinationPolicy first = policies.get(left);
+                KuudraManifest.CoordinationPolicy second = policies.get(right);
+                if (first.metadata().namespace().equals(second.metadata().namespace())
+                        && selectorsOverlap(first.matchLabels(), second.matchLabels())) {
+                    throw new IllegalArgumentException("Overlapping SessionCoordinationPolicy selectors in namespace "
+                            + first.metadata().namespace() + ": " + first.id().name() + " and " + second.id().name());
+                }
+            }
+        }
         Map<String, Integer> appCounts = new LinkedHashMap<>();
         for (KuudraManifest.Component component : resources.components().values()) {
             String reference = componentReference(component.type(), component.component());
@@ -1049,14 +1102,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
 
-    private IngressConfiguration ingressConfiguration(Map<String,Object> options) {
+    private IngressConfiguration defaultIngressConfiguration() {
         KuudraConfig.SessionCoordinatorSettings defaults = bootstrapConfig == null
                 ? new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 64, 256)
                 : bootstrapConfig.runtime().sessionCoordinator();
-        return new IngressConfiguration(SessionSchedulingPolicy.valueOf(text(options.getOrDefault("policy", defaults.defaultPolicy())).replace('-', '_').toUpperCase(java.util.Locale.ROOT)),
-                SessionGroupScope.valueOf(text(options.getOrDefault("groupScope", options.getOrDefault("group-scope", defaults.defaultGroupScope()))).replace('-', '_').toUpperCase(java.util.Locale.ROOT)),
-                Integer.parseInt(text(options.getOrDefault("maxParallelSessions", options.getOrDefault("max-parallel-sessions", defaults.maxParallelSessions())))),
-                Integer.parseInt(text(options.getOrDefault("queueCapacity", options.getOrDefault("queue-capacity", defaults.queueCapacity())))));
+        return new IngressConfiguration(defaults.defaultPolicy(),
+                SessionGroupScope.FLOW_BINDING, defaults.maxParallelSessions(), defaults.queueCapacity());
     }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     private static String componentReference(String type, String component) {
@@ -1069,7 +1120,19 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record KernelCheckpoint(RuntimeCheckpoint runtime, List<ComponentResource> components) {
         public KernelCheckpoint { components = List.copyOf(components); }
     }
-    public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
+    public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey,
+                          Map<String, String> labels, String status, boolean cancellationRequested, int activeLeases) {
+        public Session { labels = Map.copyOf(labels); }
+    }
+    public record CoordinationPolicy(String namespace, String name, Map<String, String> matchLabels,
+                                     String schedulingPolicy, int maxParallelSessions, int queueCapacity,
+                                     List<CoordinationDependency> dependencies, boolean selected) {
+        public CoordinationPolicy { matchLabels = Map.copyOf(matchLabels); dependencies = List.copyOf(dependencies); }
+    }
+    public record CoordinationDependency(Map<String, String> requiredSessionLabels, String matchPolicy,
+                                         String terminationPropagation) {
+        public CoordinationDependency { requiredSessionLabels = Map.copyOf(requiredSessionLabels); }
+    }
     public record SessionDependency(UUID dependentSessionId, UUID requiredSessionId, String terminationPolicy) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
     public record ComponentResource(String kind, String namespace, String name, String component,
@@ -1081,6 +1144,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             importedBy = List.copyOf(importedBy);
             lifecycleCapabilities = List.copyOf(lifecycleCapabilities);
         }
+    }
+
+    private static boolean selectorsOverlap(Map<String, String> first, Map<String, String> second) {
+        for (Map.Entry<String, String> entry : first.entrySet()) {
+            String other = second.get(entry.getKey());
+            if (other != null && !other.equals(entry.getValue())) return false;
+        }
+        return true;
     }
     public record Plugin(String id, String namespace, String version, String status, List<Dependency> dependencies,
                          List<Component> components) {

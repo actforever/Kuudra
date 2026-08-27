@@ -11,7 +11,7 @@ class SessionPauseTest {
     @Test void pausePreservesIdleSessionUntilResume() {
         AtomicInteger terminal = new AtomicInteger();
         SessionManager manager = new SessionManager(Runnable::run, ContextCodecs.defaultCodec(), ignored -> terminal.incrementAndGet());
-        var session = manager.create("demo/flow", 1, "gate", "group", Map.of("value", 42));
+        var session = manager.create("demo/flow", 1, "gate", "group", Map.of(), Map.of("value", 42));
         assertTrue(manager.pause(session.id));
         manager.completeIfIdle(session);
         assertEquals(SessionStatus.PAUSED, manager.snapshot(session.id).orElseThrow().status());

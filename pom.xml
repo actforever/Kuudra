@@ -6,7 +6,7 @@
 
     <groupId>io.github.actforever</groupId>
     <artifactId>kuudra</artifactId>
-    <version>v0.4.2</version>
+    <version>v0.4.3-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <modules>

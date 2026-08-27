@@ -62,6 +62,7 @@ public final class SessionCoordinator {
         List<DependencyEdge> resolved = new ArrayList<>();
         for (SessionDependencyRequirement requirement : requirements) {
             List<CoordinatedSession> matches = sessions.values().stream()
+                    .filter(candidate -> session.flowId().equals(candidate.flowId()))
                     .filter(candidate -> matches(requirement, candidate))
                     .toList();
             if (matches.isEmpty()
@@ -86,9 +87,8 @@ public final class SessionCoordinator {
 
     private boolean matches(SessionDependencyRequirement requirement, CoordinatedSession candidate) {
         var selector = requirement.selector();
-        return (selector.flowId() == null || selector.flowId().equals(candidate.flowId()))
-                && (selector.ingressComponentId() == null || selector.ingressComponentId().equals(candidate.ingressComponentId()))
-                && (selector.groupKey() == null || selector.groupKey().equals(candidate.groupKey()));
+        return selector.matchLabels().entrySet().stream()
+                .allMatch(entry -> entry.getValue().equals(candidate.labels().get(entry.getKey())));
     }
 
     void terminal(Group group, UUID sessionId, Consumer<UUID> cancel) {
@@ -134,12 +134,14 @@ public final class SessionCoordinator {
 
     public record Group(String scope, String ingressId, String groupKey) { }
 
-    record CoordinatedSession(UUID id, String flowId, String ingressComponentId, String groupKey) {
+    record CoordinatedSession(UUID id, String flowId, String ingressComponentId, String groupKey,
+                              Map<String, String> labels) {
         CoordinatedSession {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(flowId, "flowId");
             Objects.requireNonNull(ingressComponentId, "ingressComponentId");
             Objects.requireNonNull(groupKey, "groupKey");
+            labels = Map.copyOf(labels);
         }
     }
 

@@ -4,14 +4,17 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /** Immutable, domain-checked event graph. Source bindings target RAW nodes. */
-public record KuudraFlow(String id, long revision, Map<String, FlowNode> nodes, Map<String, List<String>> edges) {
-    public KuudraFlow(String id, Map<String, FlowNode> nodes, Map<String, List<String>> edges) { this(id, 1, nodes, edges); }
+public record KuudraFlow(String id, long revision, Map<String, FlowNode> nodes, Map<String, List<String>> edges,
+                         List<io.github.actforever.kuudra.api.session.SessionCoordinationPolicy> coordinationPolicies) {
+    public KuudraFlow(String id, Map<String, FlowNode> nodes, Map<String, List<String>> edges) { this(id, 1, nodes, edges, List.of()); }
+    public KuudraFlow(String id, long revision, Map<String, FlowNode> nodes, Map<String, List<String>> edges) { this(id, revision, nodes, edges, List.of()); }
     public KuudraFlow {
         if (id == null || id.isBlank()) throw new io.github.actforever.kuudra.api.KuudraException("Flow id must not be blank");
         if (revision < 1) throw new io.github.actforever.kuudra.api.KuudraException("Flow revision must be positive");
         nodes = Map.copyOf(Objects.requireNonNull(nodes));
         if (nodes.isEmpty()) throw new io.github.actforever.kuudra.api.KuudraException("Flow must contain nodes");
         edges = edges.entrySet().stream().collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, e -> List.copyOf(e.getValue())));
+        coordinationPolicies = List.copyOf(coordinationPolicies);
         for (Map.Entry<String, List<String>> edge : edges.entrySet()) {
             FlowNode source = require(nodes, edge.getKey(), "source");
             for (String targetId : edge.getValue()) {

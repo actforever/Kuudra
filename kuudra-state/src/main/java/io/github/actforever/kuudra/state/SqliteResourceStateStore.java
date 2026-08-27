@@ -61,6 +61,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
             Set<KuudraManifest.ResourceId> retained = new HashSet<>();
             resources.components().values().forEach(value -> persist(mapper, value.id(), "component", value, retained));
             resources.flows().values().forEach(value -> persist(mapper, value.id(), "flow", value, retained));
+            resources.coordinationPolicies().values().forEach(value -> persist(mapper, value.id(), "coordination-policy", value, retained));
             mapper.findAll().stream().map(SqliteResourceStateStore::id).filter(id -> !retained.contains(id))
                     .forEach(id -> mapper.delete(id.kind(), id.namespace(), id.name()));
             session.commit();
@@ -84,6 +85,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         Map<KuudraManifest.ResourceId, KuudraManifest.Component> components = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Flow> flows = new LinkedHashMap<>();
+        Map<KuudraManifest.ResourceId, KuudraManifest.CoordinationPolicy> policies = new LinkedHashMap<>();
         try (SqlSession session = sessions.openSession()) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
             for (ResourceStateRow row : mapper.findAll()) {
@@ -93,11 +95,14 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
                 } else if ("flow".equals(row.getResourceType())) {
                     KuudraManifest.Flow value = json.readValue(row.getDesiredJson(), KuudraManifest.Flow.class);
                     flows.put(value.id(), value);
+                } else if ("coordination-policy".equals(row.getResourceType())) {
+                    KuudraManifest.CoordinationPolicy value = json.readValue(row.getDesiredJson(), KuudraManifest.CoordinationPolicy.class);
+                    policies.put(value.id(), value);
                 } else {
                     throw new KuudraException("Unknown persisted resource type: " + row.getResourceType());
                 }
             }
-            return new KuudraManifest.Resources(components, flows);
+            return new KuudraManifest.Resources(components, flows, policies);
         } catch (Exception error) {
             throw KuudraException.wrap("Failed to read desired resource state", error);
         }
