@@ -223,4 +223,34 @@ class KuudraConfigTest {
         assertTrue(error.getMessage().contains("near line "));
         assertTrue(error.getMessage().contains("{from: source, to: ingress}"));
     }
+
+    @Test
+    void rejectsRemovedAdapterDomainFields() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Path adapter = manifests.resolve("adapter.yaml");
+        Files.writeString(adapter, """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventAdapter
+                metadata: {namespace: demo, name: mapper}
+                spec:
+                  component: kuudra-official/event-mapper
+                  domain: RAW
+                """);
+        java.io.IOException topLevel = assertThrows(java.io.IOException.class,
+                () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+        assertTrue(topLevel.getMessage().contains("spec.domain has been removed"));
+
+        Files.writeString(adapter, """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventAdapter
+                metadata: {namespace: demo, name: mapper}
+                spec:
+                  component: kuudra-official/event-mapper
+                  options: {domain: SESSION}
+                """);
+        java.io.IOException option = assertThrows(java.io.IOException.class,
+                () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+        assertTrue(option.getMessage().contains("spec.options.domain has been removed"));
+    }
 }

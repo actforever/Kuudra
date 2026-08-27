@@ -76,7 +76,7 @@ Session 不建立父子生命周期。Egress 后再次进入 Ingress 会创建�
 | Ingress 之后、Egress 输入 | Event、Session、Flow、Global |
 | Egress 输出之后 | Event、Flow、Global |
 
-统一使用 `${event#...}`，不再存在 `${rawEvent#...}`。`${path}` 在 RAW 域按 Event→Flow→Global，在 SESSION 域按 Event→Session→Flow→Global 查询。Runtime 注册 Flow 时为每个节点调用 `PlaceholderResolver.compileMap(template, domain)`，一次完成正则扫描、表达式切分、JSON 静态解析和域合法性校验；事件热路径只查值并组装结果。
+统一使用 `${event#...}`，不再存在 `${rawEvent#...}`。`${path}` 在 RAW 域按 Event→Flow→Global，在 SESSION 域按 Event→Session→Flow→Global 查询。EventAdapter 本身不绑定域；App 从 Flow 拓扑推导每个 Adapter binding 的域，拒绝无法推导或跨越 Ingress/Egress 边界的冲突连接。Runtime 注册 Flow 时为每个节点调用 `PlaceholderResolver.compileMap(template, domain)`，一次完成正则扫描、表达式切分、JSON 静态解析和域合法性校验；事件热路径只查值并组装结果。
 
 Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `ContextCodec` 把 POJO 编码为不可变 JSON 兼容树，读取方用 `get(key, Type.class)` 按需反序列化。插件共享 POJO 必须来自声明的上游依赖，确保双方使用同一 `Class<?>`。
 

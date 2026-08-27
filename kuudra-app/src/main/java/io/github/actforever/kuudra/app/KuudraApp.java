@@ -924,13 +924,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                                Map<KuudraManifest.ResourceId, KuudraManifest.Component> components,
                                Map<KuudraManifest.ResourceId, List<KuudraRuntime.SourceTarget>> sourceTargets) {
         Map<String, FlowNode> nodes = new LinkedHashMap<>();
+        Map<String, EventDomain> adapterDomains = inferAdapterDomains(definition, components);
         for (Map.Entry<String, KuudraManifest.ResourceReference> imported : definition.imports().entrySet()) {
             KuudraManifest.Component component = components.get(imported.getValue().id());
             if (component == null) throw new IllegalArgumentException("Unknown imported Component: " + imported.getValue().id());
             Object instance = manifestInstances.get(component.id());
             FlowNode node = switch (component.type()) {
                 case "event-source" -> null;
-                case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, domain(component.options()), component.options());
+                case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, adapterDomains.get(imported.getKey()), component.options());
                 case "event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (EventInterpreter) instance, component.options());
                 case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
                 case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.id().qualifiedName(), (Ingress) instance, ingressConfiguration(component.options()), component.options());
@@ -950,6 +951,54 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             } else edges.computeIfAbsent(edge.from(), ignored -> new ArrayList<>()).add(edge.to());
         }
         return new KuudraFlow(definition.id().qualifiedName(), nodes, edges);
+    }
+
+    static Map<String, EventDomain> inferAdapterDomains(KuudraManifest.Flow flow,
+                                                         Map<KuudraManifest.ResourceId, KuudraManifest.Component> components) {
+        Map<String, EventDomain> domains = new LinkedHashMap<>();
+        boolean changed;
+        do {
+            changed = false;
+            for (KuudraConfig.EdgeConfig edge : flow.edges()) {
+                KuudraManifest.Component from = components.get(flow.imports().get(edge.from()).id());
+                KuudraManifest.Component to = components.get(flow.imports().get(edge.to()).id());
+                EventDomain output = from.type().equals("event-adapter") ? domains.get(edge.from()) : fixedOutputDomain(from.type());
+                EventDomain input = to.type().equals("event-adapter") ? domains.get(edge.to()) : fixedInputDomain(to.type());
+                if (from.type().equals("event-adapter") && output == null && input != null) {
+                    domains.put(edge.from(), input); output = input; changed = true;
+                }
+                if (to.type().equals("event-adapter") && input == null && output != null) {
+                    domains.put(edge.to(), output); input = output; changed = true;
+                }
+                if (output != null && input != null && output != input) {
+                    throw new KuudraException("Flow domain mismatch: " + edge.from() + "(" + output + ") -> " + edge.to() + "(" + input + ")");
+                }
+            }
+        } while (changed);
+        for (Map.Entry<String, KuudraManifest.ResourceReference> imported : flow.imports().entrySet()) {
+            KuudraManifest.Component component = components.get(imported.getValue().id());
+            if (component.type().equals("event-adapter") && !domains.containsKey(imported.getKey())) {
+                throw new KuudraException("Cannot infer EventAdapter domain for Flow import '" + imported.getKey()
+                        + "'; connect it to a domain-defining component");
+            }
+        }
+        return Map.copyOf(domains);
+    }
+
+    private static EventDomain fixedInputDomain(String type) {
+        return switch (type) {
+            case "event-interpreter", "ingress" -> EventDomain.RAW;
+            case "event-handler", "egress" -> EventDomain.SESSION;
+            default -> null;
+        };
+    }
+
+    private static EventDomain fixedOutputDomain(String type) {
+        return switch (type) {
+            case "event-source", "event-interpreter", "egress" -> EventDomain.RAW;
+            case "ingress", "event-handler" -> EventDomain.SESSION;
+            default -> null;
+        };
     }
 
     private void validateManifestPolicies(KuudraManifest.Resources resources) {
@@ -986,7 +1035,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
 
-    private static EventDomain domain(Map<String,Object> options) { return EventDomain.valueOf(text(options.getOrDefault("domain", "RAW")).toUpperCase(java.util.Locale.ROOT)); }
     private IngressConfiguration ingressConfiguration(Map<String,Object> options) {
         KuudraConfig.SessionCoordinatorSettings defaults = bootstrapConfig == null
                 ? new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 64, 256)
