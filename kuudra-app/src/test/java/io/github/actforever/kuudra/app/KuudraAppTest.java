@@ -14,6 +14,7 @@ import io.github.actforever.kuudra.runtime.KuudraFlow;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -580,6 +581,63 @@ class KuudraAppTest {
             assertThrows(io.github.actforever.kuudra.api.KuudraException.class,
                     () -> app.setDesiredState("Ingress", "beta", "input", "inactive"));
         }
+    }
+
+    @Test
+    void selectedFlowMayImportAResourceFromAnotherSelectedNamespace() throws Exception {
+        installDefaultTestPlugin();
+        Path home = Files.createDirectories(directory.resolve(".kuudra"));
+        Path manifests = Files.createDirectories(home.resolve("manifests"));
+        Files.writeString(home.resolve("config.yaml"), """
+                home-directory: .kuudra
+                resource-selection:
+                  namespace-mode: INCLUDE
+                  namespaces: [macro, system]
+                """);
+        Files.writeString(manifests.resolve("cross-namespace.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: macro, name: shared-entry}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: system, name: control-output}
+                spec: {component: kuudra-official/default, desiredState: active}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: system, name: control-flow}
+                spec:
+                  session: {executionClass: CONTROL}
+                  imports:
+                    entry: {kind: Ingress, namespace: macro, name: shared-entry}
+                    output: {kind: Egress, name: control-output}
+                  edges: [{from: entry, to: output}]
+                """);
+
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            KuudraApp.Flow flow = app.flow("system", "control-flow").orElseThrow();
+            assertTrue(flow.selected());
+            assertEquals("CONTROL", flow.executionClass());
+            assertEquals(List.of("system/control-flow"),
+                    app.resource("Ingress", "macro", "shared-entry").orElseThrow().importedBy());
+            app.pause();
+            KuudraApp.ComponentResource shared = app.resource("Ingress", "macro", "shared-entry").orElseThrow();
+            assertEquals("ACTIVE", shared.effectiveStatus());
+            assertTrue(shared.available());
+        }
+
+        Files.writeString(home.resolve("config.yaml"), """
+                home-directory: .kuudra
+                resource-selection:
+                  namespace-mode: INCLUDE
+                  namespaces: [system]
+                """);
+        KuudraException error = assertThrows(KuudraException.class,
+                () -> KuudraApp.createFromDefaultLocations(directory));
+        assertTrue(error.getMessage().contains("Failed to apply Kuudra configuration"));
+        assertTrue(error.getCause().getMessage().contains("imports unavailable Component"));
     }
 
     @Test

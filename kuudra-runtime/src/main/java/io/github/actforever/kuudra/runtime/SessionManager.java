@@ -36,8 +36,13 @@ public final class SessionManager {
 
     ManagedSession create(String flowId, long revision, String ingressId, String groupKey,
                           Map<String, String> labels, Map<String, Object> initial) {
+        return create(flowId, revision, ingressId, groupKey, labels, initial, executor);
+    }
+
+    ManagedSession create(String flowId, long revision, String ingressId, String groupKey,
+                          Map<String, String> labels, Map<String, Object> initial, Executor sessionExecutor) {
         ManagedSession session = new ManagedSession(UUID.randomUUID(), flowId, revision, ingressId, groupKey, labels,
-                new AtomicValueContext(codec, initial), executor);
+                new AtomicValueContext(codec, initial), sessionExecutor);
         synchronized (monitor) { sessions.put(session.id, session); }
         return session;
     }

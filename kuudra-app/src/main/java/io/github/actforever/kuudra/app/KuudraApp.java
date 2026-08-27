@@ -67,10 +67,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                             "Resource namespace. Unqualified imports default to this namespace.", List.of("dev")),
                     new ResourceFieldDocumentation("metadata.name", "String", true,
                             "Flow resource name.", List.of("flow-1")),
+                    new ResourceFieldDocumentation("spec.session.executionClass", "FlowExecutionClass", false,
+                            "DATA is suspended by a kernel pause; CONTROL remains routable and defaults are DATA.",
+                            List.of("DATA", "CONTROL")),
                     new ResourceFieldDocumentation("spec.imports", "Map<String, ResourceReference>", true,
-                            "Import alias map. Each value declares kind and name; namespace is optional.", List.of(Map.of(
+                            "Import alias map. Namespace defaults to the Flow namespace; an explicit namespace may reference "
+                                    + "a resource in another activated namespace.", List.of(Map.of(
                                     "source", Map.of("kind", "EventSource", "name", "mysource"),
-                                    "handler", Map.of("kind", "EventHandler", "name", "myhandler")))),
+                                    "handler", Map.of("kind", "EventHandler", "namespace", "system", "name", "myhandler")))),
                     new ResourceFieldDocumentation("spec.edges", "List<Edge>", true,
                             "Directed edges whose from/to values reference keys in spec.imports.",
                             List.of(List.of(Map.of("from", "source", "to", "handler"))))),
@@ -78,6 +82,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     "apiVersion", "kuudra.io/v1alpha1", "kind", "Flow",
                     "metadata", Map.of("namespace", "dev", "name", "flow-1"),
                     "spec", Map.of(
+                            "session", Map.of("executionClass", "DATA"),
                             "imports", Map.of(
                                     "source", Map.of("kind", "EventSource", "name", "mysource"),
                                     "handler", Map.of("kind", "EventHandler", "name", "myhandler")),
@@ -409,8 +414,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return desiredResources().flows().values().stream().map(declaration -> {
             FlowSnapshot snapshot = running.get(declaration.id().qualifiedName());
             return snapshot == null
-                    ? new Flow(declaration.id().qualifiedName(), 0, 0, selected(declaration.metadata().namespace()))
-                    : new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks(), true);
+                    ? new Flow(declaration.id().qualifiedName(), declaration.executionClass().name(), 0, 0,
+                            selected(declaration.metadata().namespace()))
+                    : new Flow(snapshot.flowId(), declaration.executionClass().name(), snapshot.activeSessions(),
+                            snapshot.deferredTasks(), true);
         }).toList();
     }
     public List<Flow> flows(String namespace) { return flows().stream().filter(flow -> flow.id().startsWith(namespace + "/")).toList(); }
@@ -560,7 +567,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         stop();
         if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
     }
-    private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
+    private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.executionClass().name(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.labels(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
     private static Plugin plugin(DefaultPluginManager.PluginView view) {
         return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies().stream()
@@ -1007,7 +1014,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 .filter(policy -> policy.metadata().namespace().equals(definition.metadata().namespace()))
                 .map(policy -> new SessionCoordinationPolicy(policy.id().qualifiedName(), policy.matchLabels(),
                         policy.scheduling(), policy.dependencies())).toList();
-        return new KuudraFlow(definition.id().qualifiedName(), 1, nodes, edges, policies);
+        return new KuudraFlow(definition.id().qualifiedName(), 1, nodes, edges, policies, definition.executionClass());
     }
 
     static Map<String, EventDomain> inferAdapterDomains(KuudraManifest.Flow flow,
@@ -1087,7 +1094,11 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Set<KuudraManifest.ResourceId> importedSources = new LinkedHashSet<>();
             for (KuudraManifest.ResourceReference reference : flow.imports().values()) {
                 KuudraManifest.Component component = resources.components().get(reference.id());
-                if (component == null) continue;
+                if (component == null) {
+                    throw new IllegalArgumentException("Selected Flow " + flow.id()
+                            + " imports unavailable Component " + reference.id()
+                            + "; ensure the resource exists and its namespace is selected");
+                }
                 PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
                 if (component.type().equals("event-source") && !importedSources.add(component.id()))
                     throw new IllegalArgumentException("EventSource resource imported more than once by Flow; use multiple edges for fan-out: " + component.id());
@@ -1116,7 +1127,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) throw new IllegalArgumentException("Component must be namespace/component-id: " + component);
         return type + "/" + component;
     }
-    public record Flow(String id, int activeSessions, int deferredTasks, boolean selected) { }
+    public record Flow(String id, String executionClass, int activeSessions, int deferredTasks, boolean selected) { }
     public record KernelCheckpoint(RuntimeCheckpoint runtime, List<ComponentResource> components) {
         public KernelCheckpoint { components = List.copyOf(components); }
     }
@@ -1202,13 +1213,18 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         boolean source = component.type().equals("event-source");
         Object instance = manifestInstances.get(component.id());
         boolean kernelPaused = status == AppStatus.PAUSING || status == AppStatus.PAUSED;
+        boolean controlPlane = desiredResources().flows().values().stream()
+                .filter(flow -> selected(flow.metadata().namespace()))
+                .filter(flow -> flow.executionClass() == FlowExecutionClass.CONTROL)
+                .anyMatch(flow -> flow.imports().values().stream()
+                        .anyMatch(reference -> reference.id().equals(component.id())));
         String observed = runtime == null ? "NOT_RUNNING"
                 : manifestObservedStates.getOrDefault(component.id(), source ? "STOPPED" : "INACTIVE");
         boolean operational = observed.equals("RUNNING") || observed.equals("ACTIVE");
-        String effective = kernelPaused && operational ? "SUSPENDED" : observed;
-        List<String> suspensionReasons = kernelPaused && operational ? List.of("KERNEL")
+        String effective = kernelPaused && operational && !controlPlane ? "SUSPENDED" : observed;
+        List<String> suspensionReasons = kernelPaused && operational && !controlPlane ? List.of("KERNEL")
                 : observed.equals("PAUSED") ? List.of("COMPONENT") : List.of();
-        boolean available = operational && !kernelPaused;
+        boolean available = operational && (!kernelPaused || controlPlane);
         List<String> capabilities = new ArrayList<>(instance instanceof Lifecycle || source
                 ? List.of("start", "stop") : List.of("materialize", "destroy"));
         if (instance instanceof PausableLifecycle) capabilities.addAll(List.of("pause", "resume"));

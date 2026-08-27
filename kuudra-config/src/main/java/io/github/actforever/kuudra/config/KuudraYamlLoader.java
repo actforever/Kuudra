@@ -182,6 +182,10 @@ public final class KuudraYamlLoader {
                         case "Flow" -> {
                             if (spec.containsKey("desiredState")) throw new IllegalArgumentException("Flow is a routing declaration and does not support spec.desiredState");
                             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
+                            Map<String, Object> session = optionalMapping(spec, "session");
+                            io.github.actforever.kuudra.api.runtime.FlowExecutionClass executionClass = enumValue(
+                                    io.github.actforever.kuudra.api.runtime.FlowExecutionClass.class,
+                                    session.getOrDefault("executionClass", "DATA"));
                             Map<String, KuudraManifest.ResourceReference> imports = new LinkedHashMap<>();
                             for (Map.Entry<String, Object> entry : mapping(required(spec, "imports", document, "spec", "spec.imports: {alias: {kind: EventSource, name: resource-name}}"), source + ".spec.imports").entrySet()) {
                                 Map<String, Object> reference = mapping(entry.getValue(), source + ".spec.imports." + entry.getKey());
@@ -196,7 +200,7 @@ public final class KuudraYamlLoader {
                                 Map<String, Object> edge = mapping(item, source + ".spec.edges");
                                 edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"), string(required(edge, "to"), "edge.to")));
                             }
-                            KuudraManifest.Flow flow = new KuudraManifest.Flow(id, metadata, imports, edges);
+                            KuudraManifest.Flow flow = new KuudraManifest.Flow(id, metadata, executionClass, imports, edges);
                             if (flows.putIfAbsent(id, flow) != null) throw new IOException("Duplicate resource identity: " + id);
                         }
                         case "SessionCoordinationPolicy" -> {

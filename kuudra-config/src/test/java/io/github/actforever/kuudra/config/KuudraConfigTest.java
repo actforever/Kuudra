@@ -172,7 +172,7 @@ class KuudraConfigTest {
     }
 
     @Test
-    void rejectsLegacyComponentKindAndCrossNamespaceImports() throws Exception {
+    void acceptsExplicitCrossNamespaceImportsAndRejectsLegacyComponentKind() throws Exception {
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
         Files.writeString(manifests.resolve("handler.yaml"), """
@@ -186,11 +186,15 @@ class KuudraConfigTest {
                 kind: Flow
                 metadata: {namespace: isolated, name: flow}
                 spec:
+                  session: {executionClass: CONTROL}
                   imports:
                     handler: {kind: EventHandler, namespace: shared, name: handler}
                   edges: []
                 """);
-        assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+        KuudraManifest.Flow flow = KuudraYamlLoader.load(directory.resolve("config.yaml"))
+                .manifests().flows().values().iterator().next();
+        assertEquals("shared", flow.imports().get("handler").namespace());
+        assertEquals(io.github.actforever.kuudra.api.runtime.FlowExecutionClass.CONTROL, flow.executionClass());
 
         Files.writeString(manifests.resolve("handler.yaml"), """
                 apiVersion: kuudra.io/v1alpha1

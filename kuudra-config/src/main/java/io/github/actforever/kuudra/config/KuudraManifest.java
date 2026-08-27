@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import io.github.actforever.kuudra.api.component.IngressConfiguration;
+import io.github.actforever.kuudra.api.runtime.FlowExecutionClass;
 import io.github.actforever.kuudra.api.session.SessionDependencyRequirement;
 
 /** Format-neutral K8s-style resource manifests discovered under the Kuudra home. */
@@ -51,16 +52,19 @@ public final class KuudraManifest {
         public String type() { return COMPONENT_KINDS.get(id.kind()); }
     }
 
-    public record Flow(ResourceId id, Metadata metadata,
+    public record Flow(ResourceId id, Metadata metadata, FlowExecutionClass executionClass,
                        Map<String, ResourceReference> imports, List<KuudraConfig.EdgeConfig> edges) {
+        public Flow(ResourceId id, Metadata metadata,
+                    Map<String, ResourceReference> imports, List<KuudraConfig.EdgeConfig> edges) {
+            this(id, metadata, FlowExecutionClass.DATA, imports, edges);
+        }
         public Flow {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
+            Objects.requireNonNull(executionClass, "executionClass");
             imports = Map.copyOf(imports); edges = List.copyOf(edges);
             if (imports.isEmpty()) throw new IllegalArgumentException("Flow imports must not be empty");
             for (ResourceReference reference : imports.values()) {
                 if (!COMPONENT_KINDS.containsKey(reference.kind())) throw new IllegalArgumentException("Flow import kind must be a concrete component kind: " + reference.kind());
-                if (!reference.namespace().equals(metadata.namespace())) throw new IllegalArgumentException(
-                        "Cross-namespace Flow import is not allowed: " + metadata.namespace() + " -> " + reference.namespace());
             }
             var uniqueEdges = new HashSet<KuudraConfig.EdgeConfig>();
             for (KuudraConfig.EdgeConfig edge : edges) {

@@ -20,6 +20,38 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void controlFlowContinuesWhileKernelPauseSuspendsDataFlow() throws Exception {
+        CountDownLatch controlHandled = new CountDownLatch(1);
+        CountDownLatch dataHandled = new CountDownLatch(1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("data", 1, Map.of(
+                    "sink", new FlowNode.AdapterNode("sink", (event, context) -> {
+                        dataHandled.countDown();
+                        return List.of();
+                    }, EventDomain.RAW)), Map.of(), List.of(), FlowExecutionClass.DATA));
+            runtime.registerFlow(new KuudraFlow("control", 1, Map.of(
+                    "sink", new FlowNode.AdapterNode("sink", (event, context) -> {
+                        assertEquals(ExecutionDecision.CONTINUE, context.executionControl().poll());
+                        assertFalse(context.executionControl().suspensionReasons().contains(SuspensionReason.KERNEL));
+                        controlHandled.countDown();
+                        return List.of();
+                    }, EventDomain.RAW)), Map.of(), List.of(), FlowExecutionClass.CONTROL));
+            assertEquals(FlowExecutionClass.CONTROL,
+                    runtime.flow("control").orElseThrow().executionClass());
+
+            runtime.pause();
+            assertFalse(runtime.publish("data", "sink", KuudraEvent.of("data", Map.of())));
+            assertTrue(runtime.publish("control", "sink", KuudraEvent.of("control", Map.of())));
+            assertTrue(controlHandled.await(1, TimeUnit.SECONDS));
+            assertEquals(1, dataHandled.getCount());
+
+            runtime.resume();
+            assertTrue(runtime.publish("data", "sink", KuudraEvent.of("data", Map.of())));
+            assertTrue(dataHandled.await(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void sharedNonThreadSafeComponentIsSerializedAcrossFlowBindings() throws Exception {
         CountDownLatch firstEntered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

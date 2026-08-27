@@ -10,4 +10,9 @@ import io.github.actforever.kuudra.api.runtime.*;
 import io.github.actforever.kuudra.api.session.*;
 import io.github.actforever.kuudra.api.system.*;
 
-public record FlowSnapshot(String flowId, int activeSessions, int deferredTasks) { }
+public record FlowSnapshot(String flowId, FlowExecutionClass executionClass,
+                           int activeSessions, int deferredTasks) {
+    public FlowSnapshot(String flowId, int activeSessions, int deferredTasks) {
+        this(flowId, FlowExecutionClass.DATA, activeSessions, deferredTasks);
+    }
+}
