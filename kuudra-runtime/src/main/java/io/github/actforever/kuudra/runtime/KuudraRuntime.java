@@ -71,6 +71,11 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     public GlobalContext globalContext() { return globalContext; }
     public SessionManager sessions() { return sessionManager; }
     public SessionCoordinator coordinator() { return coordinator; }
+    public List<SessionDependencySnapshot> sessionDependencies() {
+        return coordinator.dependencySnapshot().stream()
+                .map(edge -> new SessionDependencySnapshot(edge.dependentSessionId(), edge.requiredSessionId(), edge.terminationPolicy()))
+                .toList();
+    }
     public FlowContext flowContext(String flowId) { synchronized (monitor) { return requireFlow(flowId).context; } }
     public int queuedTasks() { return queue.size(); }
 
@@ -274,16 +279,23 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     }
     private void executeIngress(RegisteredFlow flow,FlowNode.IngressNode node,KuudraEvent input,EventContext context){
         IngressDecision decision=node.ingress().admit(input,context);if(decision instanceof IngressDecision.Rejected rejected){event("ingress.rejected",Map.of("ingressId",node.id(),"reason",rejected.reason()));return;}
-        IngressDecision.Accepted accepted=(IngressDecision.Accepted)decision;
+        String groupKey; KuudraEvent acceptedEvent; Map<String,Object> initialSessionContext; List<SessionDependencyRequirement> dependencies;
+        if(decision instanceof IngressDecision.ConstrainedAccepted accepted){groupKey=accepted.groupKey();acceptedEvent=accepted.event();initialSessionContext=accepted.initialSessionContext();dependencies=accepted.dependencies();}
+        else {IngressDecision.Accepted accepted=(IngressDecision.Accepted)decision;groupKey=accepted.groupKey();acceptedEvent=accepted.event();initialSessionContext=accepted.initialSessionContext();dependencies=List.of();}
         String scope=node.scheduling().groupScope()==SessionGroupScope.INGRESS?node.instanceId():flow.flow.id()+"@"+flow.flow.revision();
-        SessionCoordinator.Group group=new SessionCoordinator.Group(scope,node.instanceId(),accepted.groupKey());
+        SessionCoordinator.Group group=new SessionCoordinator.Group(scope,node.instanceId(),groupKey);
         Runnable launch=()->{
-            SessionManager.ManagedSession session=sessionManager.create(flow.flow.id(),flow.flow.revision(),node.id(),accepted.groupKey(),accepted.initialSessionContext());
-            coordinator.activated(group,session.id);event("session.active",Map.of("sessionId",session.id.toString(),"groupKey",accepted.groupKey(),"ingressId",node.id()));
-            SessionEventWrapper wrapper=new SessionEventWrapper(derive(input,accepted.event(),false,null),session.reference());
+            SessionManager.ManagedSession session=sessionManager.create(flow.flow.id(),flow.flow.revision(),node.id(),groupKey,initialSessionContext);
+            boolean activated=coordinator.activated(group,new SessionCoordinator.CoordinatedSession(session.id,flow.flow.id(),node.instanceId(),groupKey),dependencies);
+            if(!activated){event("session.dependency.rejected",Map.of("sessionId",session.id.toString(),"groupKey",groupKey,"ingressId",node.id()));sessionManager.cancel(session.id);return;}
+            coordinator.dependencySnapshot().stream().filter(edge->edge.dependentSessionId().equals(session.id)).forEach(edge->
+                    event("session.dependency.established",Map.of("dependentSessionId",edge.dependentSessionId().toString(),
+                            "requiredSessionId",edge.requiredSessionId().toString(),"terminationPolicy",edge.terminationPolicy().name())));
+            event("session.active",Map.of("sessionId",session.id.toString(),"groupKey",groupKey,"ingressId",node.id()));
+            SessionEventWrapper wrapper=new SessionEventWrapper(derive(input,acceptedEvent,false,null),session.reference());
             for(String next:flow.flow.next(node.id()))enqueue(flow,next,wrapper);sessionManager.completeIfIdle(session);
         };
-        boolean admitted=coordinator.admit(group,node.scheduling(),launch,this::cancel);if(!admitted)event("ingress.deferred-or-dropped",Map.of("ingressId",node.id(),"groupKey",accepted.groupKey(),"policy",node.scheduling().policy().name()));
+        boolean admitted=coordinator.admit(group,node.scheduling(),launch,this::cancel);if(!admitted)event("ingress.deferred-or-dropped",Map.of("ingressId",node.id(),"groupKey",groupKey,"policy",node.scheduling().policy().name()));
     }
     private void route(RegisteredFlow flow,FlowNode node,KuudraEventWrapper input,List<KuudraEvent> outputs){for(KuudraEvent output:outputs)routeOne(flow,node,input,output);}
     private boolean routeOne(RegisteredFlow flow,FlowNode node,KuudraEventWrapper input,KuudraEvent output){
@@ -298,7 +310,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         Map<String,Object> configuration=flow.configuration.get(nodeId).resolve(event,base);
         return new EventContext(base.flowId(),base.session(),base.sessionValues(),base.sessionContext(),base.flowValues(),base.flowContext(),base.executionControl(),base.globalValues(),base.globalContext(),configuration);
     }
-    private void sessionTerminal(SessionManager.ManagedSession session){SessionCoordinator.Group group=findGroup(session);coordinator.terminal(group,session.id);event("session."+session.status.name().toLowerCase(),Map.of("sessionId",session.id.toString(),"groupKey",session.groupKey));}
+    private void sessionTerminal(SessionManager.ManagedSession session){SessionCoordinator.Group group=findGroup(session);coordinator.terminal(group,session.id,target->{event("session.dependency.termination-propagated",Map.of("terminalSessionId",session.id.toString(),"targetSessionId",target.toString()));cancel(target);});event("session."+session.status.name().toLowerCase(),Map.of("sessionId",session.id.toString(),"groupKey",session.groupKey));}
     private SessionCoordinator.Group findGroup(SessionManager.ManagedSession session){RegisteredFlow flow=registeredFlow(session.flowId);FlowNode.IngressNode ingress=(FlowNode.IngressNode)flow.flow.node(session.ingressId);String scope=ingress.scheduling().groupScope()==SessionGroupScope.INGRESS?ingress.instanceId():flow.flow.id()+"@"+session.revision;return new SessionCoordinator.Group(scope,ingress.instanceId(),session.groupKey);}
     private void enterExecution() throws InterruptedException { synchronized (monitor) { while (paused && !closed.get()) monitor.wait(); if(closed.get())throw new InterruptedException("Runtime closed");activeExecutions++; } }
     private void exitExecution() { synchronized (monitor) { activeExecutions--;if(activeExecutions<0)throw new KuudraException("Runtime execution counter underflow");if(activeExecutions==0)monitor.notifyAll(); } }

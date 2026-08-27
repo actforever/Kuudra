@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -23,6 +24,12 @@ public class SessionController {
 
     public SessionController(KuudraApp app) {
         this.app = app;
+    }
+
+    @Operation(summary = "查询活动 Session 依赖关系")
+    @GetMapping("/dependencies")
+    List<KuudraApp.SessionDependency> dependencies() {
+        return app.sessionDependencies();
     }
 
     @Operation(summary = "获取 Session")

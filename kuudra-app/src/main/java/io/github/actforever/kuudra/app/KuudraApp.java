@@ -489,6 +489,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return component == null || !component.type().equals(type) ? Optional.empty() : Optional.of(componentResource(component));
     }
     public Optional<Session> session(UUID sessionId) { return requireRuntime().session(sessionId).map(KuudraApp::session); }
+    public List<SessionDependency> sessionDependencies() {
+        return requireRuntime().sessionDependencies().stream()
+                .map(dependency -> new SessionDependency(dependency.dependentSessionId(), dependency.requiredSessionId(),
+                        dependency.terminationPolicy().name()))
+                .toList();
+    }
     public boolean cancelSession(UUID sessionId) { return requireRuntime().cancel(sessionId); }
     public boolean pauseSession(UUID sessionId) { return requireRuntime().pauseSession(sessionId); }
     public boolean resumeSession(UUID sessionId) { return requireRuntime().resumeSession(sessionId); }
@@ -1063,6 +1069,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         public KernelCheckpoint { components = List.copyOf(components); }
     }
     public record Session(UUID id, String flowId, long flowRevision, String ingressId, String groupKey, String status, boolean cancellationRequested, int activeLeases) { }
+    public record SessionDependency(UUID dependentSessionId, UUID requiredSessionId, String terminationPolicy) { }
     public record Resource(String flowId, String id, String type, String component, String target, String status) { }
     public record ComponentResource(String kind, String namespace, String name, String component,
                                     String desiredState, String status, String effectiveStatus, boolean available,

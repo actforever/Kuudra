@@ -55,7 +55,20 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 - `CANCEL_AND_KEEP_PENDING`：请求取消活跃会话，待处理槽保留第一个事件；
 - `TOGGLE`：空闲时启动，繁忙时只请求取消且不积压。
 
-`SessionManager` 是单 Runtime 唯一会话事实源，负责 ID、Flow revision、Ingress/group、上下文、取消、快照和工作租约。Coordinator 只维护组调度，不直接修改 Session。
+`SessionManager` 是单 Runtime 唯一会话事实源，负责 ID、Flow revision、Ingress/group、上下文、取消、快照和工作租约。`SessionCoordinator` 维护两类互相正交的协调状态，但不直接修改 Session：
+
+1. **组内调度**：继续按 `PARALLEL/SERIAL/IGNORE/CANCEL_*/TOGGLE` 决定同一 Ingress group 的事件何时启动；
+2. **跨会话依赖图**：在会话真正启动时，把 `SessionDependencyRequirement` 的选择器原子解析为活动 Session，并登记 `dependent -> required` 有向边。
+
+依赖选择器可以按 Flow ID、Ingress Component 资源身份和 group key 组合匹配，空字段表示该维度不限制。`UNIQUE` 要求恰好一个匹配，`LATEST` 选择最近激活的匹配，`ALL` 连接全部匹配。依赖只接受当前仍活跃（包括暂停）的 Session；尤其是 `SERIAL` 队列中的事件，要到真正出队启动时才解析依赖，不能沿用入队时的过期判断。
+
+终态传播策略为：
+
+- `CANCEL_DEPENDENT`：required 结束时取消 dependent，适合“A 只能运行在 B 时间窗口内”；
+- `CANCEL_REQUIRED`：dependent 结束时取消 required；
+- `CANCEL_BOTH`：任意一端结束时请求取消另一端，表达共同生命周期。
+
+依赖关系是图而非 Session 父子层级。一个 Session 可以依赖多个 Session，也可以被多个 Session 依赖；终态传播通过幂等取消沿图逐步收敛。依赖登记、拒绝和终态传播分别发布 `session.dependency.established`、`session.dependency.rejected` 和 `session.dependency.termination-propagated`，活动边可经 App/Web Session API 查询。
 
 ## 5. 租约、结束与取消
 
@@ -63,7 +76,7 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 
 Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消与暂停都是协作式的：`EventContext` 和 `ActionContext` 统一暴露 `ExecutionControl`，组件可以用 `poll()` 无阻塞读取 `CONTINUE/PAUSE/CANCEL`，长时间异步任务则在可恢复边界调用 `checkpoint()`。旧 `CancellationToken` 仅作为迁移兼容接口保留。
 
-Session 不建立父子生命周期。Egress 后再次进入 Ingress 会创建独立 Session；二者只通过 EventLineage 保留因果关系，因此不存在父子取消、合并或引用计数冲突。
+Session 不建立隐式父子生命周期。Egress 后再次进入 Ingress 默认创建完全独立的 Session，二者只通过 EventLineage 保留因果关系；只有 Ingress 显式返回 `SessionDependencyRequirement` 时，Coordinator 才建立可观测的有向依赖边。依赖图不会改变 Event 与 Session 一对一绑定，也不采用引用计数推断业务结束。
 
 ## 6. 上下文与占位符
 

@@ -109,3 +109,5 @@ YAML 原生数字、布尔、Map、List 保持类型。JSON 对象/数组字符�
 | `groupKey` | `plain-ingress` 分组表达式，默认事件 type |
 
 Ingress 只计算准入与组键；SessionManager 创建会话并维护工作租约，SessionCoordinator 管理调度状态和队列。失败或取消只会阻止新工作，已有租约全部归还后才发布唯一终态并启动组内后继任务。
+
+Ingress 还可以在接受结果中声明跨会话依赖。组内调度策略先决定事件何时真正启动，随后 Coordinator 才原子解析活动 Session 选择器并登记依赖图，因此 SERIAL 等待项不会绑定已经结束的会话。选择器支持 `UNIQUE`、`LATEST`、`ALL`；终态传播支持 `CANCEL_DEPENDENT`、`CANCEL_REQUIRED`、`CANCEL_BOTH`。依赖无法满足时不向 SESSION 域路由事件，并发布 `session.dependency.rejected`。`GET /api/v1/runtime/sessions/dependencies` 返回当前活动依赖边。
