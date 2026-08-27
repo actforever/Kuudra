@@ -11,7 +11,7 @@
 
 The project is the ongoing replacement of the former Orcana/GTAV macro application. Its product and Maven identity is **Kuudra**.
 
-The first stable kernel release is `v0.4.0`. New plugins should depend on the stable `io.github.actforever:kuudra-api:v0.4.0` and `io.github.actforever:kuudra-plugin:v0.4.0` artifacts unless they intentionally target a later release.
+The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.1`. New plugins should depend on the stable `io.github.actforever:kuudra-api:v0.4.1` and `io.github.actforever:kuudra-plugin:v0.4.1` artifacts unless they intentionally target another release.
 
 The physical workspace may temporarily still be named `orcana` because Windows/IDE file handles blocked the requested rename. Treat it as a Kuudra repository; do not attempt another root-directory rename or delete nested Git metadata without explicit user coordination and a released workspace.
 
