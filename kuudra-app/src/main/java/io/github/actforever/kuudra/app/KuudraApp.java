@@ -949,7 +949,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 case "event-adapter" -> new FlowNode.AdapterNode(imported.getKey(), (EventAdapter) instance, adapterDomains.get(imported.getKey()), component.options());
                 case "event-interpreter" -> new FlowNode.InterpreterNode(imported.getKey(), (EventInterpreter) instance, component.options());
                 case "event-handler" -> new FlowNode.HandlerNode(imported.getKey(), (EventHandler) instance, component.options());
-                case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.id().qualifiedName(), (Ingress) instance, ingressConfiguration(component.options()), component.options());
+                case "ingress" -> new FlowNode.IngressNode(imported.getKey(), component.type() + "/" + component.id().qualifiedName(),
+                        (Ingress) instance, ingressConfiguration(component.options()), component.options());
                 case "egress" -> new FlowNode.EgressNode(imported.getKey(), (Egress) instance, component.options());
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };

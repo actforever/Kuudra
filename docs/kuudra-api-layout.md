@@ -11,7 +11,7 @@
 | `api.event` | 业务事件、执行域、Wrapper、lineage 与事件发射端口 |
 | `api.lifecycle` | 标准生命周期及可暂停生命周期 |
 | `api.runtime` | Runtime 检查点、Flow 快照和只读状态视图 |
-| `api.session` | Session 标识、状态、快照、分组与调度策略 |
+| `api.session` | Session 标识、状态、快照、分组调度，以及活动 Session 选择与终态传播依赖契约 |
 | `api.system` | 只用于观测的系统事件及发布/订阅端口 |
 
 子包是公开 API 的组成部分。插件应导入具体类型，不依赖根包通配符；新增契约时应放入职责最接近的子包，避免重新堆积到 `api` 根包。

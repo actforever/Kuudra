@@ -28,6 +28,8 @@ Wrapper 是 Runtime 路由状态，不是插件应写入上下文的数据。Flo
 
 插件可注册以上组件。外置的 `kuudra-default-plugin` 作为普通 JAR 以 `kuudra-official/default` 身份加载，提供 `ingress/kuudra-official/plain-ingress` 与 `egress/kuudra-official/plain-egress`；未部署该 JAR 时内核不会注入任何默认组件。`SessionManager` 和 `SessionCoordinator` 只能由 Runtime 提供，不属于插件资源或路由节点。
 
+条件边界保持为独立的外置 `kuudra-official/conditional-boundary` 插件，而不扩大 default 插件职责。它提供 `ingress/kuudra-official/conditional-ingress` 和 `egress/kuudra-official/conditional-egress`：前者在 RAW 域读取 Event/Flow/Global 条件，后者在 SESSION 域还可读取 Session。两者的条件参数继续走 Flow 注册期占位符编译；不匹配分别表现为拒绝准入或不导出 Event。Conditional Ingress 还可以返回显式 Session 依赖要求，但依赖解析、登记和终态传播仍完全由 Runtime/Coordinator 执行。
+
 ## 3. FlowBinding 与静态校验
 
 Flow 仍是 K8s 风格资源，通过 `spec.imports` 导入 Component，并通过 `edges` 定义无条件路由。`FlowBinding` 是 App 将资源实例、Flow revision、节点别名、边、域和预编译配置组合后的内部概念，不是用户资源。

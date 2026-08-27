@@ -11,7 +11,7 @@
 
 The project is the ongoing replacement of the former Orcana/GTAV macro application. Its product and Maven identity is **Kuudra**.
 
-The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.1`. New plugins should depend on the stable `io.github.actforever:kuudra-api:v0.4.1` and `io.github.actforever:kuudra-plugin:v0.4.1` artifacts unless they intentionally target another release.
+The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.1`, while the main branch targets `v0.4.2-SNAPSHOT`. New released plugins should depend on stable `io.github.actforever:kuudra-api:v0.4.1` and `io.github.actforever:kuudra-plugin:v0.4.1` artifacts unless they intentionally use the new Session dependency API and target `v0.4.2-SNAPSHOT`.
 
 The physical workspace may temporarily still be named `orcana` because Windows/IDE file handles blocked the requested rename. Treat it as a Kuudra repository; do not attempt another root-directory rename or delete nested Git metadata without explicit user coordination and a released workspace.
 
@@ -29,7 +29,7 @@ The tracked Maven reactor is:
 | `kuudra-web` | The sole HTTP REST/SSE adapter. It exposes **App**, never Runtime. |
 | `kuudra-logging` | Spring-independent colored console logging, SystemEvent projection, and per-run file archival. |
 
-`plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations. The external `kuudra-official-plugins` workspace contains the ordinary deployable default, HelloWorld and logging plugins plus examples; none are implicitly registered by App. The official pass-through boundaries are `ingress/kuudra-official/plain-ingress` and `egress/kuudra-official/plain-egress`. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts in the local Maven repository.
+`plugins/` is intentionally excluded by the root `.gitignore`. It is a local Maven aggregator for plugin implementations. The external `kuudra-official-plugins` workspace contains the ordinary deployable default, conditional-boundary, HelloWorld and logging plugins plus examples; none are implicitly registered by App. The default pass-through boundaries are `ingress/kuudra-official/plain-ingress` and `egress/kuudra-official/plain-egress`. The separate `kuudra-official/conditional-boundary` plugin provides `conditional-ingress` and `conditional-egress`; conditional Ingress may declare Session dependency requirements but never accesses SessionManager directly. Plugin builds expect `kuudra-api` and `kuudra-plugin` artifacts in the local Maven repository.
 
 For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins`: every JAR is strictly loaded. A plugin home is `<plugins>/<namespace>/<plugin-id>` and is created only when that plugin enters initialization. Invalid/non-Kuudra JARs are fatal startup errors. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce configurable plugin directories or a collision with the build-only `plugins/` directory.
 

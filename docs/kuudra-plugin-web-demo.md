@@ -34,6 +34,8 @@ event-handler/<namespace>/<name>
 
 插件可声明 `@EventSource`、`@EventInterpreter`、`@EventAdapter`、`@Ingress`、`@EventHandler` 与 `@Egress`。SessionManager 和 SessionCoordinator 由 Runtime 提供，插件不能注册或替换。`EventData` 是不可变的命名空间容器，插件应以自身 namespace 读写属性。
 
+官方条件边界被隔离在外置 `kuudra-official/conditional-boundary` 插件中：`conditional-ingress` 可基于 Event/Flow/Global 占位符决定准入并声明活动 Session 依赖，`conditional-egress` 可额外读取 Session 域决定是否导出。插件只构造 `IngressDecision`，不能直接查询或修改 SessionManager；依赖选择和终态传播由 Coordinator 原子执行。
+
 插件在 `initialize(PluginContext)` 前由内核创建专属家目录，路径通过 `PluginContext.home()` 获得。该目录固定为 `<home-directory>/plugins/<plugin-namespace>/<plugin-id>/`，只有对应插件真正被加载并初始化时才创建。插件可通过 `PluginContext.resources()` 注册需要在卸载时关闭的资源。
 
 由配置创建的 Source、Interpreter、Adapter、Ingress、Handler 或 Egress 若需要实例级资源管理，可实现 `PluginComponentLifecycle`：`initialize(PluginComponentContext)` 在所属插件进入 `ACTIVE` 后、接入 Flow 前调用；`destroy()` 在 Runtime 已停止 Source 投递后、插件 `stop()` 前按组件创建的逆序调用。
