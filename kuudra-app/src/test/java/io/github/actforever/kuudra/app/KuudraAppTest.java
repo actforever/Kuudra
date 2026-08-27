@@ -352,6 +352,59 @@ class KuudraAppTest {
     }
 
     @Test
+    void oneIngressAliasSupportsRawFanInAndSessionFanOut() throws Exception {
+        installDefaultTestPlugin();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("ingress-boundary.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: test, name: first-source}
+                spec: {component: kuudra-official/standalone-source, desiredState: stopped, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: test, name: second-source}
+                spec: {component: kuudra-official/standalone-source, desiredState: stopped, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: boundary}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: test, name: first-output}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Egress
+                metadata: {namespace: test, name: second-output}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: test, name: ingress-boundary}
+                spec:
+                  imports:
+                    first-source: {kind: EventSource, name: first-source}
+                    second-source: {kind: EventSource, name: second-source}
+                    ingress: {kind: Ingress, name: boundary}
+                    first-output: {kind: Egress, name: first-output}
+                    second-output: {kind: Egress, name: second-output}
+                  edges:
+                    - {from: first-source, to: ingress}
+                    - {from: second-source, to: ingress}
+                    - {from: ingress, to: first-output}
+                    - {from: ingress, to: second-output}
+                """);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertTrue(app.flow("test/ingress-boundary").isPresent());
+            assertEquals(java.util.List.of("test/ingress-boundary"),
+                    app.resource("Ingress", "test", "boundary").orElseThrow().importedBy());
+        }
+    }
+
+    @Test
     void oneFlowRejectsDuplicateAliasesForTheSameEventSourceResource() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
