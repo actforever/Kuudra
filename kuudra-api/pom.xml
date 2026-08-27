@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.github.actforever</groupId>
         <artifactId>kuudra</artifactId>
-        <version>v0.4.1</version>
+        <version>v0.4.2-SNAPSHOT</version>
     </parent>
     <artifactId>kuudra-api</artifactId>
     <dependencies>
