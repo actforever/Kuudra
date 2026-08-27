@@ -11,9 +11,9 @@
 
 The project is the ongoing replacement of the former Orcana/GTAV macro application. Its product and Maven identity is **Kuudra**.
 
-The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.3`, while main targets `v0.4.4.-alpha-1`. Released plugins should use stable `v0.4.3` unless they intentionally adopt the cross-namespace/control-plane Flow API.
+The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.3`, while main targets `v0.4.4-alpha-1`. Released plugins should use stable `v0.4.3` unless they intentionally adopt the cross-namespace/control-plane Flow API.
 
-Stable releases use `vX.X.X`. Every intermediate development version must use the exact `vX.X.X.-alpha-N` form, with `N` increasing from 1; do not publish or document `SNAPSHOT` as an intermediate version. After a stable release, begin the next development line at the next intended stable version's `.-alpha-1` identifier.
+Stable releases use `vX.X.X`. Every intermediate development version must use the exact `vX.X.X-alpha-N` form, with `N` increasing from 1; do not publish or document `SNAPSHOT` as an intermediate version. After a stable release, begin the next development line at the next intended stable version's `-alpha-1` identifier.
 
 The physical workspace may temporarily still be named `orcana` because Windows/IDE file handles blocked the requested rename. Treat it as a Kuudra repository; do not attempt another root-directory rename or delete nested Git metadata without explicit user coordination and a released workspace.
 
