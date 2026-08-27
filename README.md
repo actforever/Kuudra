@@ -51,15 +51,15 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
   state/kuudra.db            # 资源期望/观测状态与 generation
 ```
 
-核心不再内置或隐式注册组件；`kuudra-default-plugin` 已迁移为同级独立项目，构建后也必须作为普通 JAR 放入 `plugins/`。所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`，Flow 只能导入同 namespace 资源。
+核心不再内置或隐式注册组件；`kuudra-default-plugin` 已迁移为同级独立项目，构建后也必须作为普通 JAR 放入 `plugins/`。所有插件 JAR 都必须是合法 Kuudra 插件，否则启动失败。插件通过 `META-INF/kuudra-plugin/metadata.toml` 声明 ID、namespace、版本、入口和结构化依赖；依赖项包含 namespace、插件 ID、是否强制以及 Forge/Maven 风格版本范围。插件版本使用点分隔数字段，可带 `-prerelease`/`+build` 后缀但不带前导 `v`。依赖插件的类与资源对下游插件可见。插件运行目录固定为 `plugins/<namespace>/<plugin-id>/`。具体组件 kind 与 Flow 资源统一放在 `manifests/`；Flow 默认导入自身 namespace，也可显式导入另一个已激活 namespace 的资源。
 
-清单 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；内核对应的组件 type 分别采用 kebab-case。资源规范身份为 `kind/namespace/name`，Flow 通过同命名空间 import 将该身份绑定为局部路由别名。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时通过统一的 `TypedValueMap` 读取并转换资源 `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
+清单 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；内核对应的组件 type 分别采用 kebab-case。资源规范身份为 `kind/namespace/name`，Flow 通过 import 将该身份绑定为局部路由别名；跨 namespace 引用仍共享同一个 App 实例，并要求双方 namespace 都在 `resource-selection` 中激活。插件组件实现 `PluginComponentLifecycle` 后，可在初始化时通过统一的 `TypedValueMap` 读取并转换资源 `options`；EventSource 产生 `KuudraEvent`，Runtime 在入队时负责构造 `RawEventWrapper`。
 
 插件组件可使用 `@ComponentDoc` 与 `@EventEmission` 声明结构化用途、示例、生命周期和输出事件说明，并通过 App/Web API 查询。插件通过上下文提供的 `PluginLogger` 写日志，日志自动携带插件身份并进入内核 SystemEvent 日志链路。Knife4j 默认展示聚合 `all` 分组，也保留按能力拆分的分组。
 
 ```powershell
 mvn test -DskipTests=false
-java -jar kuudra-web/target/kuudra-web-v0.4.3.jar
+java -jar kuudra-web/target/kuudra-web-v0.4.4.-alpha-1.jar
 ```
 
 启动后可访问 `GET /api/v1/kuudra/status`、`GET /api/v1/runtime/sessions/{id}`、`POST /api/v1/runtime/sessions/{id}/cancel` 和 `/doc.html`。

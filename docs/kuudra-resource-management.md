@@ -4,7 +4,7 @@ Kuudra 的配置和控制面遵循面向资源的风格：组件以声明式 YAM
 
 ## 身份与边界
 
-资源的逻辑身份和规范路由地址为 `kind/namespace/name`，例如 `EventSource/macros/keyboard-hook`。`namespace` 是 App 内强制执行的资源隔离边界；Flow 只能导入同一 namespace 的资源，并在自身路由图中为它们分配局部别名。插件组件定义是另一层身份，格式为 `type/plugin-namespace/component-name`，例如 `event-source/hello-world/loop-emitter`。
+资源的逻辑身份和规范路由地址为 `kind/namespace/name`，例如 `EventSource/macros/keyboard-hook`。`namespace` 是 App 的部署选择和资源身份边界；Flow 默认导入同一 namespace 的资源，也可显式引用另一个已激活 namespace，并在自身路由图中分配局部别名。跨 namespace 不会复制实例或隐式激活资源。插件组件定义是另一层身份，格式为 `type/plugin-namespace/component-name`，例如 `event-source/hello-world/loop-emitter`。
 
 这两层身份必须区分：一个插件组件定义可被多个 Flow 声明为独立资源，而每个资源各自拥有启停状态和目标节点。
 

@@ -68,7 +68,7 @@ EventSource 和 EventHandler 实现生命周期，因此期望状态是 `running
 
 ```powershell
 mvn -pl kuudra-web -am package -DskipTests
-Copy-Item kuudra-web/target/kuudra-web-v0.4.3.jar ./kuudra-e2e.jar
+Copy-Item kuudra-web/target/kuudra-web-v0.4.4.-alpha-1.jar ./kuudra-e2e.jar
 java -jar ./kuudra-e2e.jar
 ```
 
@@ -95,13 +95,20 @@ java -jar ./kuudra-e2e.jar
 | 被动组件门控 | Ingress 改为 `inactive` | 资源实例和 Flow 绑定保留，但事件不再准入；恢复 `active` 后继续 |
 | StateStore | API 将磁盘中为 running 的资源改为 stopped | 当前 generation 收敛并持久化；下一次 start 以 manifests 为权威恢复 running |
 | 失败重试 | 生命周期第一次调谐失败 | StateStore 先记录 FAILED，周期循环重试同一 generation，最终进入 READY |
-| 内核暂停 | 调用 `/pause` | observed state 不变，effectiveStatus 为 `SUSPENDED` 且原因是 `KERNEL`，事件停止流转 |
+| DATA 内核暂停 | DATA Flow 下调用 `/pause` | observed state 不变，effectiveStatus 为 `SUSPENDED` 且原因是 `KERNEL`，DATA 事件停止流转 |
+| CONTROL 暂停旁路 | `system` CONTROL Flow 显式导入 `macro` EventSource 后调用 `/pause` | 两个 namespace 均被选中；Flow 继续输出控制事件，共享 Source 保持 available，组件/Session 自身暂停仍有效 |
 | 内核恢复 | 调用 `/resume` | effectiveStatus 恢复，事件从保留的组件状态继续流转 |
 | 暂停态停止 | `PAUSED` 时调用 `/stop` | 正常走 `STOPPING -> STOPPED`，释放 Runtime、Session、组件和插件 |
 | 暂停态重启 | `PAUSED` 时调用 `/restart` | 正常停止后重新加载 manifests，最终回到 RUNNING，不走强制清空分支 |
 | 清单重载 | 修改 EventSource interval 后 `/restart` | 新实例采用新间隔；运行期间不会隐式扫描磁盘 |
 | 清单诊断 | 将 `spec.edges` 误写后 `/restart` | 返回失败并进入 FAILED，错误包含文件、文档号、附近行、资源身份、字段和正确格式；修复后 `/start` 可恢复 |
 | 文件日志 | 正常停止并再次启动 | 停止产生日期序号 gzip 且保留 latest.log；下一次启动才新建 latest.log |
+
+### 跨命名空间控制 Flow 黑箱验证
+
+使用真实 `kuudra-official/hello-world`、`kuudra-official/default` 和 `kuudra-official/logging` JAR：在 `macro` namespace 只声明一个周期 EventSource，在 `system` namespace 声明 plain Ingress、日志 Handler 与 `spec.session.executionClass: CONTROL` Flow。Flow 的 source import 显式写 `namespace: macro`，根配置使用 `resource-selection.namespace-mode: INCLUDE` 并同时选择 `[macro, system]`。
+
+验证时先确认 Flow API 返回 `executionClass: CONTROL` 且日志持续出现事件，再调用 `/api/v1/kuudra/pause`。等待至少两个 EventSource 周期后，日志计数必须继续增长，`EventSource/macro/...` 的 `status/effectiveStatus` 均保持 `RUNNING` 且 `available: true`。随后从 PAUSED 调用 `/stop`，两类执行器、组件和插件必须正常释放。另一次启动只选择 `system` 时必须因所引用的 `macro` 资源不在激活闭包内而失败，不能隐式扩大 namespace 集合。
 
 ### 会话依赖真实插件验证
 

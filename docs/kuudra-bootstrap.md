@@ -64,6 +64,8 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`、`SessionCoordinationPolicy` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
 
+Flow import 未填写 `namespace` 时默认引用 Flow 自身命名空间；显式填写时允许跨命名空间引用同一个 `kind/namespace/name` 实例。跨命名空间不会复制资源或绕过实例限制。Flow 和被引用资源各自是否实例化仍只由 `resource-selection` 决定；若选中了 Flow 却没有选中它显式引用的资源命名空间，启动会以缺失引用失败。因而共享 `macro` 下的全局 EventSource 给 `system` 控制 Flow 时，应同时激活 `macro` 与 `system`。
+
 Adapter 的域属于 Flow import binding：同一个 Adapter 实现以及同一个 Component 资源都可以在 RAW 和 SESSION 两侧绑定。相同 `kind/namespace/name` 永远指向同一个 App 所有实例；alias 只标识节点，需要隔离时必须声明不同名称的资源。每个 binding 的 `options` 都按推导域预编译，RAW binding 不允许引用 `${session#...}`，SESSION binding 则允许。插件声明 `threadSafe=false` 时，Runtime 会按资源实例串行化所有 binding 的调用。
 
 插件组件实现 `PluginComponentLifecycle` 后，会在 `initialize(PluginComponentContext)` 阶段收到当前 Component 清单的不可变 `options`。EventSource 等没有事件执行上下文的有状态资源，应在这里读取并校验启动参数；运行阶段不再重复解释 YAML。`PluginComponentContext`、`EventContext` 与 `ActionContext` 统一通过 `TypedValueMap` 提供 `configuration(key, Type)` 和带默认值的读取接口，查找、缺失值处理及 `ContextCodec` 类型转换不需要由插件重复实现。
@@ -103,6 +105,18 @@ Runtime 注册 Flow 时基于节点输入域调用 `PlaceholderResolver.compileM
 YAML 原生数字、布尔、Map、List 保持类型。JSON 对象/数组字符串解析成不可变兼容值；含占位符的 JSON 在插值后解析。默认 ContextCodec 在写入时把 POJO 编码为 JSON 树，只有 `get("key", Type.class)` 或 `configuration("key", Type.class)` 才按需转换。
 
 ## SessionCoordinationPolicy
+
+`Flow`、`SessionCoordinationPolicy` 属于 Kuudra 内核直接解析和维护的基础设施资源；`EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 则是插件提供 ComponentTemplate 后由 App 实例化的上层资源。两层资源使用相同的 `apiVersion/kind/metadata/spec` 信封、StateStore 和查询入口，但只有插件组件资源具有 `desiredState`。
+
+Flow 可通过 `spec.session.executionClass` 选择执行平面：
+
+```yaml
+spec:
+  session:
+    executionClass: CONTROL # 默认 DATA
+```
+
+`DATA` Flow 在内核暂停时停止准入和继续执行；`CONTROL` Flow 使用独立执行器，在 `PAUSED` 状态仍可路由，以承载恢复、停止、Session 控制和诊断事件。`STOPPING/STOPPED` 对两类 Flow 一视同仁，停止后不存在继续运行的插件组件。Ingress 仍是唯一 RAW 到 SESSION 边界：其组件通过 `IngressDecision.Accepted` 输出组键、初始 Session 上下文和标签；YAML 中这些参数位于该 Ingress 的 `spec.options`，具体字段由组件文档定义。Ingress 不持有 `SessionCoordinationPolicy` 引用。
 
 | 参数 | 含义 |
 | --- | --- |

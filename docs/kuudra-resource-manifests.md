@@ -1,6 +1,6 @@
 # Kuudra 资源清单与调谐模型
 
-本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用同命名空间的组件资源并配置路由，组件资源不引用 Flow。组件 desired-state 写入和后台失败重试已经接入同一调谐链路；通用资源 apply/delete 仍是后续工作。
+本文定义并记录 Kuudra 的资源与编排模型。当前版本从 `<home-directory>/manifests/**/*.yaml` 加载具体组件 kind 与 Flow；Flow 通过 `spec.imports` 引用本命名空间或其他已激活命名空间的组件资源并配置路由，组件资源不引用 Flow。组件 desired-state 写入和后台失败重试已经接入同一调谐链路；通用资源 apply/delete 仍是后续工作。
 
 当前 App/Web 通过统一的 `GET /api/v1/runtime/components` 查询所有清单 Component，而不再为 EventSource 维护重复的专用 HTTP API。结果返回类型、插件 ComponentTemplate 引用、期望/实际状态、导入它的 Flow 和真实生命周期能力，也可按类型、命名空间或 `kind/namespace/name` 定位。Component 期望状态统一通过 Runtime 资源域控制，不伪造与能力不匹配的 start/stop 操作。
 
@@ -12,7 +12,16 @@
 4. 文件启动和未来的 `kuudractl apply` 使用同一种资源对象及调谐链路。
 5. 生命周期控制表达期望状态，App 负责把实际状态收敛到期望状态并报告失败条件。
 
-## 三层模型
+## 两层资源基础设施
+
+Kuudra 的可部署资源分为两层：
+
+- **内核基础设施资源**：`Flow`、`SessionCoordinationPolicy` 等由 App 直接解析、校验和编译，描述路由及会话协调规则，不由插件实例化，也没有 `desiredState`；
+- **插件组件资源**：`EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 由插件提供 ComponentTemplate，由 App 创建实例并按组件能力调谐 `desiredState`。
+
+两层共用 K8s 风格信封、资源身份、StateStore、命名空间选择与查询入口。插件扫描产生的 ComponentTemplate 是上层资源的类型定义，不是第三种可部署资源。
+
+## 定义与实例化链路
 
 ```text
 插件组件定义                 资源声明                         Flow 编排
@@ -38,7 +47,7 @@ annotation/metadata   →   Component   ← import/绑定 →   Flow + edges
 
 ### Flow 配置
 
-Flow 资源描述“实例如何连接”。它是具体组件资源的消费者：`imports` 以 kind/namespace/name 引用资源并分配 Flow 内别名，`edges` 只引用这些别名。资源不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。`imports.*.namespace` 可省略并默认继承 Flow 的 `metadata.namespace`；显式字段继续保留以提供清楚的诊断和未来演进空间，但当前填写其他 namespace 仍会在加载阶段失败。
+Flow 资源描述“实例如何连接”。它是具体组件资源的消费者：`imports` 以 kind/namespace/name 引用资源并分配 Flow 内别名，`edges` 只引用这些别名。资源不允许引用或导入 Flow；Flow 也不再内嵌组件构造信息或拥有导入实例的生命周期。`imports.*.namespace` 可省略并默认继承 Flow 的 `metadata.namespace`；显式填写其他 namespace 则形成跨命名空间绑定。无论被多少 Flow 导入，相同资源身份始终对应同一个 App 所有实例。
 
 ## 清单格式
 
@@ -56,7 +65,7 @@ spec:
   component: native-input/jnativehook-keyboard
 ```
 
-资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`，规范路由地址为 `kind/namespace/name`。`metadata.namespace` 是内核强制执行的资源隔离边界，不等于插件 namespace、上下文 namespace 或实例互斥域；Flow 与被导入资源必须处于相同 namespace。缺省资源 namespace 可使用 `default`。
+资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`，规范路由地址为 `kind/namespace/name`。`metadata.namespace` 是部署选择与资源身份边界，不等于插件 namespace、上下文 namespace 或实例互斥域。Flow 默认引用自身 namespace，但允许显式引用其他已激活 namespace；缺省资源 namespace 可使用 `default`。
 
 一个文件既可以只包含一个资源，也可以像 Kubernetes 一样使用 `---` 分隔多个 YAML 文档。加载器会按“文件路径 + 文档序号”定位错误，并在全部文件和文档范围内检查重复资源身份。独立文件仍更便于原子更新和人工管理，但不再是格式限制。
 
@@ -111,6 +120,8 @@ metadata:
   namespace: macros
   name: combat
 spec:
+  session:
+    executionClass: DATA
   imports:
     keyboard:
       kind: EventSource
@@ -127,6 +138,26 @@ spec:
     - from: allocate
       to: robot
 ```
+
+`spec.session.executionClass` 默认为 `DATA`：内核暂停会阻止新事件进入并等待在途工作到达安全点。`CONTROL` Flow 使用独立执行器，内核处于 `PAUSED` 时仍可承载恢复、停止、Session 控制和诊断事件；组件级与 Session 级暂停/取消仍然有效，App 停止则会终止两种执行类别。CONTROL 只应用于有界控制路径。
+
+以下引用允许 `system` Flow 复用 `macro` 中的全局钩子实例：
+
+```yaml
+metadata:
+  namespace: system
+  name: keyboard-control
+spec:
+  session:
+    executionClass: CONTROL
+  imports:
+    keyboard:
+      kind: EventSource
+      namespace: macro
+      name: global-hook
+```
+
+启动配置必须同时选择 `system` 和 `macro`。如果选中的 Flow 引用了不存在或未选中 namespace 中的资源，启动会在创建任何执行绑定前失败，而不会隐式激活遗漏的 namespace。
 
 同一 namespace 的另一个 Flow 可以再次 import `EventSource/macros/keyboard-hook`。App 只创建并启动一个 EventSource，Runtime 为它安装一对多 emitter/binding，将产生的 Event 分别投递到两个 Flow 的目标别名。Flow 本身没有生命周期；暂停发生在 App 或 Session 层。
 
@@ -210,7 +241,7 @@ App 保存期望资源图，调谐器按以下顺序工作：
 
 ### 启动命名空间选择
 
-资源隔离不仅限制 Flow 只能导入自身命名空间的组件，也可以限制一次 App 运行实际部署的命名空间。`resource-selection.namespace-mode: ALL` 部署全部命名空间；`INCLUDE` 接受一个或多个命名空间。选择器只影响执行面，不过滤声明源或 StateStore，因此切换启动集合不会被误判成资源删除。资源与 Flow 查询返回 `selected`；未选中资源显示为 `EXCLUDED`，对它调用 desired-state 控制接口会失败。根配置和其他 App 设置一样在创建 App 时读取，修改后需要重新启动进程；同一 App 实例的 restart 当前只重新载入 manifests。
+资源隔离通过一次 App 运行实际激活的命名空间集合实现。`resource-selection.namespace-mode: ALL` 部署全部命名空间；`INCLUDE` 接受一个或多个命名空间。跨命名空间 import 不扩大该集合：选中的 Flow 及它引用的每个组件 namespace 都必须已经入选，否则选择闭包校验失败。选择器只影响执行面，不过滤声明源或 StateStore，因此切换启动集合不会被误判成资源删除。资源与 Flow 查询返回 `selected`；未选中资源显示为 `EXCLUDED`，对它调用 desired-state 控制接口会失败。根配置和其他 App 设置一样在创建 App 时读取，修改后需要重新启动进程；同一 App 实例的 restart 当前只重新载入 manifests。
 
 控制 API 应围绕资源，而不是为每种组件复制一套控制器：
 

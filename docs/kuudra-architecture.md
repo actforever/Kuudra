@@ -2,6 +2,8 @@
 
 本文是当前内核实现的架构基线，配套图为 [flow-arch.png](flow-arch.png)。
 
+部署模型由两层资源基础设施组成：内核基础设施层包含 `Flow`、`SessionCoordinationPolicy` 等声明式资源，由 App 解析和编译；插件资源层包含 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`，由插件提供模板并由 App 实例化、调谐。两层共享资源信封、StateStore、命名空间选择和查询入口，但只有插件组件具有 `desiredState`。
+
 ## 1. 事件实体与执行域
 
 `KuudraEvent` 只保存业务身份、类型、发生时间、不可变 `EventData` 和 `EventLineage`。它不保存 Session，也不存在“Session 可空”的模糊状态。
@@ -24,7 +26,7 @@ Wrapper 是 Runtime 路由状态，不是插件应写入上下文的数据。Flo
 | `EventHandler` | SESSION | SESSION | 异步业务处理，输出继承同一 Session，支持协作式取消 |
 | `Egress` | SESSION | RAW | 唯一出域边界，解除 Session/Flow 执行绑定并保留谱系 |
 
-`EventAdapter` 在 Component options 中声明绑定域，不能改变域。`EventInterpreter` 与 Adapter 不合并：前者表达持有资源和跨事件状态的解释过程，后者表达局部映射。组件名不携带 Raw/Session 域前缀；执行域只由 Runtime Wrapper 表达。Flow 不引入 port；需要分支时使用 Adapter，Handler 通过 `ActionContext.emit` 显式输出业务阶段事件。
+`EventAdapter` 不声明绑定域且不能改变域；App 根据每个 Flow binding 的拓扑分别推导 RAW 或 SESSION。`EventInterpreter` 与 Adapter 不合并：前者表达持有资源和跨事件状态的解释过程，后者表达局部映射。组件名不携带 Raw/Session 域前缀；执行域只由 Runtime Wrapper 表达。Flow 不引入 port；需要分支时使用 Adapter，Handler 通过 `ActionContext.emit` 显式输出业务阶段事件。
 
 插件可注册以上组件。外置的 `kuudra-default-plugin` 作为普通 JAR 以 `kuudra-official/default` 身份加载，提供 `ingress/kuudra-official/plain-ingress` 与 `egress/kuudra-official/plain-egress`；未部署该 JAR 时内核不会注入任何默认组件。`SessionManager` 和 `SessionCoordinator` 只能由 Runtime 提供，不属于插件资源或路由节点。
 
@@ -33,6 +35,10 @@ Wrapper 是 Runtime 路由状态，不是插件应写入上下文的数据。Flo
 ## 3. FlowBinding 与静态校验
 
 Flow 仍是 K8s 风格资源，通过 `spec.imports` 导入 Component，并通过 `edges` 定义无条件路由。`FlowBinding` 是 App 将资源实例、Flow revision、节点别名、边、域和预编译配置组合后的内部概念，不是用户资源。
+
+import 未写 namespace 时默认使用 Flow namespace；显式 namespace 可引用另一个已选择部署 namespace 中的资源。跨 namespace 只改变绑定位置，不复制实例，也不绕过 `resource-selection`：选中的 Flow 和全部被引用资源必须共同形成已选择闭包。
+
+Flow 的 `spec.session.executionClass` 默认为 `DATA`。DATA 工作受内核暂停闸门控制；`CONTROL` 使用独立执行器，暂停期间仍可传递恢复、停止、Session 控制与诊断事件。CONTROL 不绕过组件或 Session 自身的暂停/取消，App 停止会关闭两种执行类别。
 
 Flow 构造时验证每条边：
 
