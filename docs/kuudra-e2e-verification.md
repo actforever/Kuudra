@@ -68,7 +68,7 @@ EventSource 和 EventHandler 实现生命周期，因此期望状态是 `running
 
 ```powershell
 mvn -pl kuudra-web -am package -DskipTests
-Copy-Item kuudra-web/target/kuudra-web-v0.4.4.-alpha-1.jar ./kuudra-e2e.jar
+Copy-Item kuudra-web/target/kuudra-web-v0.4.4-alpha-1.jar ./kuudra-e2e.jar
 java -jar ./kuudra-e2e.jar
 ```
 
@@ -121,6 +121,21 @@ java -jar ./kuudra-e2e.jar
 5. 通过 App 停止接口关闭内核后，状态应为 `STOPPED`，Flow、Session、依赖边及任务队列均已释放。
 
 该用例同时证明：调度策略先于依赖解析、排队任务不会沿用过期选择结果、终止传播可被插件通过协作式检查观察，以及依赖图能够通过 App/Web 查询而不泄露 Runtime。
+
+### 平台无关输入真实插件验证
+
+使用 `actforever/user-interaction-spec`、`actforever/jnativehook`、`kuudra-official/default` 和 `kuudra-official/logging` 四个真实插件 JAR，以及外部插件仓库 `examples/user-interaction-logging` 的清单。JNativeHook 插件必须是包含第三方 native 资源的 shade 归档，不能把原始第三方 JAR 单独放进严格插件目录。
+
+验证步骤：
+
+1. 启动后 `/api/v1/plugin/actforever/jnativehook` 返回 `ACTIVE`，依赖列表包含强制的 `actforever/user-interaction-spec [0.1.0,0.2.0)`；
+2. ComponentTemplate API 返回四个 EventSource、完整生命周期、`RUNNING/PAUSED/STOPPED` 和 MouseMotion 结构化配置；
+3. `EventSource/macro/keyboard` 收敛为 `RUNNING`，Flow 与 Ingress 正常注册；
+4. 产生一次系统级 F24 press/release，日志必须依次出现 `Keyboard PRESSED: F24` 和 `Keyboard RELEASED: F24`；
+5. 日志中的业务数据必须是 `user-interaction.key={code=F24, location=STANDARD}`，原始码只出现在独立 `jnativehook` namespace；
+6. 正常停止 App，确认监听器、native hook lease 和采样线程释放。
+
+shade 归档包含 `META-INF/versions/**` 时，组件扫描器必须跳过这些 multi-release 类路径并让 JVM ClassLoader 选择版本；对应回归测试位于 `PluginArchiveLoaderTest`。
 
 `POST /api/v1/kuudra/restart` 重建的是 App 内核，并按约定重新读取 manifests；`config.yaml` 在 Web 宿主创建 App Bean 时合并，修改根配置（包括调谐开关、日志级别）后需要重启 Web 进程。二者不要混为同一种重载语义。
 

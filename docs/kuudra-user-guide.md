@@ -163,6 +163,48 @@ spec:
 
 启动后，`macro` 中唯一的 EventSource 每秒产生一个事件。`automation` Flow 跨 namespace 导入该实例，经 Ingress 创建 Session，再由日志 Handler 输出 `Received hello-world`。
 
+### 3.1 接入平台无关的键盘和鼠标事件
+
+键鼠业务插件不属于内核基础设施，使用个人插件身份：
+
+- `actforever/user-interaction-spec`：不注册组件，只提供平台无关的键码、鼠标和位置类型；
+- `actforever/jnativehook`：依赖上述契约并提供键盘、鼠标按钮、鼠标移动和滚轮 EventSource。
+
+插件 namespace 与资源 namespace 是两条独立维度。例如下面的资源实例属于用户的 `macro` 资源命名空间，但实现来自 `actforever` 插件：
+
+```yaml
+apiVersion: kuudra.io/v1alpha1
+kind: EventSource
+metadata:
+  namespace: macro
+  name: keyboard
+spec:
+  component: actforever/jnativehook-keyboard
+  desiredState: running
+```
+
+键盘 Source 输出 `user-interaction.keyboard.pressed` 和 `user-interaction.keyboard.released`，中立键值位于 `event#user-interaction.key`。`jnativehook` EventData namespace 只保存 JSON 标量形式的诊断数据，不携带第三方事件对象。依赖契约插件的组件可以调用：
+
+```java
+KeySpec key = event.data().get("user-interaction", "key", KeySpec.class);
+```
+
+筛选属于 EventAdapter，连击、长按、组合键和序列状态机属于 EventInterpreter，不应重新塞回设备 EventSource。
+
+鼠标移动默认不会监听：只有声明 `actforever/jnativehook-mouse-motion` 资源后才启用。它支持 `COALESCE`（窗口首个及最新位置）、`THROTTLE`（仅窗口首个位置）和 `UNLIMITED`（全部原生事件）：
+
+```yaml
+spec:
+  component: actforever/jnativehook-mouse-motion
+  desiredState: running
+  options:
+    output:
+      strategy: COALESCE
+      intervalMillis: 16
+```
+
+完整的 keyboard → plain-ingress → logging 示例位于外部插件仓库 `examples/user-interaction-logging`。必须同时部署 spec 与 JNativeHook 插件；后者的强制依赖和版本范围会在 ClassLoader 创建前校验。JNativeHook 已被打入插件归档，不要把独立第三方 JAR 放进严格加载的 `.kuudra/plugins/`。
+
 ## 4. 理解两层资源模型
 
 Kuudra 的可部署资源分为两层：

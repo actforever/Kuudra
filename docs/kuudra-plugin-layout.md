@@ -44,6 +44,8 @@
 
 任一归档不满足要求都会中止整个 App 启动；Kuudra 不会忽略未知或损坏的 JAR，也不会只加载部分插件。
 
+插件可以把 multi-release 依赖打入自身归档。组件扫描器只检查归档根路径下的类，并跳过 `META-INF/versions/**`；版本化实现仍由 JVM ClassLoader 按当前 Java 版本选择，避免把版本路径误当成独立类名。
+
 ## 插件依赖与类可见性
 
 `metadata.toml` 的 `[[dependencies]]` 使用 namespace、插件 ID、`mandatory` 和 `versionRange` 声明直接依赖。插件版本必须是点分隔的非负数字段，可带 `-prerelease` 或 `+build` 后缀且不能带前导 `v`；范围采用 Forge/Maven 风格的 `[a,b)`、`(,b]`、`[a,)` 或 `[a]`。归档加载器会先校验依赖身份、必需性和版本兼容性，再以拓扑递归方式为依赖提供方创建 ClassLoader，最后创建依赖方 ClassLoader。每个插件的查找顺序固定为：
@@ -55,6 +57,8 @@
 因此依赖方（也可理解为子插件）可以在编译期和运行期直接引用依赖提供方（父插件）公开的 Java 类。依赖 ClassLoader 本身还会继续查询其依赖，所以传递依赖也可见。类由提供方 ClassLoader 唯一定义，依赖方取得的是同一个 `Class<?>`，可以正常进行参数传递、类型转换和静态方法调用。
 
 父插件也可以提供跨组件 DTO/POJO。子插件把实例写入 Event、Session、Flow 或 Global 时，默认 JSON codec 会先转换为不携带插件对象引用的不可变数据树；消费组件调用 `get(..., ParentDto.class)` 时，以调用方传入且由父插件 ClassLoader 唯一定义的类型完成反序列化。这条闭环由动态编译的真实父子插件归档测试覆盖。兄弟插件若要共享 DTO，必须共同依赖提供该类型的契约插件；不要在多个 JAR 中复制同名 DTO。
+
+键鼠交互采用这一模式：`actforever/user-interaction-spec` 提供 `KeySpec`、鼠标和位置类型，`actforever/jnativehook` 以及未来的模拟执行插件分别声明对它的强制依赖。采集插件把对象编码成 EventData 的 JSON 兼容树，执行插件再按契约类型解码；第三方 JNativeHook 或 AWT 类型不会进入公共事件模型。
 
 资源遵循同样顺序；`getResource`、`getResources` 和 Java 9+ 的 `resources` 都包含声明依赖中的资源，因此依赖资源查找和 ServiceLoader 式枚举可以闭环。重复 URL 会在枚举结果中去重。
 
