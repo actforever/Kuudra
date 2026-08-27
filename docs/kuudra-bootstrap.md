@@ -62,7 +62,7 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 ## 具体组件资源与 Flow
 
-支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
+支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`、`SessionCoordinationPolicy` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
 
 Adapter 的域属于 Flow import binding：同一个 Adapter 实现以及同一个 Component 资源都可以在 RAW 和 SESSION 两侧绑定。相同 `kind/namespace/name` 永远指向同一个 App 所有实例；alias 只标识节点，需要隔离时必须声明不同名称的资源。每个 binding 的 `options` 都按推导域预编译，RAW binding 不允许引用 `${session#...}`，SESSION binding 则允许。插件声明 `threadSafe=false` 时，Runtime 会按资源实例串行化所有 binding 的调用。
 
@@ -77,10 +77,14 @@ spec:
   desiredState: active
   options:
     groupKey: ${event#input.key}
-    policy: SERIAL
-    groupScope: FLOW_BINDING
-    maxParallelSessions: 1
-    queueCapacity: 32
+    sessionLabels: {role: job}
+---
+apiVersion: kuudra.io/v1alpha1
+kind: SessionCoordinationPolicy
+metadata: {namespace: demo, name: serial-jobs}
+spec:
+  selector: {matchLabels: {role: job}}
+  scheduling: {policy: SERIAL, maxParallelSessions: 1, queueCapacity: 32}
 ```
 
 Flow 通过 `spec.imports` 引用 Component，再用 `edges` 路由。Source 只能指向 RAW 节点；只有 Ingress 可 RAW→SESSION，只有 Egress 可 SESSION→RAW。启动顺序为：初始化目录与配置，扫描并按依赖启动插件，实例化 Component，编译校验 Flow/占位符，最后启动 EventSource。任一步失败都会释放已创建资源。
@@ -98,16 +102,15 @@ Runtime 注册 Flow 时基于节点输入域调用 `PlaceholderResolver.compileM
 
 YAML 原生数字、布尔、Map、List 保持类型。JSON 对象/数组字符串解析成不可变兼容值；含占位符的 JSON 在插值后解析。默认 ContextCodec 在写入时把 POJO 编码为 JSON 树，只有 `get("key", Type.class)` 或 `configuration("key", Type.class)` 才按需转换。
 
-## Ingress 调度参数
+## SessionCoordinationPolicy
 
 | 参数 | 含义 |
 | --- | --- |
 | `policy` | `PARALLEL`、`SERIAL`、`IGNORE`、`CANCEL_AND_REPLACE_PENDING`、`CANCEL_AND_KEEP_PENDING`、`TOGGLE` |
-| `groupScope` | `FLOW_BINDING`（默认）或 `INGRESS`；后者按 Component 资源身份跨 Flow 共享调度组 |
 | `maxParallelSessions` | PARALLEL 组内上限，默认 64 |
 | `queueCapacity` | 有界等待容量，默认 256 |
-| `groupKey` | `plain-ingress` 分组表达式，默认事件 type |
+| `spec.selector.matchLabels` | 选择当前命名空间、当前 Flow 中由 Ingress 产出的 Session 标签 |
 
-Ingress 只计算准入与组键；SessionManager 创建会话并维护工作租约，SessionCoordinator 管理调度状态和队列。失败或取消只会阻止新工作，已有租约全部归还后才发布唯一终态并启动组内后继任务。
+Ingress 只计算准入、组键、初始上下文和 Session 标签，不引用协调策略。Runtime 在当前 Flow 编译同命名空间的全部 `SessionCoordinationPolicy`，准入时按标签自动选择：零匹配使用根配置 `runtime.session-coordinator` 的有界默认策略；恰好一个匹配时采用该策略；多个匹配属于歧义并拒绝准入。SessionManager 创建会话并维护工作租约，Runtime 唯一的 SessionCoordinator 执行策略、管理队列和依赖图。
 
-Ingress 还可以在接受结果中声明跨会话依赖。组内调度策略先决定事件何时真正启动，随后 Coordinator 才原子解析活动 Session 选择器并登记依赖图，因此 SERIAL 等待项不会绑定已经结束的会话。选择器支持 `UNIQUE`、`LATEST`、`ALL`；终态传播支持 `CANCEL_DEPENDENT`、`CANCEL_REQUIRED`、`CANCEL_BOTH`。依赖无法满足时不向 SESSION 域路由事件，并发布 `session.dependency.rejected`。`GET /api/v1/runtime/sessions/dependencies` 返回当前活动依赖边。
+策略的 `dependencies[].requiredSessionSelector.matchLabels` 只匹配同一 Flow 内的活动 Session，不接受 `flowId` 或 Ingress 身份。组内调度先决定事件何时真正启动，随后 Coordinator 才按标签原子解析依赖并登记图，因此 SERIAL 等待项不会绑定已经结束的 Session。选择器支持 `UNIQUE`、`LATEST`、`ALL`；`terminationPropagation` 支持 `CANCEL_DEPENDENT`、`CANCEL_REQUIRED`、`CANCEL_BOTH`。依赖无法满足时不向 SESSION 域路由，并发布 `session.dependency.rejected`。`GET /api/v1/runtime/session-coordination-policies` 查询声明，`GET /api/v1/runtime/sessions/dependencies` 查询活动边。

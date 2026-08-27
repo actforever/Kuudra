@@ -60,7 +60,7 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 `SessionManager` 是单 Runtime 唯一会话事实源，负责 ID、Flow revision、Ingress/group、上下文、取消、快照和工作租约。`SessionCoordinator` 维护两类互相正交的协调状态，但不直接修改 Session：
 
 1. **组内调度**：继续按 `PARALLEL/SERIAL/IGNORE/CANCEL_*/TOGGLE` 决定同一 Ingress group 的事件何时启动；
-2. **跨会话依赖图**：在会话真正启动时，把 `SessionDependencyRequirement` 的选择器原子解析为活动 Session，并登记 `dependent -> required` 有向边。
+2. **跨会话依赖图**：Ingress 只生成会话标签；同命名空间的 `SessionCoordinationPolicy` 按标签自动选择调度与依赖规则。在会话真正启动时，Coordinator 把策略中的 `SessionDependencyRequirement` 原子解析为同一 Flow 内的活动 Session，并登记 `dependent -> required` 有向边。
 
 依赖选择器可以按 Flow ID、Ingress Component 资源身份和 group key 组合匹配，空字段表示该维度不限制。`UNIQUE` 要求恰好一个匹配，`LATEST` 选择最近激活的匹配，`ALL` 连接全部匹配。依赖只接受当前仍活跃（包括暂停）的 Session；尤其是 `SERIAL` 队列中的事件，要到真正出队启动时才解析依赖，不能沿用入队时的过期判断。
 
@@ -78,7 +78,7 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 
 Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消与暂停都是协作式的：`EventContext` 和 `ActionContext` 统一暴露 `ExecutionControl`，组件可以用 `poll()` 无阻塞读取 `CONTINUE/PAUSE/CANCEL`，长时间异步任务则在可恢复边界调用 `checkpoint()`。旧 `CancellationToken` 仅作为迁移兼容接口保留。
 
-Session 不建立隐式父子生命周期。Egress 后再次进入 Ingress 默认创建完全独立的 Session，二者只通过 EventLineage 保留因果关系；只有 Ingress 显式返回 `SessionDependencyRequirement` 时，Coordinator 才建立可观测的有向依赖边。依赖图不会改变 Event 与 Session 一对一绑定，也不采用引用计数推断业务结束。
+Session 不建立隐式父子生命周期。Egress 后再次进入 Ingress 默认创建完全独立的 Session，二者只通过 EventLineage 保留因果关系；只有自动匹配的 `SessionCoordinationPolicy` 声明依赖要求时，Coordinator 才建立可观测的有向依赖边。Ingress 不持有策略引用，也不能直接访问 SessionManager 或 Coordinator。依赖图不会改变 Event 与 Session 一对一绑定，也不采用引用计数推断业务结束。
 
 ## 6. 上下文与占位符
 

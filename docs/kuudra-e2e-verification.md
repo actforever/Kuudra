@@ -27,10 +27,14 @@ spec:
   desiredState: active
   options:
     groupKey: "${event#hello-world.message}"
-    policy: SERIAL
-    groupScope: FLOW_BINDING
-    maxParallelSessions: 1
-    queueCapacity: 32
+    sessionLabels: {role: hello-world}
+---
+apiVersion: kuudra.io/v1alpha1
+kind: SessionCoordinationPolicy
+metadata: {namespace: dev, name: hello-world-serial}
+spec:
+  selector: {matchLabels: {role: hello-world}}
+  scheduling: {policy: SERIAL, maxParallelSessions: 1, queueCapacity: 32}
 ---
 apiVersion: kuudra.io/v1alpha1
 kind: EventHandler
@@ -64,7 +68,7 @@ EventSource 和 EventHandler 实现生命周期，因此期望状态是 `running
 
 ```powershell
 mvn -pl kuudra-web -am package -DskipTests
-Copy-Item kuudra-web/target/kuudra-web-v0.4.2.jar ./kuudra-e2e.jar
+Copy-Item kuudra-web/target/kuudra-web-v0.4.3-SNAPSHOT.jar ./kuudra-e2e.jar
 java -jar ./kuudra-e2e.jar
 ```
 
@@ -74,6 +78,7 @@ java -jar ./kuudra-e2e.jar
 - `GET /api/v1/plugin`；
 - `GET /api/v1/runtime/components`；
 - `GET /api/v1/runtime/flows`；
+- `GET /api/v1/runtime/session-coordination-policies`；
 - `GET /api/v1/runtime/sessions/dependencies`；
 - `GET /api/v1/runtime/components/reconciliation-states`。
 
@@ -100,7 +105,7 @@ java -jar ./kuudra-e2e.jar
 
 ### 会话依赖真实插件验证
 
-会话依赖不能只依赖单元测试。发布前还应使用官方 `kuudra-official/session-probe` 与 `kuudra-official/conditional-boundary` 真实插件 JAR 声明两个 Flow（可直接采用官方插件仓库的 `examples/session-dependency/manifests.yaml`）：窗口 Flow B 持有一个有界时长的 Session，作业 Flow A 使用 `SERIAL` 调度两个事件，并通过 Ingress 声明 `UNIQUE + CANCEL_DEPENDENT` 依赖 B。验证顺序如下：
+会话依赖不能只依赖单元测试。发布前还应使用官方 `kuudra-official/session-probe` 与 `kuudra-official/conditional-boundary` 真实插件 JAR，在同一个 Flow 中声明窗口和作业两个分支（可直接采用官方插件仓库的 `examples/session-dependency/manifests.yaml`）：两个 Ingress 只生成 `role=window/job` 标签，`SessionCoordinationPolicy` 自动选择作业 Session、使用 `SERIAL` 调度并声明 `UNIQUE + CANCEL_DEPENDENT` 标签依赖。验证顺序如下：
 
 1. 先启动 B，再准入 A，依赖查询接口必须在二者存活期间返回一条活动边；
 2. B 正常结束后，SystemEvent 必须依次包含 `session.dependency.established` 和 `session.dependency.termination-propagated`，A 的协作式执行控制必须观察到取消；
