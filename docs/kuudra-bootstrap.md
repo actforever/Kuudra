@@ -64,6 +64,8 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
 
+Adapter 的域属于 Flow import binding：同一个 Adapter 实现可以在 RAW 和 SESSION 两侧使用，但同一个 Component 资源只有在其插件 `InstancePolicy` 同时声明 `shareable=true`、`threadSafe=true` 时才能被多个 binding 复用。该限制同时适用于同一 Flow 的多个 alias 和不同 Flow；默认实例策略不允许共享，因此应声明两个独立资源。每个 binding 的 `options` 都按推导域预编译，RAW binding 不允许引用 `${session#...}`，SESSION binding 则允许。
+
 插件组件实现 `PluginComponentLifecycle` 后，会在 `initialize(PluginComponentContext)` 阶段收到当前 Component 清单的不可变 `options`。EventSource 等没有事件执行上下文的有状态资源，应在这里读取并校验启动参数；运行阶段不再重复解释 YAML。`PluginComponentContext`、`EventContext` 与 `ActionContext` 统一通过 `TypedValueMap` 提供 `configuration(key, Type)` 和带默认值的读取接口，查找、缺失值处理及 `ContextCodec` 类型转换不需要由插件重复实现。
 
 ```yaml
