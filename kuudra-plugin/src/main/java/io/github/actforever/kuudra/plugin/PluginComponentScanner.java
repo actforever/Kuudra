@@ -15,7 +15,11 @@ final class PluginComponentScanner {
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 String name = entries.nextElement().getName();
-                if (!name.endsWith(".class") || name.equals("module-info.class")) continue;
+                // Multi-release entries are implementation variants selected by the JVM's
+                // ClassLoader. Their archive path is not a legal binary class name and must
+                // never be inspected as an independent plugin component.
+                if (!name.endsWith(".class") || name.equals("module-info.class")
+                        || name.startsWith("META-INF/versions/")) continue;
                 Class<?> type;
                 try { type = Class.forName(name.substring(0, name.length() - 6).replace('/', '.'), false, loader); }
                 catch (ClassNotFoundException | LinkageError error) { throw new IOException("Cannot inspect plugin class " + name, error); }

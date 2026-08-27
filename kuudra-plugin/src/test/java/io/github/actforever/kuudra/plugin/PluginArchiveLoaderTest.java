@@ -175,6 +175,24 @@ class PluginArchiveLoaderTest {
         }
     }
 
+    @Test
+    void ignoresMultiReleaseClassEntriesDuringComponentScanning() throws Exception {
+        Path classes = compile("multi-release", Map.of(
+                "multi.MultiReleasePlugin", pluginSource("multi", "MultiReleasePlugin", "multi-release")), List.of());
+        Path archive = jar("multi-release.jar", classes,
+                metadata("multi-release", "multi.MultiReleasePlugin", "test", "1.0.0", List.of()),
+                Map.of("META-INF/versions/11/multi/MultiReleasePlugin.class", "not-a-root-class-entry"));
+
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
+                List.of(archive), PluginArchiveLoaderTest.class.getClassLoader());
+        try {
+            assertEquals("test", loaded.get(0).plugin().metadata().namespace());
+            assertEquals("multi-release", loaded.get(0).plugin().metadata().id());
+        } finally {
+            for (PluginArchiveLoader.LoadedArchive item : loaded) item.close();
+        }
+    }
+
     private Path compile(String name, Map<String, String> sources, List<Path> dependencies) throws IOException {
         Path sourceRoot = Files.createDirectories(directory.resolve(name + "-src"));
         Path classes = Files.createDirectories(directory.resolve(name + "-classes"));
