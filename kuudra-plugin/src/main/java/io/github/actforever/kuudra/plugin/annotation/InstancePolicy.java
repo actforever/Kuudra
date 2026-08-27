@@ -11,6 +11,5 @@ public @interface InstancePolicy {
     int maxInstances() default Integer.MAX_VALUE;
     ComponentLimitScope limitScope() default ComponentLimitScope.APP;
     String exclusivityDomain() default "";
-    boolean shareable() default false;
     boolean threadSafe() default false;
 }

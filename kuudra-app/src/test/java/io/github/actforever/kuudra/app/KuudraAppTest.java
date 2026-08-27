@@ -310,6 +310,85 @@ class KuudraAppTest {
     }
 
     @Test
+    void oneEventSourceBindingMayFanOutToMultipleTargets() throws Exception {
+        installDefaultTestPlugin();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("fan-out.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: test, name: source}
+                spec:
+                  component: kuudra-official/standalone-source
+                  desiredState: running
+                  options: {}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: first}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: second}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: test, name: fan-out}
+                spec:
+                  imports:
+                    source: {kind: EventSource, name: source}
+                    first: {kind: Ingress, name: first}
+                    second: {kind: Ingress, name: second}
+                  edges:
+                    - {from: source, to: first}
+                    - {from: source, to: second}
+                """);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertTrue(app.flow("test/fan-out").isPresent());
+            assertEquals(java.util.List.of("test/fan-out"),
+                    app.resource("EventSource", "test", "source").orElseThrow().importedBy());
+        }
+    }
+
+    @Test
+    void oneFlowRejectsDuplicateAliasesForTheSameEventSourceResource() throws Exception {
+        installDefaultTestPlugin();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("duplicate-source.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: test, name: source}
+                spec:
+                  component: kuudra-official/standalone-source
+                  desiredState: running
+                  options: {}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Ingress
+                metadata: {namespace: test, name: input}
+                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                ---
+                apiVersion: kuudra.io/v1alpha1
+                kind: Flow
+                metadata: {namespace: test, name: invalid}
+                spec:
+                  imports:
+                    source-a: {kind: EventSource, name: source}
+                    source-b: {kind: EventSource, name: source}
+                    input: {kind: Ingress, name: input}
+                  edges:
+                    - {from: source-a, to: input}
+                    - {from: source-b, to: input}
+                """);
+        KuudraException error = assertThrows(KuudraException.class,
+                () -> KuudraApp.createFromDefaultLocations(directory));
+        Throwable cause = error;
+        while (cause.getCause() != null) cause = cause.getCause();
+        assertTrue(cause.getMessage().contains("EventSource resource imported more than once"));
+    }
+
+    @Test
     void appOwnsTheBusUsedDirectlyByRuntimeModules() throws Exception {
         try (KuudraApp app = new KuudraApp(8, 1)) {
             CopyOnWriteArrayList<String> types = new CopyOnWriteArrayList<>();

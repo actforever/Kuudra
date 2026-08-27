@@ -1,5 +1,6 @@
 package io.github.actforever.kuudra.config;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,9 +60,12 @@ public final class KuudraManifest {
                 if (!reference.namespace().equals(metadata.namespace())) throw new IllegalArgumentException(
                         "Cross-namespace Flow import is not allowed: " + metadata.namespace() + " -> " + reference.namespace());
             }
+            var uniqueEdges = new HashSet<KuudraConfig.EdgeConfig>();
             for (KuudraConfig.EdgeConfig edge : edges) {
                 if (!imports.containsKey(edge.from())) throw new IllegalArgumentException("Unknown Flow edge source import: " + edge.from());
                 if (!imports.containsKey(edge.to())) throw new IllegalArgumentException("Unknown Flow edge target import: " + edge.to());
+                if (!uniqueEdges.add(edge)) throw new IllegalArgumentException(
+                        "Duplicate Flow edge: " + edge.from() + " -> " + edge.to());
             }
         }
     }

@@ -253,4 +253,17 @@ class KuudraConfigTest {
                 () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
         assertTrue(option.getMessage().contains("spec.options.domain has been removed"));
     }
+
+    @Test
+    void rejectsDuplicateFlowEdges() {
+        KuudraManifest.Metadata metadata = new KuudraManifest.Metadata("demo", "flow", Map.of(), Map.of());
+        Map<String, KuudraManifest.ResourceReference> imports = Map.of(
+                "source", new KuudraManifest.ResourceReference("EventSource", "demo", "source"),
+                "ingress", new KuudraManifest.ResourceReference("Ingress", "demo", "ingress"));
+        KuudraConfig.EdgeConfig edge = new KuudraConfig.EdgeConfig("source", "ingress");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> new KuudraManifest.Flow(new KuudraManifest.ResourceId("Flow", "demo", "flow"),
+                        metadata, imports, java.util.List.of(edge, edge)));
+        assertTrue(error.getMessage().contains("Duplicate Flow edge"));
+    }
 }

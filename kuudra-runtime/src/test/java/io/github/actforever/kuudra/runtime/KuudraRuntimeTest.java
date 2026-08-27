@@ -20,6 +20,84 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void sharedNonThreadSafeComponentIsSerializedAcrossFlowBindings() throws Exception {
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(2);
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        EventAdapter adapter = (event, context) -> {
+            int current = running.incrementAndGet();
+            peak.accumulateAndGet(current, Math::max);
+            firstEntered.countDown();
+            try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            running.decrementAndGet();
+            completed.countDown();
+            return List.of();
+        };
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.registerFlow(new KuudraFlow("flow-a", Map.of(
+                    "adapter-a", new FlowNode.AdapterNode("adapter-a", adapter, EventDomain.RAW)), Map.of()));
+            runtime.registerFlow(new KuudraFlow("flow-b", Map.of(
+                    "adapter-b", new FlowNode.AdapterNode("adapter-b", adapter, EventDomain.RAW)), Map.of()));
+            assertTrue(runtime.publish("flow-a", "adapter-a", KuudraEvent.of("one", Map.of())));
+            assertTrue(runtime.publish("flow-b", "adapter-b", KuudraEvent.of("two", Map.of())));
+            assertTrue(firstEntered.await(1, TimeUnit.SECONDS));
+            Thread.sleep(100);
+            assertEquals(1, peak.get());
+            release.countDown();
+            assertTrue(completed.await(2, TimeUnit.SECONDS));
+            assertEquals(1, peak.get());
+        }
+    }
+
+    @Test
+    void sharedThreadSafeComponentMayRunConcurrentlyAcrossFlowBindings() throws Exception {
+        CountDownLatch bothEntered = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger peak = new AtomicInteger();
+        EventAdapter adapter = (event, context) -> {
+            int current = running.incrementAndGet();
+            peak.accumulateAndGet(current, Math::max);
+            bothEntered.countDown();
+            try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            running.decrementAndGet();
+            return List.of();
+        };
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.setComponentThreadSafe(adapter, true);
+            runtime.registerFlow(new KuudraFlow("flow-a", Map.of(
+                    "adapter-a", new FlowNode.AdapterNode("adapter-a", adapter, EventDomain.RAW)), Map.of()));
+            runtime.registerFlow(new KuudraFlow("flow-b", Map.of(
+                    "adapter-b", new FlowNode.AdapterNode("adapter-b", adapter, EventDomain.RAW)), Map.of()));
+            assertTrue(runtime.publish("flow-a", "adapter-a", KuudraEvent.of("one", Map.of())));
+            assertTrue(runtime.publish("flow-b", "adapter-b", KuudraEvent.of("two", Map.of())));
+            assertTrue(bothEntered.await(1, TimeUnit.SECONDS));
+            assertEquals(2, peak.get());
+            release.countDown();
+        }
+    }
+
+    @Test
+    void runtimeDoesNotOwnComponentLifecycle() {
+        class ManagedAdapter implements EventAdapter, Lifecycle {
+            private final AtomicInteger starts = new AtomicInteger();
+            private final AtomicInteger stops = new AtomicInteger();
+            @Override public List<KuudraEvent> adapt(KuudraEvent event, EventContext context) { return List.of(event); }
+            @Override public CompletionStage<Void> start() { starts.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+            @Override public CompletionStage<Void> stop() { stops.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+        }
+        ManagedAdapter adapter = new ManagedAdapter();
+        KuudraRuntime runtime = new KuudraRuntime(8, 1);
+        runtime.registerFlow(new KuudraFlow("flow", Map.of(
+                "adapter", new FlowNode.AdapterNode("adapter", adapter, EventDomain.RAW)), Map.of()));
+        runtime.close();
+        assertEquals(0, adapter.starts.get());
+        assertEquals(0, adapter.stops.get());
+    }
+
+    @Test
     void cooperativeCheckpointParksCurrentHandlerWithoutChangingSessionState() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         AtomicInteger continued = new AtomicInteger();

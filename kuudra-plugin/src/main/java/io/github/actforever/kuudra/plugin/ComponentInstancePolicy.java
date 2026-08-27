@@ -1,15 +1,14 @@
 package io.github.actforever.kuudra.plugin;
 
-/** Immutable instance and sharing constraints discovered from a plugin component annotation. */
+/** Immutable instance and concurrency constraints discovered from a plugin component annotation. */
 public record ComponentInstancePolicy(
         int maxInstances,
         ComponentLimitScope limitScope,
         String exclusivityDomain,
-        boolean shareable,
         boolean threadSafe
 ) {
     public static final ComponentInstancePolicy DEFAULT = new ComponentInstancePolicy(
-            Integer.MAX_VALUE, ComponentLimitScope.APP, "", false, false);
+            Integer.MAX_VALUE, ComponentLimitScope.APP, "", false);
 
     public ComponentInstancePolicy {
         if (maxInstances < 1) throw new IllegalArgumentException("maxInstances must be positive");

@@ -48,9 +48,11 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.nio.file.Files;
 import java.util.LinkedHashMap;
@@ -533,7 +535,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return new Component(view.reference(), view.pluginId(), view.namespace(), view.kind().manifestKind(), view.name(),
                 view.implementation(), new InstancePolicy(view.instancePolicy().maxInstances(),
                 view.instancePolicy().limitScope().name(), view.instancePolicy().exclusivityDomain(),
-                view.instancePolicy().shareable(), view.instancePolicy().threadSafe()),
+                view.instancePolicy().threadSafe()),
                 new ComponentDocumentation(documentation.purpose(), documentation.lifecycle(),
                         documentation.lifecyclePhases(), documentation.supportedDesiredStates(), documentation.configuration().stream()
                         .map(property -> new ConfigurationDocumentation(property.path(), property.type(), property.required(),
@@ -739,6 +741,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
             };
             manifestInstances.put(component.id(), instance);
+            PluginComponentDefinition definition = requirePlugins().components()
+                    .find(componentReference(component.type(), component.component())).orElseThrow();
+            requireRuntime().setComponentThreadSafe(instance, definition.instancePolicy().threadSafe());
             manifestObservedStates.put(component.id(), instance instanceof Lifecycle ? "STOPPED" : "ACTIVE");
             debug("component.materialized", Map.of("resource", component.id().toString(), "instanceClass", instance.getClass().getName()));
         }
@@ -865,7 +870,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private Object createManifestComponent(KuudraManifest.Component component) {
-        return switch (component.type()) {
+        Object instance = switch (component.type()) {
             case "event-source" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventSource.class, component.options());
             case "event-adapter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventAdapter.class, component.options());
             case "event-interpreter" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), EventInterpreter.class, component.options());
@@ -874,6 +879,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             case "egress" -> requirePlugins().createComponent(componentReference(component.type(), component.component()), Egress.class, component.options());
             default -> throw new IllegalArgumentException("Unsupported Component type: " + component.type());
         };
+        PluginComponentDefinition definition = requirePlugins().components()
+                .find(componentReference(component.type(), component.component())).orElseThrow();
+        requireRuntime().setComponentThreadSafe(instance, definition.instancePolicy().threadSafe());
+        return instance;
     }
 
     private PluginRuntimeServices pluginRuntimeServices() {
@@ -1013,25 +1022,23 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 if (count > definition.instancePolicy().maxInstances()) throw new IllegalArgumentException("Component instance limit exceeded for domain " + definition.instancePolicy().exclusivityDomain());
             }
         }
-        Map<KuudraManifest.ResourceId, Integer> usages = new LinkedHashMap<>();
         for (KuudraManifest.Flow flow : resources.flows().values()) {
-            Map<String, Integer> flowCounts = new LinkedHashMap<>();
+            Map<String, Set<KuudraManifest.ResourceId>> flowInstances = new LinkedHashMap<>();
+            Set<KuudraManifest.ResourceId> importedSources = new LinkedHashSet<>();
             for (KuudraManifest.ResourceReference reference : flow.imports().values()) {
                 KuudraManifest.Component component = resources.components().get(reference.id());
                 if (component == null) continue;
                 PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
-                usages.merge(component.id(), 1, Integer::sum);
+                if (component.type().equals("event-source") && !importedSources.add(component.id()))
+                    throw new IllegalArgumentException("EventSource resource imported more than once by Flow; use multiple edges for fan-out: " + component.id());
                 if (definition.instancePolicy().limitScope() == ComponentLimitScope.FLOW) {
-                    int count = flowCounts.merge(definition.instancePolicy().exclusivityDomain(), 1, Integer::sum);
+                    Set<KuudraManifest.ResourceId> instances = flowInstances.computeIfAbsent(
+                            definition.instancePolicy().exclusivityDomain(), ignored -> new LinkedHashSet<>());
+                    instances.add(component.id());
+                    int count = instances.size();
                     if (count > definition.instancePolicy().maxInstances()) throw new IllegalArgumentException("Flow component instance limit exceeded for domain " + definition.instancePolicy().exclusivityDomain());
                 }
             }
-        }
-        for (Map.Entry<KuudraManifest.ResourceId, Integer> usage : usages.entrySet()) if (usage.getValue() > 1) {
-            KuudraManifest.Component component = resources.components().get(usage.getKey());
-            PluginComponentDefinition definition = requirePlugins().components().find(componentReference(component.type(), component.component())).orElseThrow();
-            if (!definition.instancePolicy().shareable() || !definition.instancePolicy().threadSafe())
-                throw new IllegalArgumentException("Component imported by multiple Flows is not shareable and thread-safe: " + component.id());
         }
     }
 
@@ -1075,7 +1082,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public record Component(String reference, String pluginId, String namespace, String kind, String name,
                             String implementation, InstancePolicy instancePolicy, ComponentDocumentation documentation) { }
     public record InstancePolicy(int maxInstances, String limitScope, String exclusivityDomain,
-                                 boolean shareable, boolean threadSafe) { }
+                                 boolean threadSafe) { }
     public record ComponentDocumentation(String purpose, boolean lifecycle,
                                          List<String> lifecyclePhases, List<String> supportedDesiredStates,
                                          List<ConfigurationDocumentation> configuration,

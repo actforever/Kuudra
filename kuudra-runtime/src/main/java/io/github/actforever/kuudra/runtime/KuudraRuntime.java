@@ -23,9 +23,10 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final Thread dispatcher;
     private final Map<String, RegisteredFlow> flows = new LinkedHashMap<>();
     private final List<ManagedSource> sources = new ArrayList<>();
-    private final Set<Lifecycle> componentLifecycles = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Object> disabledComponents = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Object> pausedComponents = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Object> threadSafeComponents = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Map<Object, Semaphore> componentGates = new IdentityHashMap<>();
     private final SystemEventPublisher events;
     private final ContextCodec codec = ContextCodecs.defaultCodec();
     private final SessionCoordinator coordinator = new SessionCoordinator();
@@ -101,25 +102,25 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         }
     }
 
+    /** Configures whether one App-owned resource instance may execute concurrently across all Flow bindings. */
+    public void setComponentThreadSafe(Object component, boolean threadSafe) {
+        Objects.requireNonNull(component, "component");
+        synchronized (monitor) {
+            if (threadSafe) {
+                threadSafeComponents.add(component);
+                componentGates.remove(component);
+            } else {
+                threadSafeComponents.remove(component);
+                componentGates.computeIfAbsent(component, ignored -> new Semaphore(1, true));
+            }
+        }
+    }
+
     public void registerFlow(KuudraFlow flow) {
         RegisteredFlow registered;
         try { registered = new RegisteredFlow(flow, new SessionManager.AtomicValueContext(codec, Map.of())); }
         catch (RuntimeException error) { throw KuudraException.wrap("Failed to compile Flow " + flow.id(), error); }
         synchronized (monitor) { if (flows.putIfAbsent(flow.id(), registered) != null) throw new KuudraException("Flow already registered: " + flow.id()); }
-        List<Lifecycle> started = new ArrayList<>();
-        try {
-            for (FlowNode node : flow.nodes().values()) {
-                Lifecycle lifecycle = node instanceof FlowNode.InterpreterNode interpreter ? interpreter.interpreter()
-                        : node instanceof FlowNode.HandlerNode handler ? handler.handler() : null;
-                if (lifecycle != null && componentLifecycles.add(lifecycle)) {
-                    try { lifecycle.start().toCompletableFuture().join(); started.add(lifecycle); }
-                    catch (RuntimeException error) { componentLifecycles.remove(lifecycle); throw KuudraException.wrap("Failed to start component " + node.id(), error); }
-                }
-            }
-        } catch (RuntimeException error) {
-            for (int index = started.size() - 1; index >= 0; index--) try { started.get(index).stop().toCompletableFuture().join(); } catch (RuntimeException closeError) { error.addSuppressed(closeError); }
-            componentLifecycles.removeAll(started); synchronized (monitor) { flows.remove(flow.id(), registered); } throw error;
-        }
         event("flow.registered", Map.of("flowId", flow.id(), "revision", flow.revision()));
     }
     public RuntimeCheckpoint pause() {
@@ -222,37 +223,54 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     }
     private void dispatch(){ while(!closed.get()){ try{ Optional<RuntimeTask> next=queue.poll(dispatcherPollInterval);if(next.isEmpty())continue;if(next.get() instanceof RuntimeTask.StopTask)return;RuntimeTask.EventTask task=(RuntimeTask.EventTask)next.get();debugEvent("runtime.event.dispatched",taskData(task));RegisteredFlow flow=registeredFlow(task.flowId());if(task.wrapper() instanceof SessionEventWrapper sw){SessionManager.ManagedSession s=sessionManager.require(sw.session().id());if(s==null){debugEvent("runtime.event.session-missing",taskData(task));continue;}s.submit(()->execute(flow,task,s));}else workers.execute(()->execute(flow,task,null)); }catch(InterruptedException e){Thread.currentThread().interrupt();return;}catch(RuntimeException e){event("runtime.dispatch.failed",Map.of("error",e.toString()));}} }
     private void execute(RegisteredFlow flow,RuntimeTask.EventTask task,SessionManager.ManagedSession session){
-        Throwable failure=null; boolean releaseHere=true; boolean asynchronous=false; Invocation invocation=null;
+        Throwable failure=null; boolean releaseHere=true; boolean asynchronous=false; Invocation invocation=null; Semaphore componentGate=null;
         try{
             if (session != null) session.awaitResumed();
+            FlowNode node=flow.flow.node(task.nodeId());
+            Object component = component(node);
+            componentGate = acquireComponentGate(component);
             enterExecution();
             invocation=new Invocation();
             debugEvent("runtime.node.execution.started", taskData(task));
             if(flow.flow.revision()!=task.flowRevision()||(session!=null&&(!session.active()||session.cancelled.get()||session.failure.get()!=null)))return;
-            FlowNode node=flow.flow.node(task.nodeId()); KuudraEvent input=task.wrapper().event();
-            Object component = node instanceof FlowNode.InterpreterNode interpreter ? interpreter.interpreter()
-                    : node instanceof FlowNode.HandlerNode handler ? handler.handler()
-                    : node instanceof FlowNode.AdapterNode adapter ? adapter.adapter()
-                    : node instanceof FlowNode.IngressNode ingress ? ingress.ingress()
-                    : node instanceof FlowNode.EgressNode egress ? egress.egress() : null;
+            KuudraEvent input=task.wrapper().event();
             synchronized (monitor) { if (component != null && disabledComponents.contains(component)) return; }
             EventContext context=context(flow,session,node.id(),input,component,invocation);
             if(node instanceof FlowNode.IngressNode ingress){ executeIngress(flow,ingress,input,context); return; }
-            if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; asynchronous=true; executeHandler(flow,handler,input,context,session,invocation); return; }
+            if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; asynchronous=true; executeHandler(flow,handler,input,context,session,invocation,componentGate); componentGate=null; return; }
             List<KuudraEvent> output;
             if(node instanceof FlowNode.AdapterNode adapter)output=adapter.adapter().adapt(input,context);
             else if(node instanceof FlowNode.InterpreterNode interpreter)output=interpreter.interpreter().interpret(input,context);
             else output=((FlowNode.EgressNode)node).egress().export(input,context);
             route(flow,node,task.wrapper(),normalize(input,output,node instanceof FlowNode.EgressNode,session));
         }catch(Throwable e){failure=e;event("event.execution.failed",Map.of("flowId",flow.flow.id(),"nodeId",task.nodeId(),"error",e.toString()));}
-        finally{if(session!=null&&releaseHere)sessionManager.release(session,failure);if(invocation!=null&&!asynchronous){debugEvent("runtime.node.execution.completed",completionData(task,failure));invocation.finish();}}
+        finally{if(session!=null&&releaseHere)sessionManager.release(session,failure);if(invocation!=null&&!asynchronous){debugEvent("runtime.node.execution.completed",completionData(task,failure));invocation.finish();}if(componentGate!=null)componentGate.release();}
     }
-    private void executeHandler(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,EventContext context,SessionManager.ManagedSession session,Invocation invocation){
+    private void executeHandler(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,EventContext context,SessionManager.ManagedSession session,Invocation invocation,Semaphore componentGate){
         AtomicBoolean open=new AtomicBoolean(true);
         EventEmitter emitter=output->{if(!open.get())throw new KuudraException("EventHandler emitted after CompletionStage completion");return routeOne(flow,node,new SessionEventWrapper(input,session.reference()),derive(input,output,false,session));};
         ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,context.executionControl(),emitter,globalContext.snapshot(),globalContext,context.configuration());
-        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome",error==null?"success":"failed"));invocation.finish();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
-        catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome","failed"));invocation.finish();}
+        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome",error==null?"success":"failed"));invocation.finish();if(componentGate!=null)componentGate.release();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
+        catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome","failed"));invocation.finish();if(componentGate!=null)componentGate.release();}
+    }
+
+    private Object component(FlowNode node) {
+        return node instanceof FlowNode.InterpreterNode interpreter ? interpreter.interpreter()
+                : node instanceof FlowNode.HandlerNode handler ? handler.handler()
+                : node instanceof FlowNode.AdapterNode adapter ? adapter.adapter()
+                : node instanceof FlowNode.IngressNode ingress ? ingress.ingress()
+                : node instanceof FlowNode.EgressNode egress ? egress.egress() : null;
+    }
+
+    private Semaphore acquireComponentGate(Object component) throws InterruptedException {
+        if (component == null) return null;
+        Semaphore gate;
+        synchronized (monitor) {
+            if (threadSafeComponents.contains(component)) return null;
+            gate = componentGates.computeIfAbsent(component, ignored -> new Semaphore(1, true));
+        }
+        gate.acquire();
+        return gate;
     }
     private void executeIngress(RegisteredFlow flow,FlowNode.IngressNode node,KuudraEvent input,EventContext context){
         IngressDecision decision=node.ingress().admit(input,context);if(decision instanceof IngressDecision.Rejected rejected){event("ingress.rejected",Map.of("ingressId",node.id(),"reason",rejected.reason()));return;}
@@ -405,13 +423,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         else debugEvent("runtime.shutdown.sessions.drain.completed",drainResult);
 
         queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();
-        List<Lifecycle> lifecycles=new ArrayList<>(componentLifecycles);
-        debugEvent("runtime.shutdown.components.started",Map.of("components",lifecycles.size()));
-        for(int index=lifecycles.size()-1;index>=0;index--)try{lifecycles.get(index).stop().toCompletableFuture().join();}
-        catch(RuntimeException error){event("runtime.shutdown.component.failed",Map.of("error",error.toString()));}
-        componentLifecycles.clear();
-        debugEvent("runtime.shutdown.components.completed",Map.of("components",lifecycles.size()));
-        synchronized(monitor){disabledComponents.clear();pausedComponents.clear();}
+        synchronized(monitor){disabledComponents.clear();pausedComponents.clear();threadSafeComponents.clear();componentGates.clear();}
         workers.shutdownNow();
         debugEvent("runtime.shutdown.completed",Map.of("elapsedMs",elapsedMillis(started)));
     }
