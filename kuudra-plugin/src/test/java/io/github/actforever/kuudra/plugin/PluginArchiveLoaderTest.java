@@ -193,6 +193,19 @@ class PluginArchiveLoaderTest {
         }
     }
 
+    @Test
+    void explicitEmptyComponentIndexSkipsBundledImplementationClasses() throws Exception {
+        Path classes = compile("indexed", Map.of(
+                "indexed.IndexedPlugin", pluginSource("indexed", "IndexedPlugin", "indexed")), List.of());
+        Path archive = jar("indexed.jar", classes,
+                metadata("indexed", "indexed.IndexedPlugin", "test", "1.0.0", List.of()),
+                Map.of(PluginComponentScanner.INDEX_PATH, "# This plugin provides a macro frontend, not components.\n"));
+        List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
+                List.of(archive), PluginArchiveLoaderTest.class.getClassLoader());
+        try { assertTrue(loaded.get(0).plugin().components().isEmpty()); }
+        finally { for (PluginArchiveLoader.LoadedArchive item : loaded) item.close(); }
+    }
+
     private Path compile(String name, Map<String, String> sources, List<Path> dependencies) throws IOException {
         Path sourceRoot = Files.createDirectories(directory.resolve(name + "-src"));
         Path classes = Files.createDirectories(directory.resolve(name + "-classes"));

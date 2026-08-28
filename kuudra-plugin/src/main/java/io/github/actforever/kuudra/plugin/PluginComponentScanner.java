@@ -9,9 +9,21 @@ import java.util.jar.JarFile;
 
 /** Discovers annotation-declared components from a plugin archive. */
 final class PluginComponentScanner {
+    static final String INDEX_PATH = "META-INF/kuudra-plugin/components.idx";
     List<PluginComponentDefinition> scan(Path archive, URLClassLoader loader, String pluginId, String namespace) throws IOException {
         List<PluginComponentDefinition> definitions = new ArrayList<>();
         try (JarFile jar = new JarFile(archive.toFile())) {
+            var index = jar.getJarEntry(INDEX_PATH);
+            if (index != null) {
+                try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(jar.getInputStream(index), java.nio.charset.StandardCharsets.UTF_8))) {
+                    for (String line; (line = reader.readLine()) != null;) {
+                        String className = line.strip();
+                        if (className.isEmpty() || className.startsWith("#")) continue;
+                        definition(pluginId, namespace, load(className, loader)).ifPresent(definitions::add);
+                    }
+                }
+                return List.copyOf(definitions);
+            }
             var entries = jar.entries();
             while (entries.hasMoreElements()) {
                 String name = entries.nextElement().getName();
@@ -20,13 +32,16 @@ final class PluginComponentScanner {
                 // never be inspected as an independent plugin component.
                 if (!name.endsWith(".class") || name.equals("module-info.class")
                         || name.startsWith("META-INF/versions/")) continue;
-                Class<?> type;
-                try { type = Class.forName(name.substring(0, name.length() - 6).replace('/', '.'), false, loader); }
-                catch (ClassNotFoundException | LinkageError error) { throw new IOException("Cannot inspect plugin class " + name, error); }
+                Class<?> type = load(name.substring(0, name.length() - 6).replace('/', '.'), loader);
                 definition(pluginId, namespace, type).ifPresent(definitions::add);
             }
         }
         return List.copyOf(definitions);
+    }
+
+    private static Class<?> load(String className, URLClassLoader loader) throws IOException {
+        try { return Class.forName(className, false, loader); }
+        catch (ClassNotFoundException | LinkageError error) { throw new IOException("Cannot inspect plugin class " + className, error); }
     }
 
     private java.util.Optional<PluginComponentDefinition> definition(String pluginId, String namespace, Class<?> type) {

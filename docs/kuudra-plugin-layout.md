@@ -46,6 +46,8 @@
 
 插件可以把 multi-release 依赖打入自身归档。组件扫描器只检查归档根路径下的类，并跳过 `META-INF/versions/**`；版本化实现仍由 JVM ClassLoader 按当前 Java 版本选择，避免把版本路径误当成独立类名。
 
+若插件内嵌 Kotlin 编译器等大型运行时，可提供 `META-INF/kuudra-plugin/components.idx`，每行填写一个需要检查注解的二进制类名。索引存在时内核不再遍历归档内全部类；空文件或仅含 `#` 注释的索引表示该插件不提供组件。入口类仍由 `metadata.toml` 独立加载。
+
 ## 插件依赖与类可见性
 
 `metadata.toml` 的 `[[dependencies]]` 使用 namespace、插件 ID、`mandatory` 和 `versionRange` 声明直接依赖。插件版本必须是点分隔的非负数字段，可带 `-prerelease` 或 `+build` 后缀且不能带前导 `v`；范围采用 Forge/Maven 风格的 `[a,b)`、`(,b]`、`[a,)` 或 `[a]`。归档加载器会先校验依赖身份、必需性和版本兼容性，再以拓扑递归方式为依赖提供方创建 ClassLoader，最后创建依赖方 ClassLoader。每个插件的查找顺序固定为：
