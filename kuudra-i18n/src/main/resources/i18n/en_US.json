@@ -1,7 +1,7 @@
 {
   "*": "System event {messageKey} {arguments}",
   "web.shutdown.requested": "Shutdown signal received; stopping the Kuudra kernel (trigger={trigger}, action={action})",
-  "app.starting": "Kuudra App is starting (status={status}, detail={detail})",
+  "app.starting": "Kuudra App {version} is starting (status={status}, detail={detail})",
   "app.running": "Kuudra App is running (status={status})",
   "app.pausing": "Kuudra App is pausing (status={status}, detail={detail})",
   "app.paused": "Kuudra App is paused (status={status})",

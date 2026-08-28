@@ -6,7 +6,7 @@
 
     <groupId>io.github.actforever</groupId>
     <artifactId>kuudra</artifactId>
-    <version>v0.4.4</version>
+    <version>${revision}</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -24,6 +24,7 @@
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.resources.propertiesEncoding>UTF-8</maven.resources.propertiesEncoding>
         <junit.version>5.11.4</junit.version>
         <jackson.version>2.17.2</jackson.version>
         <sqlite-jdbc.version>3.53.2.1</sqlite-jdbc.version>
@@ -143,6 +144,29 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>1.6.0</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>flatten</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>flatten-clean</id>
+                        <phase>clean</phase>
+                        <goals><goal>clean</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 
 </project>

@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class KuudraAppTest {
     @Test void providesEnglishMessagesAndAllowsExternalI18nOverrides() {
         try (KuudraApp app = new KuudraApp(8, 1)) {
+            assertEquals("v0.4.4", app.version());
             assertTrue(app.systemEventMessageResolver().resolve("runtime.shutdown.started",
                     Map.of("activeSessions", 2, "queuedTasks", 3)).orElseThrow().startsWith("Runtime shutdown started"));
             app.setSystemEventMessageResolver((key, arguments) -> key.equals("runtime.shutdown.started")

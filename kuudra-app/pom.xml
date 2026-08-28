@@ -4,9 +4,15 @@
     <parent>
         <groupId>io.github.actforever</groupId>
         <artifactId>kuudra</artifactId>
-        <version>v0.4.4</version>
+        <version>${revision}</version>
     </parent>
     <artifactId>kuudra-app</artifactId>
+    <build>
+        <resources>
+            <resource><directory>src/main/resources</directory><filtering>false</filtering></resource>
+            <resource><directory>src/main/resources-filtered</directory><filtering>true</filtering></resource>
+        </resources>
+    </build>
     <dependencies>
         <dependency>
             <groupId>io.github.actforever</groupId>

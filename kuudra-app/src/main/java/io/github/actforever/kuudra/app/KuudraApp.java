@@ -344,6 +344,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return MessageResolvers.json(input);
     }
     public Health health() { AppSnapshot snapshot = snapshot(); return new Health(snapshot.status().name(), snapshot.queuedTasks(), snapshot.flowCount()); }
+    /** Version shared by every kernel module through Maven's revision property. */
+    public String version() { return KuudraVersion.current(); }
     public synchronized Map<String, Object> globalContext() { return globalContext; }
     public List<Plugin> plugins() { return requirePlugins().pluginViews().stream().map(KuudraApp::plugin).toList(); }
     public Optional<Plugin> plugin(String namespace, String pluginId) {
@@ -560,7 +562,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private KuudraRuntime requireRuntime() { synchronized (this) { if ((status != AppStatus.STARTING && status != AppStatus.RUNNING && status != AppStatus.PAUSED) || runtime == null) throw new KuudraException("App is not available: " + status); return runtime; } }
     private DefaultPluginManager requirePlugins() { synchronized (this) { if ((status != AppStatus.STARTING && status != AppStatus.RUNNING && status != AppStatus.PAUSED) || plugins == null) throw new KuudraException("App is not available: " + status); return plugins; } }
-    private void publish(String type) { events.publish(SystemEvent.of(type, java.util.Map.of("status", status.name(), "detail", detail))); }
+    private void publish(String type) { events.publish(SystemEvent.of(type, java.util.Map.of(
+            "status", status.name(), "detail", detail, "version", KuudraVersion.current()))); }
     private void debug(String type, Map<String,Object> data) { events.publish(SystemEvent.debug(type, data)); }
     private void trace(String type, Map<String,Object> data) { events.publish(SystemEvent.trace(type, data)); }
     @Override public synchronized void close() {
