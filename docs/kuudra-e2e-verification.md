@@ -139,6 +139,29 @@ shade 归档包含 `META-INF/versions/**` 时，组件扫描器必须跳过这�
 
 `POST /api/v1/kuudra/restart` 重建的是 App 内核，并按约定重新读取 manifests；`config.yaml` 在 Web 宿主创建 App Bean 时合并，修改根配置（包括调谐开关、日志级别）后需要重启 Web 进程。二者不要混为同一种重载语义。
 
+### Kotlin 宏真实插件黑箱验证
+
+使用外部插件仓库 `examples/macro-kotlin-safe`，部署七份真实 JAR：HelloWorld、default、logging、user-interaction-spec、macro-spec、macro-kotlin 和 awt-robot。该用例不注入键鼠，只由 AWT Handler 执行条件与 `emit`，因此不会改变用户输入状态。
+
+```powershell
+mvn -pl kuudra-web -am clean package -DskipTests
+mvn -f D:/Users/pinec/Documents/Code/Java/kuudra-official-plugins/pom.xml clean package -DskipTests
+
+# 将七份插件 JAR 放入测试目录 .kuudra/plugins；复制示例 manifests.yaml。
+# 脚本必须位于 AWT 插件自己的家目录。
+Copy-Item safe-emit.kt .kuudra/plugins/actforever/awt-robot/macros/safe-emit.kt
+java -Djava.awt.headless=false -jar kuudra-web.jar --server.port=18081
+```
+
+判定标准：
+
+1. `/api/v1/kuudra/status` 返回 `RUNNING`、`flowCount: 1`，Flow ID 为 `macro-kotlin-demo/safe-kotlin-macro`；
+2. 日志显示 `actforever/macro-kotlin`、`actforever/awt-robot` 均为 ACTIVE，robot 和 logger 资源均调谐到 RUNNING；
+3. 日志周期出现 `Kotlin macro emitted compiled-and-executed`，并包含 `eventType=macro.kotlin.completed`、Flow ID 和 Session ID；测试观测窗口内错误数和错误分支计数均必须为 0；
+4. `POST /api/v1/kuudra/stop` 返回 `STOPPED`、`flowCount: 0`、`queuedTasks: 0`。
+
+2026-08-28 的实际黑箱执行发现并修复了三类只在真实插件环境出现的问题：组件文档字符串示例必须是合法 JSON 字面量；Kotlin 编译/求值必须使用依赖感知插件 ClassLoader，否则 `macro-spec` 会不可见或出现重复 `MacroProgramDefinition` 类型；Java `Consumer<MacroBuilder>` 不能直接充当 Kotlin receiver DSL，否则嵌套 then/else 会误写到外层程序。修复后状态为 RUNNING、Flow 数为 1，观测到 42 次正确分支、0 次错误分支、0 条 ERROR；停止结果为 STOPPED、Flow 0、队列 0。
+
 ## 自动化回归
 
 真实插件验证之外，以下测试为高并发或故障分支提供确定性覆盖：
@@ -148,4 +171,4 @@ mvn test -DskipTests=false
 mvn -f D:/Users/pinec/Documents/Code/Java/kuudra-official-plugins/pom.xml test -DskipTests=false
 ```
 
-其中 Runtime 测试覆盖 RAW/SESSION 域边界、非法边、占位符作用域、Session 串行调度、替换策略、租约排空、最大跳数和协作式暂停；Plugin 测试会真实编译 A/B 两个 JAR，证明 B 能引用 A 的类和资源、共享同一个 `Class<?>` 并完成父插件 POJO 的 JSON 往返，同时验证依赖身份、版本范围、缺失依赖和环检测。
+其中 Runtime 测试覆盖 RAW/SESSION 域边界、非法边、占位符作用域、Session 串行调度、替换策略、租约排空、最大跳数和协作式暂停；Plugin 测试会真实编译 A/B 两个 JAR，证明 B 能引用 A 的类和资源、共享同一个 `Class<?>` 并完成父插件 POJO 的 JSON 往返，同时验证依赖身份、版本范围、缺失依赖和环检测。宏插件测试还覆盖完整 IR 往返、真实 `.kt` 编译、嵌套条件构建和 AWT 六组暂停/取消/释放执行语义。本机分页文件不足时可按 AGENTS.md 使用 `-DforkCount=0` 运行目标模块，并明确记录这一环境差异。

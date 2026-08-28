@@ -349,4 +349,4 @@ GET /api/v1/plugin
 - **unsupported desiredState**：组件实现的生命周期能力不支持该目标状态；
 - **多个 SessionCoordinationPolicy 匹配**：策略 selector 重叠，需要收窄 Session 标签选择条件。
 
-更深入的设计细节见 [事件流架构](kuudra-architecture.md)、[启动与配置](kuudra-bootstrap.md)、[资源清单与调谐](kuudra-resource-manifests.md) 和 [App 管理](kuudra-app-management.md)。
+更深入的设计细节见 [事件流架构](kuudra-architecture.md)、[启动与配置](kuudra-bootstrap.md)、[资源清单与调谐](kuudra-resource-manifests.md)、[宏定义与执行](kuudra-macro.md)、[端到端验证](kuudra-e2e-verification.md) 和 [App 管理](kuudra-app-management.md)。
