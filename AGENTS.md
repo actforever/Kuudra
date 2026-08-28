@@ -16,6 +16,8 @@ The first stable kernel release is `v0.4.0`; the current stable kernel release i
 
 Stable releases use `vX.X.X`. Every intermediate development version must use the exact `vX.X.X-alpha-N` form, with `N` increasing from 1; do not publish or document `SNAPSHOT` as an intermediate version. After a stable release, begin the next development line at the next intended stable version's `-alpha-1` identifier.
 
+The single Maven/kernel version source is `.mvn/maven.config` (`revision`). The reactor and every child parent coordinate use `${revision}`; the flatten plugin resolves it for published POMs, and `kuudra-app` filters the same value into `META-INF/kuudra/version.properties` for startup logging and `KuudraApp.version()`. Version changes must update only that revision value and must verify both Maven evaluation and the runtime startup line.
+
 The physical workspace may temporarily still be named `orcana` because Windows/IDE file handles blocked the requested rename. Treat it as a Kuudra repository; do not attempt another root-directory rename or delete nested Git metadata without explicit user coordination and a released workspace.
 
 The tracked Maven reactor is:
