@@ -205,6 +205,33 @@ spec:
 
 完整的 keyboard → plain-ingress → logging 示例位于外部插件仓库 `examples/user-interaction-logging`。必须同时部署 spec 与 JNativeHook 插件；后者的强制依赖和版本范围会在 ClassLoader 创建前校验。JNativeHook 已被打入插件归档，不要把独立第三方 JAR 放进严格加载的 `.kuudra/plugins/`。
 
+`actforever/awt-robot` 在 SESSION 域提供宏执行 Handler。它既能从 YAML 对象读取 `KeySpec`，也能直接接收事件中的对象占位符：
+
+```yaml
+apiVersion: kuudra.io/v1alpha1
+kind: EventHandler
+metadata:
+  namespace: macro
+  name: replay-key
+spec:
+  component: actforever/awt-robot
+  desiredState: running
+  options:
+    maxTotalSteps: 10000
+    steps:
+      - action: keyTap
+        key: "${event#user-interaction.key}"
+        holdMillis: 50
+      - action: emit
+        eventType: macro.completed
+        copyInputData: true
+        data:
+          macro:
+            status: completed
+```
+
+宏还支持 `if/else`、有限 `loop`、`break`、`return` 和 `cancelSession`。其中 `return` 只结束当前 Handler，`cancelSession` 通过 `CurrentSessionControl` 请求取消整个当前会话。长时间循环应使用 `ref: session#...` 条件，它会在每次判断时读取最新上下文。暂停会安全释放已按下的输入，恢复后重建逻辑保持状态。Robot 注入会登记到共享交互契约，JNativeHook 默认丢弃匹配的回捕事件，避免宏递归触发。
+
 ## 4. 理解两层资源模型
 
 Kuudra 的可部署资源分为两层：
@@ -297,7 +324,7 @@ RAW 节点可读取 Event、Flow、Global；SESSION 节点还可读取 Session�
 启动 Web 发行包：
 
 ```powershell
-java -jar kuudra-web-v0.4.4-alpha-1.jar
+java -jar kuudra-web-v0.4.4.jar
 ```
 
 随后检查：

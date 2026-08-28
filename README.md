@@ -59,7 +59,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 
 ```powershell
 mvn test -DskipTests=false
-java -jar kuudra-web/target/kuudra-web-v0.4.4-alpha-1.jar
+java -jar kuudra-web/target/kuudra-web-v0.4.4.jar
 ```
 
 启动后可访问 `GET /api/v1/kuudra/status`、`GET /api/v1/runtime/sessions/{id}`、`POST /api/v1/runtime/sessions/{id}/cancel` 和 `/doc.html`。
