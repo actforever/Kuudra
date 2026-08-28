@@ -90,7 +90,7 @@ class PluginArchiveLoaderTest {
             PluginArchiveLoader.LoadedArchive child = byId.get("child");
 
             PluginComponentDefinition interpreter = base.plugin().components().stream().filter(component ->
-                    component.reference().equals("event-interpreter/base/parent-interpreter")).findFirst().orElseThrow();
+                    component.reference().equals("event-interpreter/demo/base/parent-interpreter")).findFirst().orElseThrow();
             assertEquals("Recognizes a parent sequence", interpreter.documentation().purpose());
             assertEquals(List.of("RUNNING", "STOPPED"), interpreter.documentation().supportedDesiredStates());
             assertEquals("windowMillis", interpreter.documentation().configuration().get(0).path());

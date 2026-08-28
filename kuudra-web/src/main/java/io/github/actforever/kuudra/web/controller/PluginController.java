@@ -45,22 +45,24 @@ public class PluginController {
     }
 
     @Operation(summary = "获取 ComponentTemplate")
-    @GetMapping("/component-templates/{type}/{namespace}/{name}")
+    @GetMapping("/component-templates/{type}/{namespace}/{pluginId}/{name}")
     KuudraApp.Component componentTemplate(
             @PathVariable("type") String type,
             @PathVariable("namespace") String namespace,
+            @PathVariable("pluginId") String pluginId,
             @PathVariable("name") String name) {
-        String reference = type + "/" + namespace + "/" + name;
+        String reference = type + "/" + namespace + "/" + pluginId + "/" + name;
         return app.pluginComponent(reference).orElseThrow(() -> notFound("ComponentTemplate", reference));
     }
 
     @Operation(summary = "获取 ComponentTemplate 说明文档")
-    @GetMapping("/component-templates/{type}/{namespace}/{name}/documentation")
+    @GetMapping("/component-templates/{type}/{namespace}/{pluginId}/{name}/documentation")
     KuudraApp.ComponentDocumentation documentation(
             @PathVariable("type") String type,
             @PathVariable("namespace") String namespace,
+            @PathVariable("pluginId") String pluginId,
             @PathVariable("name") String name) {
-        String reference = type + "/" + namespace + "/" + name;
+        String reference = type + "/" + namespace + "/" + pluginId + "/" + name;
         return app.pluginComponentDocumentation(reference)
                 .orElseThrow(() -> notFound("ComponentTemplate", reference));
     }

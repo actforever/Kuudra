@@ -1121,9 +1121,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     private static String componentReference(String type, String component) {
-        if (component.startsWith(type + "/")) return component; // Compatibility with the former full reference syntax.
         String[] parts = component.split("/", -1);
-        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) throw new IllegalArgumentException("Component must be namespace/component-id: " + component);
+        if (parts.length != 3 || java.util.Arrays.stream(parts).anyMatch(String::isBlank))
+            throw new IllegalArgumentException("Component must be plugin-namespace/plugin-id/component-name: " + component);
         return type + "/" + component;
     }
     public record Flow(String id, String executionClass, int activeSessions, int deferredTasks, boolean selected) { }

@@ -91,9 +91,9 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/plugin/kuudra-official/default"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default"))
+        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default/default"))
                 .andExpect(status().isNotFound());
-        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default/documentation"))
+        mvc.perform(get("/api/v1/plugin/component-templates/ingress/kuudra-official/default/default/documentation"))
                 .andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/runtime/components"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
@@ -147,8 +147,8 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates'].get.tags[0]").value("Plugin"))
                 .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates'].get.summary").value("列出 ComponentTemplate"))
-                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}']").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{pluginId}/{name}']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/plugin/component-templates/{type}/{namespace}/{pluginId}/{name}/documentation']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/components']").doesNotExist());
         mvc.perform(get("/v3/api-docs/system-events"))
                 .andExpect(status().isOk())

@@ -132,9 +132,9 @@ class KuudraAppTest {
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             Map<String, String> kinds = app.components().stream().collect(java.util.stream.Collectors.toMap(
                     KuudraApp.Component::reference, KuudraApp.Component::kind));
-            assertEquals("EventSource", kinds.get("event-source/kuudra-official/standalone-source"));
-            assertEquals("Ingress", kinds.get("ingress/kuudra-official/default"));
-            assertEquals("Egress", kinds.get("egress/kuudra-official/default"));
+            assertEquals("EventSource", kinds.get("event-source/kuudra-official/default/standalone-source"));
+            assertEquals("Ingress", kinds.get("ingress/kuudra-official/default/default"));
+            assertEquals("Egress", kinds.get("egress/kuudra-official/default/default"));
         }
     }
 
@@ -298,7 +298,7 @@ class KuudraAppTest {
                 kind: EventSource
                 metadata: {namespace: test, name: standalone}
                 spec:
-                  component: kuudra-official/standalone-source
+                  component: kuudra-official/default/standalone-source
                   desiredState: running
                   options: {}
                 """);
@@ -320,7 +320,7 @@ class KuudraAppTest {
                 kind: EventHandler
                 metadata: {namespace: test, name: lifecycle}
                 spec:
-                  component: kuudra-official/lifecycle-handler
+                  component: kuudra-official/default/lifecycle-handler
                   desiredState: running
                   options: {}
                 """);
@@ -339,19 +339,19 @@ class KuudraAppTest {
                 kind: EventSource
                 metadata: {namespace: test, name: source}
                 spec:
-                  component: kuudra-official/standalone-source
+                  component: kuudra-official/default/standalone-source
                   desiredState: running
                   options: {}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: test, name: first}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: test, name: second}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -380,27 +380,27 @@ class KuudraAppTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: EventSource
                 metadata: {namespace: test, name: first-source}
-                spec: {component: kuudra-official/standalone-source, desiredState: stopped, options: {}}
+                spec: {component: kuudra-official/default/standalone-source, desiredState: stopped, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: EventSource
                 metadata: {namespace: test, name: second-source}
-                spec: {component: kuudra-official/standalone-source, desiredState: stopped, options: {}}
+                spec: {component: kuudra-official/default/standalone-source, desiredState: stopped, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: test, name: boundary}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: test, name: first-output}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: test, name: second-output}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -434,14 +434,14 @@ class KuudraAppTest {
                 kind: EventSource
                 metadata: {namespace: test, name: source}
                 spec:
-                  component: kuudra-official/standalone-source
+                  component: kuudra-official/default/standalone-source
                   desiredState: running
                   options: {}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: test, name: input}
-                spec: {component: kuudra-official/default, desiredState: active, options: {}}
+                spec: {component: kuudra-official/default/default, desiredState: active, options: {}}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -478,8 +478,8 @@ class KuudraAppTest {
     void exposesEveryManifestComponentResourceTypeNotOnlyEventSources() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
-        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "ingress", "kuudra-official/default"));
-        Files.writeString(manifests.resolve("egress.yaml"), component("Egress", "egress", "kuudra-official/default"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "ingress", "kuudra-official/default/default"));
+        Files.writeString(manifests.resolve("egress.yaml"), component("Egress", "egress", "kuudra-official/default/default"));
         Files.writeString(manifests.resolve("flow.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -522,7 +522,7 @@ class KuudraAppTest {
                 kind: Ingress
                 metadata: {namespace: test, name: dormant}
                 spec:
-                  component: kuudra-official/default
+                  component: kuudra-official/default/default
                   desiredState: inactive
                 """);
 
@@ -548,12 +548,12 @@ class KuudraAppTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: alpha, name: input}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: alpha, name: output}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -567,12 +567,12 @@ class KuudraAppTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: beta, name: input}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: beta, name: output}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -618,12 +618,12 @@ class KuudraAppTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: macro, name: shared-entry}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: system, name: control-output}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -668,12 +668,12 @@ class KuudraAppTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: test, name: dormant}
-                spec: {component: kuudra-official/default, desiredState: inactive}
+                spec: {component: kuudra-official/default/default, desiredState: inactive}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: test, name: output}
-                spec: {component: kuudra-official/default, desiredState: active}
+                spec: {component: kuudra-official/default/default, desiredState: active}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -695,7 +695,7 @@ class KuudraAppTest {
     void appReconcilesAndPersistsAComponentDesiredStateChange() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
-        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "switchable", "kuudra-official/default/default"));
 
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             CopyOnWriteArrayList<io.github.actforever.kuudra.api.system.SystemEvent> observedEvents = new CopyOnWriteArrayList<>();
@@ -742,7 +742,7 @@ class KuudraAppTest {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Files.writeString(manifests.resolve("flaky.yaml"), component(
-                "EventSource", "flaky", "kuudra-official/flaky-source").replace("desiredState: active", "desiredState: stopped"));
+                "EventSource", "flaky", "kuudra-official/default/flaky-source").replace("desiredState: active", "desiredState: stopped"));
         KuudraConfigResource configuration = new KuudraConfigResource(Map.of(
                 "home-directory", ".kuudra",
                 "reconciliation", Map.of("enabled", true, "interval-ms", 100),
@@ -778,7 +778,7 @@ class KuudraAppTest {
     void startupManifestOverridesAConflictingPersistedDesiredState() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
-        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "authoritative", "kuudra-official/default"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "authoritative", "kuudra-official/default/default"));
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             assertEquals("INACTIVE", app.setDesiredState("Ingress", "test", "authoritative", "inactive").status());
         }
@@ -793,7 +793,7 @@ class KuudraAppTest {
     void controlPlaneResourceQueriesRemainAvailableAfterRuntimeStops() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
-        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "queryable", "kuudra-official/default"));
+        Files.writeString(manifests.resolve("ingress.yaml"), component("Ingress", "queryable", "kuudra-official/default/default"));
         KuudraApp app = KuudraApp.createFromDefaultLocations(directory);
         try {
             app.stop();
@@ -811,11 +811,11 @@ class KuudraAppTest {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
         Path ingress = manifests.resolve("ingress.yaml");
-        Files.writeString(ingress, component("Ingress", "before-restart", "kuudra-official/default"));
+        Files.writeString(ingress, component("Ingress", "before-restart", "kuudra-official/default/default"));
 
         try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
             assertTrue(app.resource("Ingress", "test", "before-restart").isPresent());
-            Files.writeString(ingress, component("Ingress", "after-restart", "kuudra-official/default"));
+            Files.writeString(ingress, component("Ingress", "after-restart", "kuudra-official/default/default"));
             app.restart();
             assertTrue(app.resource("Ingress", "test", "before-restart").isEmpty());
             assertTrue(app.resource("Ingress", "test", "after-restart").isPresent());

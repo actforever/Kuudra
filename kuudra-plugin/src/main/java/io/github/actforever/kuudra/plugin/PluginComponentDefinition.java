@@ -23,5 +23,6 @@ public record PluginComponentDefinition(String pluginId, String namespace, Plugi
     public PluginComponentDefinition(String pluginId, String namespace, PluginComponentKind kind, String name, Class<?> implementation) {
         this(pluginId, namespace, kind, name, implementation, ComponentInstancePolicy.DEFAULT, PluginComponentDocumentation.EMPTY);
     }
-    public String reference() { return kind.prefix() + "/" + namespace + "/" + name; }
+    /** Canonical registry identity: kind/plugin-namespace/plugin-id/component-name. */
+    public String reference() { return kind.prefix() + "/" + namespace + "/" + pluginId + "/" + name; }
 }

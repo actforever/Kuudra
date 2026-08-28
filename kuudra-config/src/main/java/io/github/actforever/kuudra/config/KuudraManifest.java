@@ -47,6 +47,10 @@ public final class KuudraManifest {
             Objects.requireNonNull(id, "id"); Objects.requireNonNull(metadata, "metadata");
             if (!COMPONENT_KINDS.containsKey(id.kind())) throw new IllegalArgumentException("Unsupported component kind: " + id.kind());
             requireText(component, "spec.component"); requireText(desiredState, "spec.desiredState");
+            String[] identity = component.split("/", -1);
+            if (identity.length != 3 || java.util.Arrays.stream(identity).anyMatch(String::isBlank)) {
+                throw new IllegalArgumentException("spec.component must be plugin-namespace/plugin-id/component-name: " + component);
+            }
             options = Map.copyOf(options);
         }
         public String type() { return COMPONENT_KINDS.get(id.kind()); }

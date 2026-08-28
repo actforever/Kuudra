@@ -155,9 +155,9 @@ class DefaultPluginManagerTest {
                 List.of(new PluginComponentDefinition("annotated", "test-plugin", PluginComponentKind.EVENT_SOURCE, "test-source", TestSource.class))));
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
-        assertEquals("annotated", manager.components().find("event-source/test-plugin/test-source").orElseThrow().pluginId());
+        assertEquals("annotated", manager.components().find("event-source/test-plugin/annotated/test-source").orElseThrow().pluginId());
         assertEquals("[0.9.0,2.0.0)", manager.pluginView("test-plugin", "annotated").dependencies().get(0).versionRange());
-        assertTrue(manager.components().create("event-source/test-plugin/test-source", io.github.actforever.kuudra.api.component.EventSource.class) instanceof TestSource);
+        assertTrue(manager.components().create("event-source/test-plugin/annotated/test-source", io.github.actforever.kuudra.api.component.EventSource.class) instanceof TestSource);
     }
 
     @Test
@@ -170,7 +170,7 @@ class DefaultPluginManagerTest {
                 new RecordingPlugin("component", List.of(), calls),
                 List.of(new PluginComponentDefinition("component", "test-plugin", PluginComponentKind.EVENT_SOURCE, "managed", ManagedTestSource.class))));
         manager.startAll().toCompletableFuture().join();
-        manager.createComponent("event-source/test-plugin/managed", io.github.actforever.kuudra.api.component.EventSource.class,
+        manager.createComponent("event-source/test-plugin/component/managed", io.github.actforever.kuudra.api.component.EventSource.class,
                 Map.of("intervalMillis", 250));
         manager.close();
         assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);

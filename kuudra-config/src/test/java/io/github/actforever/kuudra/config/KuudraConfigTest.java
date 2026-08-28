@@ -78,7 +78,7 @@ class KuudraConfigTest {
                   labels:
                     device: keyboard
                 spec:
-                  component: native-input/keyboard
+                  component: native-input/input/keyboard
                   desiredState: stopped
                   options:
                     mouseEnabled: false
@@ -121,12 +121,28 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: EventHandler
                 metadata: {namespace: default, name: duplicate}
-                spec: {component: demo/handler}
+                spec: {component: demo/demo/handler}
                 """;
         Files.writeString(manifests.resolve("one.yaml"), component);
         Files.writeString(directory.resolve(".kuudra/manifests/b/two.yaml"), component);
 
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+    }
+
+    @Test
+    void rejectsAmbiguousTwoPartPluginComponentIdentity() throws Exception {
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(directory.resolve("config.yaml"), "home-directory: .kuudra\n");
+        Files.writeString(manifests.resolve("source.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventSource
+                metadata: {namespace: demo, name: source}
+                spec: {component: demo/source}
+                """);
+
+        java.io.IOException error = assertThrows(java.io.IOException.class,
+                () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
+        assertTrue(error.getMessage().contains("plugin-namespace/plugin-id/component-name"));
     }
 
     @Test
@@ -147,12 +163,12 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Ingress
                 metadata: {namespace: demo, name: ingress}
-                spec: {component: kuudra-official/default}
+                spec: {component: kuudra-official/default/default}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Egress
                 metadata: {namespace: demo, name: egress}
-                spec: {component: kuudra-official/default}
+                spec: {component: kuudra-official/default/default}
                 ---
                 apiVersion: kuudra.io/v1alpha1
                 kind: Flow
@@ -179,7 +195,7 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: EventHandler
                 metadata: {namespace: shared, name: handler}
-                spec: {component: demo/handler}
+                spec: {component: demo/demo/handler}
                 """);
         Files.writeString(manifests.resolve("flow.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
@@ -200,7 +216,7 @@ class KuudraConfigTest {
                 apiVersion: kuudra.io/v1alpha1
                 kind: Component
                 metadata: {namespace: isolated, name: legacy}
-                spec: {type: event-handler, component: demo/handler}
+                spec: {type: event-handler, component: demo/demo/handler}
                 """);
         assertThrows(java.io.IOException.class, () -> KuudraYamlLoader.load(directory.resolve("config.yaml")));
     }
@@ -238,7 +254,7 @@ class KuudraConfigTest {
                 kind: EventAdapter
                 metadata: {namespace: demo, name: mapper}
                 spec:
-                  component: kuudra-official/event-mapper
+                  component: kuudra-official/default/event-mapper
                   domain: RAW
                 """);
         java.io.IOException topLevel = assertThrows(java.io.IOException.class,
@@ -250,7 +266,7 @@ class KuudraConfigTest {
                 kind: EventAdapter
                 metadata: {namespace: demo, name: mapper}
                 spec:
-                  component: kuudra-official/event-mapper
+                  component: kuudra-official/default/event-mapper
                   options: {domain: SESSION}
                 """);
         java.io.IOException option = assertThrows(java.io.IOException.class,

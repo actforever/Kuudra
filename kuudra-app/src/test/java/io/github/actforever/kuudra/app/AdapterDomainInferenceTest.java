@@ -40,7 +40,7 @@ class AdapterDomainInferenceTest {
         kinds.forEach((name, kind) -> {
             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, "test", name);
             components.put(id, new KuudraManifest.Component(id, new KuudraManifest.Metadata("test", name, Map.of(), Map.of()),
-                    "test/" + name, kind.equals("EventAdapter") || kind.equals("Ingress") ? "active" : "running", Map.of()));
+                    "test/fixture/" + name, kind.equals("EventAdapter") || kind.equals("Ingress") ? "active" : "running", Map.of()));
             imports.put(name, new KuudraManifest.ResourceReference(kind, "test", name));
         });
         KuudraManifest.ResourceId flowId = new KuudraManifest.ResourceId("Flow", "test", "flow");
