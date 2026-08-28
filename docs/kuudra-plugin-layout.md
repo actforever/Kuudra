@@ -73,7 +73,7 @@
 ```yaml
 kind: EventSource
 spec:
-  component: hello-world/loop-emitter
+  component: hello-world/hello-world/loop-emitter
 ```
 
 内核据此组成内部完整引用 `event-source/hello-world/loop-emitter`。资源的规范身份则独立使用 `EventSource/<resource-namespace>/<resource-name>`。

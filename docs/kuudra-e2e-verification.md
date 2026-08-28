@@ -15,7 +15,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: EventSource
 metadata: {namespace: dev, name: hello-world-source}
 spec:
-  component: kuudra-official/hello-world
+  component: kuudra-official/hello-world/hello-world
   desiredState: running
   options: {intervalMillis: 1000}
 ---
@@ -23,7 +23,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: Ingress
 metadata: {namespace: dev, name: plain-ingress}
 spec:
-  component: kuudra-official/plain-ingress
+  component: kuudra-official/default/plain-ingress
   desiredState: active
   options:
     groupKey: "${event#hello-world.message}"
@@ -40,7 +40,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: EventHandler
 metadata: {namespace: dev, name: event-logger}
 spec:
-  component: kuudra-official/event-logger
+  component: kuudra-official/logging/event-logger
   desiredState: running
   options:
     level: INFO

@@ -62,7 +62,7 @@ App 严格加载 `plugins/` 中所有 JAR。损坏归档、非 Kuudra 插件、�
 
 ## 具体组件资源与 Flow
 
-支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`、`SessionCoordinationPolicy` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
+支持的资源 kind 为 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`、`SessionCoordinationPolicy` 和 `Flow`。kind 使用 PascalCase 并直接表达资源类型，不再接受 `kind: Component` 或 `spec.type`。组件资源的 `spec.component` 必须写成 `plugin-namespace/plugin-id/component-name`；App 会结合资源 `kind` 查找唯一的插件组件定义。外置 `kuudra-default-plugin` 必须部署到 `plugins/` 后才会作为 `kuudra-official/default` 加载；Ingress/Egress 仍须由清单显式声明。EventAdapter 资源不声明 domain；App 根据它在每个 Flow 中与 Source/Interpreter/Ingress/Handler/Egress 的连接位置推导 RAW 或 SESSION 域。无法唯一推导或两侧域冲突时，Flow 编译失败。
 
 Flow import 未填写 `namespace` 时默认引用 Flow 自身命名空间；显式填写时允许跨命名空间引用同一个 `kind/namespace/name` 实例。跨命名空间不会复制资源或绕过实例限制。Flow 和被引用资源各自是否实例化仍只由 `resource-selection` 决定；若选中了 Flow 却没有选中它显式引用的资源命名空间，启动会以缺失引用失败。因而共享 `macro` 下的全局 EventSource 给 `system` 控制 Flow 时，应同时激活 `macro` 与 `system`。
 
@@ -75,7 +75,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: Ingress
 metadata: {namespace: demo, name: ingress}
 spec:
-  component: kuudra-official/plain-ingress
+  component: kuudra-official/default/plain-ingress
   desiredState: active
   options:
     groupKey: ${event#input.key}

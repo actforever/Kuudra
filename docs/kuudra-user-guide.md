@@ -90,7 +90,7 @@ metadata:
   namespace: macro
   name: hello-world-source
 spec:
-  component: kuudra-official/hello-world
+  component: kuudra-official/hello-world/hello-world
   desiredState: running
   options:
     intervalMillis: 1000
@@ -101,7 +101,7 @@ metadata:
   namespace: automation
   name: plain-ingress
 spec:
-  component: kuudra-official/plain-ingress
+  component: kuudra-official/default/plain-ingress
   desiredState: active
   options:
     groupKey: "${event#hello-world.message}"
@@ -114,7 +114,7 @@ metadata:
   namespace: automation
   name: event-logger
 spec:
-  component: kuudra-official/event-logger
+  component: kuudra-official/logging/event-logger
   desiredState: running
   options:
     level: INFO
@@ -179,7 +179,7 @@ metadata:
   namespace: macro
   name: keyboard
 spec:
-  component: actforever/jnativehook-keyboard
+  component: actforever/jnativehook/jnativehook-keyboard
   desiredState: running
 ```
 
@@ -195,7 +195,7 @@ KeySpec key = event.data().get("user-interaction", "key", KeySpec.class);
 
 ```yaml
 spec:
-  component: actforever/jnativehook-mouse-motion
+  component: actforever/jnativehook/jnativehook-mouse-motion
   desiredState: running
   options:
     output:
@@ -214,7 +214,7 @@ metadata:
   namespace: macro
   name: replay-key
 spec:
-  component: actforever/awt-robot
+  component: actforever/awt-robot/awt-robot
   desiredState: running
   options:
     maxTotalSteps: 10000

@@ -62,7 +62,7 @@ metadata:
   labels: {}
   annotations: {}
 spec:
-  component: native-input/jnativehook-keyboard
+  component: native-input/jnativehook/jnativehook-keyboard
 ```
 
 资源身份固定为 `(apiVersion, kind, metadata.namespace, metadata.name)`，规范路由地址为 `kind/namespace/name`。`metadata.namespace` 是部署选择与资源身份边界，不等于插件 namespace、上下文 namespace 或实例互斥域。Flow 默认引用自身 namespace，但允许显式引用其他已激活 namespace；缺省资源 namespace 可使用 `default`。
@@ -78,7 +78,7 @@ metadata:
   namespace: macros
   name: keyboard-hook
 spec:
-  component: native-input/jnativehook-keyboard
+  component: native-input/jnativehook/jnativehook-keyboard
   desiredState: running
   options:
     capture-mouse: false
@@ -91,12 +91,12 @@ metadata:
   namespace: macros
   name: keyboard-robot
 spec:
-  component: awt-input/keyboard-robot
+  component: awt-input/robot/keyboard-robot
   desiredState: running
   options: {}
 ```
 
-`kind` 直接决定资源类型，支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；不再存在 `kind: Component` 或 `spec.type`。`spec.component` 指向插件组件定义。options 只属于资源实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
+`kind` 直接决定资源类型，支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`；不再存在 `kind: Component` 或 `spec.type`。`spec.component` 使用严格的 `plugin-namespace/plugin-id/component-name` 三段式身份指向插件组件定义，例如 `kuudra-official/default/plain-ingress`。资源 `kind` 已经表达组件类型，因此不应把 `event-source` 等类型前缀写进 `spec.component`。旧的两段式写法不会被兼容，以免同一插件命名空间中的不同插件发生组件名碰撞。options 只属于资源实例；同一实例被多个 Flow 导入时不能在 Flow 中分别覆盖 options，否则共享身份将失去确定语义。
 
 Component 的 `desiredState` 会先持久化到 SQLite，再在启动调谐阶段收敛：
 

@@ -20,8 +20,8 @@ CREATED → STARTING → RUNNING → PAUSING → PAUSED → RESUMING → RUNNING
 | `GET` | `/api/v1/plugin` | 列出当前已加载插件及其版本、命名空间和状态。 |
 | `GET` | `/api/v1/plugin/{namespace}/{pluginId}` | 按规范插件身份查询插件；详情携带该插件提供的 ComponentTemplate 快照。 |
 | `GET` | `/api/v1/plugin/component-templates` | 列出插件注册表中的 ComponentTemplate。 |
-| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{name}` | 按组件引用查询模板、实例约束和结构化文档。 |
-| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{name}/documentation` | 查询 ComponentTemplate 的配置、生命周期和事件说明。 |
+| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{pluginId}/{name}` | 按完整插件组件身份查询模板、实例约束和结构化文档。 |
+| `GET` | `/api/v1/plugin/component-templates/{type}/{namespace}/{pluginId}/{name}/documentation` | 查询 ComponentTemplate 的配置、生命周期和事件说明。 |
 | `GET` | `/api/v1/kuudra/resource-documentation` | 查询内核资源规约文档。 |
 | `GET` | `/api/v1/kuudra/resource-documentation/{namespace}/{kind}` | 按文档提供方和 kind 查询资源规约；当前包括 `kuudra-official/Flow`。 |
 | `GET` | `/api/v1/runtime/components?type={type}&namespace={namespace}` | 列出清单声明并由 App 调谐的 Component，可按类型和命名空间过滤。 |

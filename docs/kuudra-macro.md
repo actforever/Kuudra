@@ -16,7 +16,7 @@ metadata:
   namespace: macro
   name: robot
 spec:
-  component: event-handler/actforever/awt-robot
+  component: actforever/awt-robot/awt-robot
   desiredState: running
   options:
     script: macros/hello.kt
@@ -81,7 +81,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: EventSource
 metadata: { namespace: macro-kotlin-demo, name: trigger }
 spec:
-  component: kuudra-official/hello-world
+  component: kuudra-official/hello-world/hello-world
   desiredState: running
   options: { intervalMillis: 500 }
 ---
@@ -89,7 +89,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: Ingress
 metadata: { namespace: macro-kotlin-demo, name: ingress }
 spec:
-  component: kuudra-official/plain-ingress
+  component: kuudra-official/default/plain-ingress
   desiredState: active
   options:
     groupKey: "${event#hello-world.message}"
@@ -98,7 +98,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: EventHandler
 metadata: { namespace: macro-kotlin-demo, name: robot }
 spec:
-  component: actforever/awt-robot
+  component: actforever/awt-robot/awt-robot
   desiredState: running
   options:
     script: macros/safe-emit.kt
@@ -109,7 +109,7 @@ apiVersion: kuudra.io/v1alpha1
 kind: EventHandler
 metadata: { namespace: macro-kotlin-demo, name: logger }
 spec:
-  component: kuudra-official/event-logger
+  component: kuudra-official/logging/event-logger
   desiredState: running
   options:
     level: INFO
