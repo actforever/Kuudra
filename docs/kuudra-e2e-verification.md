@@ -6,6 +6,25 @@
 - `kuudra-official/hello-world`：提供周期 EventSource；
 - `kuudra-official/logging`：提供 EventHandler，并经 App SystemEventBus 输出日志。
 
+## Windows 原生进程控制验证矩阵
+
+外部插件仓库的 `examples/process-control-safe` 使用独立测试进程验证特权边界；自动测试不得选择 GTA 或其他用户进程。
+
+| 场景 | 预期结果 |
+| --- | --- |
+| 只加载 `windows-native-host` JAR | 不请求 UAC，不注册 Component |
+| `allowElevation: false` | Component 在请求 UAC 前明确失败 |
+| 首个允许提升的 Component | 请求一次 UAC；后续 Component 复用同一宿主 |
+| 暂停 `ping` 至自然截止时间 | 进程自动恢复，恢复日志清除 |
+| 同一进程重复暂停 | 返回冲突，不叠加线程暂停计数 |
+| 同一路径存在多个进程 | 要求 PID，并再次验证 PID、启动时间和镜像路径 |
+| Kuudra/Session 暂停 | 原生截止时间继续计时，不因 checkpoint 延长 |
+| Session 取消、组件停止 | 主动恢复该所有者持有的操作 |
+| JVM 被终止 | 宿主保持到原截止时间后恢复并退出 |
+| 宿主被终止 | 下次启动根据日志和进程身份安全恢复 |
+
+C# 集成测试会启动独立 `cmd /c ping -t 127.0.0.1` 子进程，实际调用 Win32 挂起/恢复并检查日志清理；交互式 UAC 仍应按示例做人工冒烟验证。
+
 ## 验证清单
 
 在 `.kuudra/manifests/hello-world.yaml` 使用一个多文档 YAML 声明三个 Component 和一个 Flow：

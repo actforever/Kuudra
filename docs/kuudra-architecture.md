@@ -4,6 +4,12 @@
 
 部署模型由两层资源基础设施组成：内核基础设施层包含 `Flow`、`SessionCoordinationPolicy` 等声明式资源，由 App 解析和编译；插件资源层包含 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`EventHandler`、`Egress`，由插件提供模板并由 App 实例化、调谐。两层共享资源信封、StateStore、命名空间选择和查询入口，但只有插件组件具有 `desiredState`。
 
+### Windows 原生能力边界
+
+Windows 特权操作目前不是内核的通用跨语言 Component SPI。Java 插件仍然拥有 Component 生命周期、Event/Context 读取、`ExecutionControl` 协作以及 CompletionStage；外部 `actforever/windows-native-host` 只通过命名管道提供类型化、所有者隔离且有截止时间的原生能力 RPC。它不是第二个 Runtime，也不传输 Kuudra Event 或 Context。
+
+`actforever/process-control` 通过声明式插件依赖共享宿主 API，以静态绝对路径白名单约束目标，并在实际选中且允许提升权限的 Component 初始化时才请求 UAC。配置和 Event 只能表达目标别名、可选 PID、类型化动作和有界时长，不能植入 PowerShell 或任意命令。后续防火墙、网络适配器等特权能力也应沿用独立的类型化协议；不需要管理员权限的窗口覆盖层则保持为普通 Java 插件。只有当多种语言确实需要完整组件语义时，才另行设计通用 sidecar SPI。
+
 ## 1. 事件实体与执行域
 
 `KuudraEvent` 只保存业务身份、类型、发生时间、不可变 `EventData` 和 `EventLineage`。它不保存 Session，也不存在“Session 可空”的模糊状态。

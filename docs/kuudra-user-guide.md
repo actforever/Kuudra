@@ -2,6 +2,35 @@
 
 本文面向 Kuudra 使用者，给出一套可以实际启动的配置，并解释 App 配置、资源清单、命名空间、Flow、Session 与组件状态的关系。架构或清单字段发生变化时，应同步更新本文中的说明、示例和验证步骤。
 
+## Windows 限时进程控制示例
+
+官方外部插件仓库提供 `actforever/windows-native-host` 与 `actforever/process-control`。前者封装 Windows 原生特权能力，后者提供类型化 `process-control` EventHandler；它们不接受 PowerShell 或任意命令。下面的资源会在初始化时请求一次 UAC，并只允许操作预先列出的 `PING.EXE`：
+
+```yaml
+apiVersion: kuudra.io/v1alpha1
+kind: EventHandler
+metadata:
+  namespace: dev
+  name: suspend-ping
+spec:
+  component: actforever/process-control/process-control
+  desiredState: running
+  options:
+    allowElevation: true
+    targets:
+      ping:
+        executable: 'C:\Windows\System32\PING.EXE'
+    action: SUSPEND
+    target: ping
+    durationMillis: 2000
+    defaultDurationMillis: 10000
+    maxDurationMillis: 60000
+```
+
+`targets` 必须是初始化时可验证的绝对路径，不能包含占位符；Event 只能在这些别名中选择目标，并可提供 PID、`SUSPEND`/`RESUME` 和不超过上限的时长。仅加载宿主 JAR 不会弹出 UAC；只有部署选中了该 Component、`allowElevation: true` 且宿主尚未启动时才会请求提升权限。用户拒绝或设置为 `false` 时，Component 初始化明确失败。
+
+暂停操作的 CompletionStage 会持续到恢复完成。Session 或内核暂停不会延长原生截止时间；取消、组件停止和正常关闭会主动恢复。JVM 意外退出时，宿主仍按截止时间恢复；宿主异常退出时，持久化日志由下次启动恢复。可运行的完整 Flow、`ping -t 127.0.0.1` 步骤与安全说明见外部仓库 `examples/process-control-safe`。
+
 ## 1. 准备运行目录
 
 首次启动后，Kuudra 会在程序旁创建 `.kuudra`：
