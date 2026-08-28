@@ -17,21 +17,33 @@ public record ActionContext(UUID sessionId, String flowId,
                             Map<String, Object> sessionValues, SessionContext sessionContext,
                             Map<String, Object> flowValues, FlowContext flowContext,
                             ExecutionControl executionControl, EventEmitter emitter,
+                            CurrentSessionControl sessionControl,
                             Map<String, Object> globalValues, GlobalContext globalContext,
                             Map<String, Object> configuration) {
     public ActionContext {
         sessionValues = Map.copyOf(sessionValues); flowValues = Map.copyOf(flowValues);
         globalValues = Map.copyOf(globalValues); configuration = Map.copyOf(configuration);
         java.util.Objects.requireNonNull(emitter, "emitter");
+        java.util.Objects.requireNonNull(sessionControl, "sessionControl");
     }
     public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
                          SessionContext sessionContext, ExecutionControl executionControl, EventEmitter emitter,
                          Map<String, Object> globalValues, Map<String, Object> configuration) {
-        this(sessionId, flowId, sessionValues, sessionContext, Map.of(), null, executionControl, emitter, globalValues, null, configuration);
+        this(sessionId, flowId, sessionValues, sessionContext, Map.of(), null, executionControl, emitter,
+                CurrentSessionControl.unavailable(sessionId), globalValues, null, configuration);
     }
     public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
                          SessionContext sessionContext, ExecutionControl executionControl, EventEmitter emitter) {
         this(sessionId, flowId, sessionValues, sessionContext, executionControl, emitter, Map.of(), Map.of());
+    }
+
+    public ActionContext(UUID sessionId, String flowId, Map<String, Object> sessionValues,
+                         SessionContext sessionContext, Map<String, Object> flowValues, FlowContext flowContext,
+                         ExecutionControl executionControl, EventEmitter emitter,
+                         Map<String, Object> globalValues, GlobalContext globalContext,
+                         Map<String, Object> configuration) {
+        this(sessionId, flowId, sessionValues, sessionContext, flowValues, flowContext, executionControl, emitter,
+                CurrentSessionControl.unavailable(sessionId), globalValues, globalContext, configuration);
     }
 
     /** Emits a derived Event immediately. The Runtime supplies the current Session and lineage. */

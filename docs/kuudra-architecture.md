@@ -82,7 +82,7 @@ Runtime 将接受结果交给 `SessionCoordinator`。会话组由 scope、Ingres
 
 每个进入 SESSION 节点的任务在入队前取得一份工作租约，节点完成、失败或被取消跳过后释放。Handler 返回的 `CompletionStage` 完成前租约保持有效；完成后再调用 emitter 属于契约错误。最后一个租约归零时，Session 进入 `COMPLETED`、`CANCELLED` 或 `FAILED`，Runtime 发布 SystemEvent 并通知 Coordinator 启动下一个待处理事件。
 
-Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消与暂停都是协作式的：`EventContext` 和 `ActionContext` 统一暴露 `ExecutionControl`，组件可以用 `poll()` 无阻塞读取 `CONTINUE/PAUSE/CANCEL`，长时间异步任务则在可恢复边界调用 `checkpoint()`。旧 `CancellationToken` 仅作为迁移兼容接口保留。
+Handler 显式发出的 Event 只表示业务阶段，不承担内核完成通知。Runtime 的 `event-handler.completed` 是可观测 SystemEvent，不进入业务 Flow。取消与暂停都是协作式的：`EventContext` 和 `ActionContext` 统一暴露 `ExecutionControl`，组件可以用 `poll()` 无阻塞读取 `CONTINUE/PAUSE/CANCEL`，长时间异步任务则在可恢复边界调用 `checkpoint()`。只有 SESSION 域的 `ActionContext` 额外暴露绑定当前会话的 `CurrentSessionControl`；Handler 可以提交幂等取消请求，但不能指定其他 Session 或直接修改状态，最终状态、租约回收与依赖终止传播仍由 Runtime 负责。旧 `CancellationToken` 仅作为迁移兼容接口保留。
 
 Session 不建立隐式父子生命周期。Egress 后再次进入 Ingress 默认创建完全独立的 Session，二者只通过 EventLineage 保留因果关系；只有自动匹配的 `SessionCoordinationPolicy` 声明依赖要求时，Coordinator 才建立可观测的有向依赖边。Ingress 不持有策略引用，也不能直接访问 SessionManager 或 Coordinator。依赖图不会改变 Event 与 Session 一对一绑定，也不采用引用计数推断业务结束。
 
@@ -105,7 +105,7 @@ EventAdapter 的组件实现和 Component 资源都是 domain-neutral；RAW/SESS
 
 同一个 Component 资源被多个 binding（包括同一 Flow 的不同 alias 或不同 Flow）引用时，所有 binding 始终指向同一个 App 所有实例，共享配置、状态与生命周期；alias 只标识图节点，不能提供实例隔离。需要独立实例时必须使用不同 `metadata.name` 声明资源。`InstancePolicy.threadSafe=false` 时 Runtime 按资源实例串行化跨 binding 调用，`true` 才允许并发。无论是否复用，App 都按 binding 分别推导 Adapter 域并执行占位符域校验。
 
-Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `ContextCodec` 把 POJO 编码为不可变 JSON 兼容树，读取方用 `get(key, Type.class)` 按需反序列化。插件共享 POJO 必须来自声明的上游依赖，确保双方使用同一 `Class<?>`。
+Session、Flow、Global 通过代码接口写入，YAML 只读。默认 `ContextCodec` 把 POJO 编码为不可变 JSON 兼容树，读取方用 `get(key, Type.class)` 按需反序列化。插件共享 POJO 必须来自声明的上游依赖，确保双方使用同一 `Class<?>`。普通配置占位符在单次节点调用入口解析；长时间 Handler 若需观察之后发生的上下文写入，应预编译 `ContextValueReference` 并在每次判断时读取最新快照。
 
 ## 7. 控制面与演进
 

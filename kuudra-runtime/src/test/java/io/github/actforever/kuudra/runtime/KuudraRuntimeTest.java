@@ -20,6 +20,33 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void handlerMayRequestCancellationOnlyForItsCurrentSession() throws Exception {
+        CountDownLatch requested = new CountDownLatch(1);
+        AtomicReference<UUID> controlled = new AtomicReference<>();
+        IngressConfiguration scheduling = new IngressConfiguration(
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("cancellable", Map.of(
+                    "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
+                            IngressDecision.accept("group", event), scheduling, Map.of()),
+                    "handler", new FlowNode.HandlerNode("handler", (event, context) -> {
+                        controlled.set(context.sessionControl().sessionId());
+                        assertEquals(context.sessionId(), context.sessionControl().sessionId());
+                        assertTrue(context.sessionControl().requestCancellation("guard-rejected"));
+                        requested.countDown();
+                        return CompletableFuture.completedFuture(null);
+                    }, Map.of())), Map.of("ingress", List.of("handler"))));
+
+            assertTrue(runtime.publish("cancellable", "ingress", KuudraEvent.of("work", Map.of())));
+            assertTrue(requested.await(1, TimeUnit.SECONDS));
+            assertTrue(runtime.awaitNoActiveSessions(Duration.ofSeconds(1)));
+            SessionSnapshot snapshot = runtime.sessions().snapshots().stream()
+                    .filter(item -> item.id().equals(controlled.get())).findFirst().orElseThrow();
+            assertEquals(SessionStatus.CANCELLED, snapshot.status());
+        }
+    }
+
+    @Test
     void controlFlowContinuesWhileKernelPauseSuspendsDataFlow() throws Exception {
         CountDownLatch controlHandled = new CountDownLatch(1);
         CountDownLatch dataHandled = new CountDownLatch(1);

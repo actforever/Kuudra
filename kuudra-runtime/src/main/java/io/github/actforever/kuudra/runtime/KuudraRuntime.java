@@ -260,7 +260,16 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private void executeHandler(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,EventContext context,SessionManager.ManagedSession session,Invocation invocation,Semaphore componentGate){
         AtomicBoolean open=new AtomicBoolean(true);
         EventEmitter emitter=output->{if(!open.get())throw new KuudraException("EventHandler emitted after CompletionStage completion");return routeOne(flow,node,new SessionEventWrapper(input,session.reference()),derive(input,output,false,session));};
-        ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,context.executionControl(),emitter,globalContext.snapshot(),globalContext,context.configuration());
+        CurrentSessionControl sessionControl=new CurrentSessionControl(){
+            @Override public UUID sessionId(){return session.id;}
+            @Override public boolean requestCancellation(String reason){
+                String detail=reason==null||reason.isBlank()?"handler-requested":reason;
+                boolean requested=cancel(session.id);
+                if(requested)event("session.cancellation.requested-by-handler",Map.of("sessionId",session.id.toString(),"reason",detail,"nodeId",node.id()));
+                return requested;
+            }
+        };
+        ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,context.executionControl(),emitter,sessionControl,globalContext.snapshot(),globalContext,context.configuration());
         try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome",error==null?"success":"failed"));invocation.finish();if(componentGate!=null)componentGate.release();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
         catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome","failed"));invocation.finish();if(componentGate!=null)componentGate.release();}
     }

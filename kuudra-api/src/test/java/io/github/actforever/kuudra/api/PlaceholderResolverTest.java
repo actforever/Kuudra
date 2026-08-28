@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -102,5 +104,30 @@ class PlaceholderResolverTest {
         assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
                 Map.of("illegal", "${session#mode}"), EventDomain.RAW));
         PlaceholderResolver.compileMap(Map.of("legal", "${event#type}"), EventDomain.RAW);
+    }
+
+    @Test
+    void compiledContextReferenceReadsLatestMutableScopeAndRestoresPojo() {
+        AtomicReference<Map<String, Object>> values = new AtomicReference<>(Map.of("key", Map.of("key", "A", "pressed", true)));
+        SessionContext session = new SessionContext() {
+            @Override public Map<String, Object> snapshot() { return values.get(); }
+            @Override public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) {
+                return values.compareAndSet(expected, Map.copyOf(replacement));
+            }
+            @Override public Map<String, Object> update(UnaryOperator<Map<String, Object>> operation) {
+                return values.updateAndGet(current -> Map.copyOf(operation.apply(current)));
+            }
+        };
+        UUID sessionId = UUID.randomUUID();
+        ActionContext context = new ActionContext(sessionId, "flow", session.snapshot(), session,
+                () -> ExecutionDecision.CONTINUE, event -> true);
+        ContextValueReference reference = ContextValueReference.compile("session#key", EventDomain.SESSION);
+        KuudraEvent event = KuudraEvent.of("input", Map.of());
+
+        assertEquals(new KeyStroke("A", true), reference.get(event, context, KeyStroke.class));
+        session.put("key", new KeyStroke("B", false));
+        assertEquals(new KeyStroke("B", false), reference.get(event, context, KeyStroke.class));
+        assertThrows(IllegalArgumentException.class,
+                () -> ContextValueReference.compile("session#key", EventDomain.RAW));
     }
 }
