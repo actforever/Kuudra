@@ -311,6 +311,26 @@ class KuudraAppTest {
     }
 
     @Test
+    void lifecycleHandlerIsActuallyStartedDuringInitialReconciliation() throws Exception {
+        installDefaultTestPlugin();
+        TestDefaultPlugin.LifecycleHandler.reset();
+        Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
+        Files.writeString(manifests.resolve("lifecycle-handler.yaml"), """
+                apiVersion: kuudra.io/v1alpha1
+                kind: EventHandler
+                metadata: {namespace: test, name: lifecycle}
+                spec:
+                  component: kuudra-official/lifecycle-handler
+                  desiredState: running
+                  options: {}
+                """);
+        try (KuudraApp app = KuudraApp.createFromDefaultLocations(directory)) {
+            assertEquals(1, TestDefaultPlugin.LifecycleHandler.starts());
+            assertEquals("RUNNING", app.resource("EventHandler", "test", "lifecycle").orElseThrow().status());
+        }
+    }
+
+    @Test
     void oneEventSourceBindingMayFanOutToMultipleTargets() throws Exception {
         installDefaultTestPlugin();
         Path manifests = Files.createDirectories(directory.resolve(".kuudra/manifests"));
@@ -825,7 +845,7 @@ class KuudraAppTest {
                     """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             for (Class<?> type : java.util.List.of(TestDefaultPlugin.class, TestDefaultPlugin.TestIngress.class,
                     TestDefaultPlugin.TestEgress.class, TestDefaultPlugin.TestSource.class,
-                    TestDefaultPlugin.FlakySource.class)) {
+                    TestDefaultPlugin.LifecycleHandler.class, TestDefaultPlugin.FlakySource.class)) {
                 String resource = type.getName().replace('.', '/') + ".class";
                 try (var input = type.getClassLoader().getResourceAsStream(resource)) {
                     write(output, resource, java.util.Objects.requireNonNull(input).readAllBytes());

@@ -803,7 +803,6 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
         for (KuudraManifest.Component component : resources.components().values()) {
             if (!component.type().equals("event-source") && manifestInstances.get(component.id()) instanceof Lifecycle) {
-                recordComponentStateChange(component, "RUNNING");
                 reconcileLifecycle(component, (Lifecycle) manifestInstances.get(component.id()));
             } else if (!component.type().equals("event-source")) {
                 boolean active = component.desiredState().equalsIgnoreCase("active");

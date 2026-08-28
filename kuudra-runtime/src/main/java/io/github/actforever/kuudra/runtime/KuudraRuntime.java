@@ -270,8 +270,19 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             }
         };
         ActionContext action=new ActionContext(session.id,flow.flow.id(),session.context.snapshot(),session.context,flow.context.snapshot(),flow.context,context.executionControl(),emitter,sessionControl,globalContext.snapshot(),globalContext,context.configuration());
-        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome",error==null?"success":"failed"));invocation.finish();if(componentGate!=null)componentGate.release();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
-        catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",Map.of("flowId",flow.flow.id(),"nodeId",node.id(),"eventId",input.id().toString(),"outcome","failed"));invocation.finish();if(componentGate!=null)componentGate.release();}
+        try{node.handler().handle(input,action).whenComplete((v,error)->{open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",handlerCompletionData(flow,node,input,error));invocation.finish();if(componentGate!=null)componentGate.release();if(error==null)event("event-handler.completed",Map.of("sessionId",session.id.toString(),"handlerId",node.id()));});}
+        catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",handlerCompletionData(flow,node,input,error));invocation.finish();if(componentGate!=null)componentGate.release();}
+    }
+
+    private Map<String,Object> handlerCompletionData(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,Throwable error){
+        Map<String,Object> data=new LinkedHashMap<>();
+        data.put("flowId",flow.flow.id()); data.put("nodeId",node.id()); data.put("eventId",input.id().toString());
+        data.put("outcome",error==null?"success":"failed");
+        if(error!=null)data.put("error",unwrapCompletionFailure(error).toString());
+        return Map.copyOf(data);
+    }
+    private Throwable unwrapCompletionFailure(Throwable error){
+        return (error instanceof CompletionException||error instanceof ExecutionException)&&error.getCause()!=null?error.getCause():error;
     }
 
     private Object component(FlowNode node) {

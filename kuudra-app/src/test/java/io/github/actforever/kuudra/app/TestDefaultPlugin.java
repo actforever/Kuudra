@@ -29,6 +29,20 @@ public final class TestDefaultPlugin implements KuudraPlugin {
         @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
     }
 
+    @io.github.actforever.kuudra.plugin.annotation.EventHandler("lifecycle-handler")
+    public static final class LifecycleHandler implements io.github.actforever.kuudra.api.component.EventHandler,
+            io.github.actforever.kuudra.api.lifecycle.Lifecycle {
+        private static final AtomicInteger STARTS = new AtomicInteger();
+        public LifecycleHandler() { }
+        static void reset() { STARTS.set(0); }
+        static int starts() { return STARTS.get(); }
+        @Override public CompletionStage<Void> start() { STARTS.incrementAndGet(); return CompletableFuture.completedFuture(null); }
+        @Override public CompletionStage<Void> handle(KuudraEvent event,
+                io.github.actforever.kuudra.api.action.ActionContext context) {
+            return CompletableFuture.completedFuture(null);
+        }
+    }
+
     @io.github.actforever.kuudra.plugin.annotation.EventSource("flaky-source")
     public static final class FlakySource implements io.github.actforever.kuudra.api.component.EventSource {
         private static final AtomicInteger REMAINING_FAILURES = new AtomicInteger();
