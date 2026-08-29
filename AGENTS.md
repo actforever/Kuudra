@@ -12,7 +12,7 @@
 
 The project is the ongoing replacement of the former Orcana/GTAV macro application. Its product and Maven identity is **Kuudra**.
 
-The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.4`. Released plugins should use stable `v0.4.4`.
+The first stable kernel release is `v0.4.0`; the current stable kernel release is `v0.4.4`. The active development line is `v0.5.0-alpha-1`; released plugins should continue to use stable `v0.4.4` until the v0.5 line stabilizes.
 
 Stable releases use `vX.X.X`. Every intermediate development version must use the exact `vX.X.X-alpha-N` form, with `N` increasing from 1; do not publish or document `SNAPSHOT` as an intermediate version. After a stable release, begin the next development line at the next intended stable version's `-alpha-1` identifier.
 
@@ -45,6 +45,7 @@ For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins
 ## Architecture decisions already made
 
 - The domain is event-driven. Extension points are `EventSource`, `EventInterpreter`, `EventAdapter`, `Ingress`, `EventHandler`, and `Egress`.
+- The v0.5 resource model is documented in `docs/kuudra-ability-architecture.md`. Plugin archives publish `ResourceTemplate`s; App materializes `Resource`s on demand from Ability claims. A type-level `@Controller` exposes one or more named method-level `@EventHandler` entries with the strict `(KuudraEvent, EventHandlerContext) -> CompletionStage<Void>` signature. All resource implementations use the unified `ResourceLifecycle`; static Resource `options` and dynamic Ability-node `arguments` are distinct.
 - `KuudraEvent` is the immutable business message. Runtime uses the sealed `KuudraEventWrapper` hierarchy (`RawEventWrapper`/`SessionEventWrapper`) to make execution domains explicit; never add a nullable Session back to the event entity.
 - Runtime data has four logical scopes: immutable Event data, mutable Session context, mutable Flow context and mutable Global context. RAW nodes may read Event/Flow/Global; SESSION nodes additionally read Session. `${path}` searches only currently available scopes, while `${event#path}`, `${session#path}`, `${flow#path}`, and `${global#path}` are strict. There is no `rawEvent#` scope.
 - Context writes use the extensible `ContextCodec`; the default JSON codec stores an immutable JSON-compatible tree and typed `get(..., Class<T>)` performs conversion on demand. `TypedValueMap` is the common read-only map lookup/conversion abstraction used by event/component configuration and plugin component initialization; do not duplicate manual number/boolean parsing in components. Shared plugin POJOs must be defined by a declared dependency so dependents resolve the same `Class<?>`; do not store raw plugin object references in runtime contexts.

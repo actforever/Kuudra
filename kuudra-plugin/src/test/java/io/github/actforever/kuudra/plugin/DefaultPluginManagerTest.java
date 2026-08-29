@@ -152,12 +152,14 @@ class DefaultPluginManagerTest {
         List<String> calls = new ArrayList<>();
         manager.register(new RecordingPlugin("base", List.of(), calls));
         manager.register(new PluginArchiveLoader.LoadedPlugin(metadata, new RecordingPlugin("annotated", List.of(), calls),
-                List.of(new PluginComponentDefinition("annotated", "test-plugin", PluginComponentKind.EVENT_SOURCE, "test-source", TestSource.class))));
+                List.of(template("annotated", "test-plugin", "test-source", TestSource.class))));
         manager.startAll().toCompletableFuture().join();
         assertEquals(List.of("base.initialize", "base.start", "annotated.initialize", "annotated.start"), calls);
-        assertEquals("annotated", manager.components().find("event-source/test-plugin/annotated/test-source").orElseThrow().pluginId());
+        assertEquals("annotated", manager.resourceTemplates().find(
+                "event-source/test-plugin/annotated/test-source").orElseThrow().pluginId());
         assertEquals("[0.9.0,2.0.0)", manager.pluginView("test-plugin", "annotated").dependencies().get(0).versionRange());
-        assertTrue(manager.components().create("event-source/test-plugin/annotated/test-source", io.github.actforever.kuudra.api.component.EventSource.class) instanceof TestSource);
+        assertTrue(manager.createResource("event-source/test-plugin/annotated/test-source",
+                io.github.actforever.kuudra.api.component.EventSource.class) instanceof TestSource);
     }
 
     @Test
@@ -168,10 +170,13 @@ class DefaultPluginManagerTest {
         manager.register(new PluginArchiveLoader.LoadedPlugin(
                 new PluginMetadata("component", "test-plugin", "1.0.0", "example.Plugin", List.of()),
                 new RecordingPlugin("component", List.of(), calls),
-                List.of(new PluginComponentDefinition("component", "test-plugin", PluginComponentKind.EVENT_SOURCE, "managed", ManagedTestSource.class))));
+                List.of(template("component", "test-plugin", "managed", ManagedTestSource.class))));
         manager.startAll().toCompletableFuture().join();
-        manager.createComponent("event-source/test-plugin/component/managed", io.github.actforever.kuudra.api.component.EventSource.class,
-                Map.of("intervalMillis", 250));
+        ManagedTestSource source = manager.createResource("event-source/test-plugin/component/managed",
+                ManagedTestSource.class);
+        source.initialize(manager.resourceContext("event-source/test-plugin/component/managed",
+                "EventSource/default/managed", Map.of("intervalMillis", 250))).toCompletableFuture().join();
+        source.destroy().toCompletableFuture().join();
         manager.close();
         assertEquals(List.of("component.initialize", "component.start", "component.component.initialize", "component.component.destroy", "component.stop", "component.destroy"), calls);
     }
@@ -197,8 +202,10 @@ class DefaultPluginManagerTest {
                         return CompletableFuture.completedFuture(null);
                     }
                 },
-                List.of(new PluginComponentDefinition("sample", "demo", PluginComponentKind.EVENT_SOURCE,
-                        "source", TestSource.class, ComponentInstancePolicy.DEFAULT, documentation))));
+                List.of(new ResourceTemplateDefinition("sample", "demo", ResourceTemplateKind.EVENT_SOURCE,
+                        "source", TestSource.class, ResourcePolicy.DEFAULT,
+                        new ResourceTemplateDocumentation(documentation.purpose(), documentation.lifecyclePhases(),
+                                documentation.configuration(), List.of(), documentation.emittedEvents()), List.of()))));
         manager.startAll().toCompletableFuture().join();
 
         assertEquals(temporaryDirectory.resolve("plugin-views/demo/sample").toAbsolutePath().normalize(), home.get());
@@ -206,8 +213,8 @@ class DefaultPluginManagerTest {
         assertEquals("sample", logged.get().data().get("pluginId"));
         DefaultPluginManager.PluginView plugin = manager.pluginView("demo", "sample");
         assertEquals("1.2.3", plugin.version());
-        assertEquals("periodically emits greetings", plugin.components().get(0).documentation().purpose());
-        assertEquals("hello.tick", plugin.components().get(0).documentation().emittedEvents().get(0).eventType());
+        assertEquals("periodically emits greetings", plugin.resourceTemplates().get(0).documentation().purpose());
+        assertEquals("hello.tick", plugin.resourceTemplates().get(0).documentation().emittedEvents().get(0).eventType());
         manager.close();
     }
 
@@ -280,20 +287,20 @@ class DefaultPluginManagerTest {
     }
 
     @io.github.actforever.kuudra.plugin.annotation.EventSource("test-source")
-    public static final class TestSource implements io.github.actforever.kuudra.api.component.EventSource {
+    public static final class TestSource implements io.github.actforever.kuudra.api.component.EventSource, ResourceLifecycle {
         @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
     }
 
-    public static final class ManagedTestSource implements io.github.actforever.kuudra.api.component.EventSource, PluginComponentLifecycle {
+    public static final class ManagedTestSource implements io.github.actforever.kuudra.api.component.EventSource, ResourceLifecycle {
         static List<String> calls;
         @Override public void setEmitter(io.github.actforever.kuudra.api.event.EventEmitter emitter) { }
         @Override public CompletionStage<Void> start() { return CompletableFuture.completedFuture(null); }
         @Override public CompletionStage<Void> stop() { return CompletableFuture.completedFuture(null); }
-        @Override public CompletionStage<Void> initialize(PluginComponentContext context) {
+        @Override public CompletionStage<Void> initialize(ResourceContext context) {
             assertTrue(Files.isDirectory(context.plugin().home()));
-            assertEquals(250, context.configuration("intervalMillis", Integer.class));
+            assertEquals(250, context.option("intervalMillis", Integer.class));
             calls.add("component.component.initialize");
             return CompletableFuture.completedFuture(null);
         }
@@ -301,5 +308,11 @@ class DefaultPluginManagerTest {
             calls.add("component.component.destroy");
             return CompletableFuture.completedFuture(null);
         }
+    }
+
+    private static ResourceTemplateDefinition template(String pluginId, String namespace, String name,
+                                                       Class<?> implementation) {
+        return new ResourceTemplateDefinition(pluginId, namespace, ResourceTemplateKind.EVENT_SOURCE,
+                name, implementation, ResourcePolicy.DEFAULT, ResourceTemplateDocumentation.EMPTY, List.of());
     }
 }

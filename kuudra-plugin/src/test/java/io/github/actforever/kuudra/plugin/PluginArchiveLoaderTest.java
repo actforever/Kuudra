@@ -35,10 +35,10 @@ class PluginArchiveLoaderTest {
                 "base.ParentInterpreter", """
                         package base;
                         @io.github.actforever.kuudra.plugin.annotation.EventInterpreter("parent-interpreter")
-                        @io.github.actforever.kuudra.plugin.annotation.ComponentDoc(
+                        @io.github.actforever.kuudra.plugin.annotation.ResourceDoc(
                             purpose = "Recognizes a parent sequence",
                             lifecyclePhases = {"start", "stop"},
-                            configuration = {@io.github.actforever.kuudra.plugin.annotation.SpecProperty(
+                            options = {@io.github.actforever.kuudra.plugin.annotation.SpecProperty(
                                 path = "windowMillis", type = Long.class, required = true,
                                 description = "Sequence matching window", examples = {"100", "250"}),
                                 @io.github.actforever.kuudra.plugin.annotation.SpecProperty(
@@ -48,7 +48,8 @@ class PluginArchiveLoaderTest {
                             emittedEvents = @io.github.actforever.kuudra.plugin.annotation.EventEmission(
                                 stage = "sequence matched", eventType = "parent.matched",
                                 description = "A recognized parent event", dataExample = "{key: A}"))
-                        public final class ParentInterpreter implements io.github.actforever.kuudra.api.component.EventInterpreter {
+                        public final class ParentInterpreter implements io.github.actforever.kuudra.api.component.EventInterpreter,
+                                io.github.actforever.kuudra.plugin.ResourceLifecycle {
                             public java.util.List<io.github.actforever.kuudra.api.event.KuudraEvent> interpret(
                                     io.github.actforever.kuudra.api.event.KuudraEvent event,
                                     io.github.actforever.kuudra.api.context.EventContext context) {
@@ -89,16 +90,15 @@ class PluginArchiveLoaderTest {
             PluginArchiveLoader.LoadedArchive base = byId.get("base");
             PluginArchiveLoader.LoadedArchive child = byId.get("child");
 
-            PluginComponentDefinition interpreter = base.plugin().components().stream().filter(component ->
-                    component.reference().equals("event-interpreter/demo/base/parent-interpreter")).findFirst().orElseThrow();
+            ResourceTemplateDefinition interpreter = base.plugin().resourceTemplates().stream().filter(component ->
+                    component.reference().equals("event-interpreter/base/base/parent-interpreter")).findFirst().orElseThrow();
             assertEquals("Recognizes a parent sequence", interpreter.documentation().purpose());
-            assertEquals(List.of("RUNNING", "STOPPED"), interpreter.documentation().supportedDesiredStates());
-            assertEquals("windowMillis", interpreter.documentation().configuration().get(0).path());
-            assertEquals("java.lang.Long", interpreter.documentation().configuration().get(0).type());
-            assertTrue(interpreter.documentation().configuration().get(0).required());
-            assertEquals(List.of(100, 250), interpreter.documentation().configuration().get(0).examples());
+            assertEquals("windowMillis", interpreter.documentation().options().get(0).path());
+            assertEquals("java.lang.Long", interpreter.documentation().options().get(0).type());
+            assertTrue(interpreter.documentation().options().get(0).required());
+            assertEquals(List.of(100, 250), interpreter.documentation().options().get(0).examples());
             assertEquals(Map.of("keys", List.of("A", "B"), "ordered", true),
-                    interpreter.documentation().configuration().get(1).examples().get(0));
+                    interpreter.documentation().options().get(1).examples().get(0));
             assertEquals("parent.matched", interpreter.documentation().emittedEvents().get(0).eventType());
             assertSame(base.classLoader().loadClass("base.ParentType"), child.classLoader().loadClass("base.ParentType"));
             assertEquals("from-parent", child.plugin().instance().getClass().getMethod("parentMessage").invoke(child.plugin().instance()));
@@ -199,10 +199,10 @@ class PluginArchiveLoaderTest {
                 "indexed.IndexedPlugin", pluginSource("indexed", "IndexedPlugin", "indexed")), List.of());
         Path archive = jar("indexed.jar", classes,
                 metadata("indexed", "indexed.IndexedPlugin", "test", "1.0.0", List.of()),
-                Map.of(PluginComponentScanner.INDEX_PATH, "# This plugin provides a macro frontend, not components.\n"));
+                Map.of(ResourceTemplateScanner.INDEX_PATH, "# This plugin provides no ResourceTemplates.\n"));
         List<PluginArchiveLoader.LoadedArchive> loaded = new PluginArchiveLoader().loadAll(
                 List.of(archive), PluginArchiveLoaderTest.class.getClassLoader());
-        try { assertTrue(loaded.get(0).plugin().components().isEmpty()); }
+        try { assertTrue(loaded.get(0).plugin().resourceTemplates().isEmpty()); }
         finally { for (PluginArchiveLoader.LoadedArchive item : loaded) item.close(); }
     }
 

@@ -10,4 +10,4 @@ import io.github.actforever.kuudra.api.runtime.*;
 import io.github.actforever.kuudra.api.session.*;
 import io.github.actforever.kuudra.api.system.*;
 
-public enum SessionGroupScope { INGRESS, FLOW_BINDING }
+public enum SessionGroupScope { INGRESS, ABILITY }

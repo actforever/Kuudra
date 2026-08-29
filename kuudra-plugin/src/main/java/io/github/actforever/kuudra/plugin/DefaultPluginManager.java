@@ -40,6 +40,7 @@ public final class DefaultPluginManager implements AutoCloseable {
     private final Map<String, List<String>> dependencies = new LinkedHashMap<>();
     private final Map<String, List<PluginDependency>> dependencyMetadata = new LinkedHashMap<>();
     private final PluginComponentRegistry componentRegistry = new PluginComponentRegistry();
+    private final ResourceTemplateRegistry resourceTemplateRegistry = new ResourceTemplateRegistry();
     private List<String> startedOrder = List.of();
 
     public DefaultPluginManager(Path pluginsHome) {
@@ -60,7 +61,7 @@ public final class DefaultPluginManager implements AutoCloseable {
         List<PluginDependency> declared = plugin.descriptor().requires().stream()
                 .map(id -> new PluginDependency(id, id, true, "[0,)")).toList();
         register(plugin, declared.stream().map(PluginDependency::identity).toList(), declared,
-                List.of(), plugin.id(), "unspecified");
+                List.of(), List.of(), plugin.id(), "unspecified");
     }
 
     /**
@@ -73,11 +74,14 @@ public final class DefaultPluginManager implements AutoCloseable {
         List<String> ordering = loaded.metadata().dependencies().stream()
                 .filter(dependency -> dependency.mandatory() || plugins.containsKey(dependency.identity()))
                 .map(PluginDependency::identity).toList();
-        register(loaded.instance(), ordering, loaded.metadata().dependencies(), loaded.components(), loaded.metadata().namespace(), loaded.metadata().version());
+        register(loaded.instance(), ordering, loaded.metadata().dependencies(), List.of(),
+                loaded.resourceTemplates(), loaded.metadata().namespace(), loaded.metadata().version());
     }
 
     private void register(KuudraPlugin plugin, List<String> required, List<PluginDependency> declaredDependencies,
-                          List<PluginComponentDefinition> components, String namespace, String version) {
+                          List<PluginComponentDefinition> components,
+                          List<ResourceTemplateDefinition> resourceTemplates,
+                          String namespace, String version) {
         Objects.requireNonNull(plugin, "plugin");
         PluginDescriptor descriptor = plugin.descriptor();
         if (!descriptor.id().equals(plugin.id())) {
@@ -95,9 +99,11 @@ public final class DefaultPluginManager implements AutoCloseable {
         states.put(identity, PluginState.REGISTERED);
         resources.put(identity, new ManagedResources());
         components.forEach(componentRegistry::register);
+        resourceTemplates.forEach(resourceTemplateRegistry::register);
         debugEvent("plugin.dependencies.resolved", Map.of("pluginId", plugin.id(), "namespace", namespace,
                 "required", List.copyOf(required), "declared", declaredDependencies.size()));
-        debugEvent("plugin.registered", Map.of("pluginId", plugin.id(), "namespace", namespace, "dependencies", List.copyOf(required), "components", components.size()));
+        debugEvent("plugin.registered", Map.of("pluginId", plugin.id(), "namespace", namespace,
+                "dependencies", List.copyOf(required), "resourceTemplates", resourceTemplates.size()));
     }
 
     public synchronized PluginState state(String namespace, String pluginId) {
@@ -126,8 +132,12 @@ public final class DefaultPluginManager implements AutoCloseable {
         List<ComponentView> components = componentRegistry.definitions().values().stream()
                 .filter(component -> component.pluginId().equals(pluginId) && component.namespace().equals(namespaces.get(identity)))
                 .map(DefaultPluginManager::view).toList();
+        List<ResourceTemplateView> templates = resourceTemplateRegistry.definitions().values().stream()
+                .filter(template -> template.pluginId().equals(pluginId)
+                        && template.namespace().equals(namespaces.get(identity)))
+                .map(DefaultPluginManager::view).toList();
         return new PluginView(pluginId, namespaces.get(identity), versions.get(identity), states.get(identity),
-                dependencyMetadata.get(identity), components);
+                dependencyMetadata.get(identity), components, templates);
     }
 
     public synchronized List<ComponentView> componentViews() {
@@ -144,10 +154,12 @@ public final class DefaultPluginManager implements AutoCloseable {
     }
 
     public record PluginView(String id, String namespace, String version, PluginState state,
-                             List<PluginDependency> dependencies, List<ComponentView> components) {
+                             List<PluginDependency> dependencies, List<ComponentView> components,
+                             List<ResourceTemplateView> resourceTemplates) {
         public PluginView {
             dependencies = List.copyOf(dependencies);
             components = List.copyOf(components);
+            resourceTemplates = List.copyOf(resourceTemplates);
         }
     }
 
@@ -158,6 +170,74 @@ public final class DefaultPluginManager implements AutoCloseable {
 
     public PluginComponentRegistry components() {
         return componentRegistry;
+    }
+
+    public ResourceTemplateRegistry resourceTemplates() {
+        return resourceTemplateRegistry;
+    }
+
+    public synchronized List<ResourceTemplateView> resourceTemplateViews() {
+        return resourceTemplateRegistry.definitions().values().stream()
+                .map(DefaultPluginManager::view).toList();
+    }
+
+    public synchronized ResourceTemplateView resourceTemplateView(String reference) {
+        return view(resourceTemplateRegistry.find(reference).orElseThrow(
+                () -> new IllegalArgumentException("Unknown ResourceTemplate: " + reference)));
+    }
+
+    private static ResourceTemplateView view(ResourceTemplateDefinition definition) {
+        return new ResourceTemplateView(definition.reference(), definition.pluginId(), definition.namespace(),
+                definition.kind(), definition.name(), definition.implementation().getName(), definition.policy(),
+                definition.documentation(), definition.handlers().stream().map(handler -> new HandlerView(
+                        handler.name(), handler.purpose(), handler.arguments(), handler.emittedEvents())).toList());
+    }
+
+    public record ResourceTemplateView(String reference, String pluginId, String namespace,
+                                       ResourceTemplateKind kind, String name, String implementation,
+                                       ResourcePolicy policy, ResourceTemplateDocumentation documentation,
+                                       List<HandlerView> handlers) {
+        public ResourceTemplateView { handlers = List.copyOf(handlers); }
+    }
+
+    public record HandlerView(String name, String purpose,
+                              List<PluginConfigurationDocumentation> arguments,
+                              List<PluginEventDocumentation> emittedEvents) {
+        public HandlerView {
+            arguments = List.copyOf(arguments);
+            emittedEvents = List.copyOf(emittedEvents);
+        }
+    }
+
+    /** Materializes one App-owned resource; lifecycle remains owned by App reconciliation. */
+    public <T> T createResource(String templateReference, Class<T> expectedType) {
+        ResourceTemplateDefinition definition = resourceTemplateRegistry.find(templateReference)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown ResourceTemplate: " + templateReference));
+        synchronized (this) {
+            String identity = identity(definition.namespace(), definition.pluginId());
+            if (states.get(identity) != PluginState.ACTIVE) {
+                throw new IllegalStateException("Plugin is not active for ResourceTemplate " + templateReference);
+            }
+        }
+        Object instance = resourceTemplateRegistry.create(templateReference);
+        if (!expectedType.isInstance(instance)) {
+            throw new IllegalArgumentException("ResourceTemplate " + templateReference + " is not a "
+                    + expectedType.getName());
+        }
+        debugEvent("plugin.resource.created", Map.of("pluginId", definition.pluginId(),
+                "resourceTemplate", templateReference, "instanceClass", instance.getClass().getName()));
+        return expectedType.cast(instance);
+    }
+
+    public ResourceContext resourceContext(String templateReference, String resourceReference,
+                                           Map<String, Object> options) {
+        ResourceTemplateDefinition definition = resourceTemplateRegistry.find(templateReference)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown ResourceTemplate: " + templateReference));
+        synchronized (this) {
+            PluginContext context = contexts.get(identity(definition.namespace(), definition.pluginId()));
+            if (context == null) throw new IllegalStateException("Plugin context is unavailable: " + templateReference);
+            return new ResourceContext(resourceReference, context, options);
+        }
     }
 
     /**

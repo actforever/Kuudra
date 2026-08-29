@@ -71,8 +71,10 @@ public final class PluginArchiveLoader {
             if (!KuudraPlugin.class.isAssignableFrom(entrypoint)) throw new IOException("Plugin entrypoint does not implement KuudraPlugin: " + definition.metadata.entrypoint());
             KuudraPlugin plugin = (KuudraPlugin) entrypoint.getDeclaredConstructor().newInstance();
             if (!plugin.id().equals(definition.metadata.id())) throw new IOException("Plugin id does not match metadata: " + definition.metadata.id());
-            List<PluginComponentDefinition> components = new PluginComponentScanner().scan(definition.archive, classLoader, definition.metadata.id(), definition.metadata.namespace());
-            LoadedArchive result = new LoadedArchive(definition.archive, classLoader, new LoadedPlugin(definition.metadata, plugin, components));
+            List<ResourceTemplateDefinition> templates = new ResourceTemplateScanner().scan(
+                    definition.archive, classLoader, definition.metadata.id(), definition.metadata.namespace());
+            LoadedArchive result = new LoadedArchive(definition.archive, classLoader,
+                    new LoadedPlugin(definition.metadata, plugin, templates));
             loaded.put(id, result);
             return result;
         } catch (IOException error) {
@@ -119,7 +121,8 @@ public final class PluginArchiveLoader {
         }
     }
 
-    public record LoadedPlugin(PluginMetadata metadata, KuudraPlugin instance, List<PluginComponentDefinition> components) {
-        public LoadedPlugin { components = List.copyOf(components); }
+    public record LoadedPlugin(PluginMetadata metadata, KuudraPlugin instance,
+                               List<ResourceTemplateDefinition> resourceTemplates) {
+        public LoadedPlugin { resourceTemplates = List.copyOf(resourceTemplates); }
     }
 }

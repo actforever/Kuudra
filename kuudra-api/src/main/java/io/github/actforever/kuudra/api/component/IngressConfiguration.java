@@ -14,7 +14,7 @@ import io.github.actforever.kuudra.api.system.*;
 public record IngressConfiguration(SessionSchedulingPolicy policy, SessionGroupScope groupScope,
                                    int maxParallelSessions, int queueCapacity) {
     public static final IngressConfiguration DEFAULT = new IngressConfiguration(
-            SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 64, 256);
+            SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 64, 256);
     public IngressConfiguration {
         java.util.Objects.requireNonNull(policy, "policy");
         java.util.Objects.requireNonNull(groupScope, "groupScope");

@@ -9,5 +9,5 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface EventInterpreter {
     String value();
-    InstancePolicy instancePolicy() default @InstancePolicy;
+    ResourcePolicy policy() default @ResourcePolicy;
 }
