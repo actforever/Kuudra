@@ -10,6 +10,8 @@ Windows 特权操作目前不是内核的通用跨语言 Component SPI。Java �
 
 `actforever/process-control` 通过声明式插件依赖共享宿主 API，以静态绝对路径白名单约束目标，并在实际选中且允许提升权限的 Component 初始化时才请求 UAC。配置和 Event 只能表达目标别名、可选 PID、类型化动作和有界时长，不能植入 PowerShell 或任意命令。后续防火墙、网络适配器等特权能力也应沿用独立的类型化协议；不需要管理员权限的窗口覆盖层则保持为普通 Java 插件。只有当多种语言确实需要完整组件语义时，才另行设计通用 sidecar SPI。
 
+完整的 ClassLoader 连接方式、JAR 内嵌 C# 构建、双 Named Pipe 握手、RPC、Win32 执行和恢复模型见 [kuudra-windows-native-host.md](kuudra-windows-native-host.md)。
+
 ## 1. 事件实体与执行域
 
 `KuudraEvent` 只保存业务身份、类型、发生时间、不可变 `EventData` 和 `EventLineage`。它不保存 Session，也不存在“Session 可空”的模糊状态。

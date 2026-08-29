@@ -25,6 +25,10 @@
 
 C# 集成测试会启动独立 `cmd /c ping -t 127.0.0.1` 子进程，实际调用 Win32 挂起/恢复并检查日志清理；交互式 UAC 仍应按示例做人工冒烟验证。
 
+2026-08-29 的管理员 PowerShell 黑箱回归使用完整打包 JAR 和真实 Web 启动验证了以下组合：基础 HelloWorld→Ingress→Logging 闭环；12 个插件无清单空载共存；缺少宿主依赖和 `allowElevation: false` 的预期启动失败；Session dependency 建立、传播取消和排队后拒绝；单个 `PING.EXE` 的限时挂起/自然恢复。宿主场景最终观测到 Session 完成、`PING.EXE` 仍运行、恢复日志已删除、App stop 在约 0.2 秒内完成且 broker 退出。两个同路径 `PING.EXE` 并存时返回 `Multiple matching processes require pid`，验证了歧义保护。
+
+该轮黑箱同时发现并修复了单 Named Pipe 同步 handle 的首帧互锁，以及 I/O executor 内同步完成 Future 导致的生命周期重入自锁。回归基线因此要求 command request/response 与异步 event 使用两条分别做 SID/PID 验证的 pipe，并要求 Future 回调离开 I/O 线程。AWT safe macro 在当前无桌面会话的执行环境中按设计以 `AWT Robot is unavailable in a headless environment` 失败；应在交互式桌面中另行验证，不把该环境失败记作业务回归。
+
 ## 验证清单
 
 在 `.kuudra/manifests/hello-world.yaml` 使用一个多文档 YAML 声明三个 Component 和一个 Flow：

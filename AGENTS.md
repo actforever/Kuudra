@@ -38,6 +38,8 @@ The tracked Maven reactor is:
 
 The external `actforever/windows-native-host` plugin embeds a self-contained .NET 8 `win-x64` privileged broker and exports only typed, owner-scoped native capabilities to declared dependent plugins. `actforever/process-control` consumes that API to provide bounded process suspension and restoration. Loading the host JAR must never trigger UAC: elevation occurs only when a selected dependent Component is initialized with `allowElevation: true`. Keep executable targets in a static absolute-path allowlist; routed Events may choose only an alias, PID, typed action and bounded duration. Do not turn this boundary into an arbitrary PowerShell/shell executor. Future privileged network operations must likewise be typed capabilities, while non-elevated UI overlays remain ordinary plugins.
 
+The Windows native host layering, dependency ClassLoader linkage, embedded C# build, authenticated dual Named Pipe protocol, Win32 execution and recovery boundaries are documented in `docs/kuudra-windows-native-host.md`; keep it synchronized with the external parent and dependent plugins.
+
 For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins`: every JAR is strictly loaded. A plugin home is `<plugins>/<namespace>/<plugin-id>` and is created only when that plugin enters initialization. Invalid/non-Kuudra JARs are fatal startup errors. `PluginContext.home()` and `PluginComponentContext.plugin().home()` are the supported persistence locations. Do not reintroduce configurable plugin directories or a collision with the build-only `plugins/` directory.
 
 ## Architecture decisions already made
