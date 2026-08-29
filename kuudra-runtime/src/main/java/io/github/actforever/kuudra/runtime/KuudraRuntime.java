@@ -27,6 +27,8 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final Set<Object> disabledComponents = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Object> pausedComponents = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<Object> threadSafeComponents = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<String> disabledAbilities = new HashSet<>();
+    private final Set<String> pausedAbilities = new HashSet<>();
     private final Map<Object, Semaphore> componentGates = new IdentityHashMap<>();
     private final SystemEventPublisher events;
     private final ContextCodec codec = ContextCodecs.defaultCodec();
@@ -83,6 +85,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                 .toList();
     }
     public FlowContext flowContext(String flowId) { synchronized (monitor) { return requireFlow(flowId).context; } }
+    public AbilityContext abilityContext(String abilityId) { synchronized (monitor) { return requireFlow(abilityId).context; } }
     public int queuedTasks() { return queue.size(); }
 
     /** App reconciliation gate for a component instance already bound into one or more Flows. */
@@ -156,6 +159,47 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         event("runtime.paused", Map.of("sessions", checkpoint.sessions().size(), "queuedTasks", checkpoint.queuedTasks()));
         return checkpoint;
     }
+    public void registerAbility(KuudraAbility ability) {
+        registerFlow(Objects.requireNonNull(ability, "ability").asRuntimeGraph());
+        event("ability.registered", Map.of("abilityId", ability.id(), "revision", ability.revision()));
+    }
+    public void setAbilityEnabled(String abilityId, boolean enabled) {
+        synchronized (monitor) {
+            requireFlow(abilityId);
+            if (enabled) disabledAbilities.remove(abilityId); else disabledAbilities.add(abilityId);
+            if (!enabled) pausedAbilities.remove(abilityId);
+            signalControlChange(); monitor.notifyAll();
+        }
+    }
+    public void setAbilityPaused(String abilityId, boolean abilityPaused) {
+        synchronized (monitor) {
+            requireFlow(abilityId);
+            if (abilityPaused) { disabledAbilities.remove(abilityId); pausedAbilities.add(abilityId); }
+            else pausedAbilities.remove(abilityId);
+            signalControlChange(); monitor.notifyAll();
+        }
+    }
+    public boolean awaitAbilityDrained(String abilityId, Duration timeout) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (sessionManager.snapshots().stream().anyMatch(snapshot -> snapshot.flowId().equals(abilityId)
+                && active(snapshot.status())) && System.nanoTime() < deadline) Thread.sleep(10);
+        return sessionManager.snapshots().stream().noneMatch(snapshot -> snapshot.flowId().equals(abilityId)
+                && active(snapshot.status()));
+    }
+    public void cancelAbilitySessions(String abilityId) {
+        sessionManager.snapshots().stream().filter(snapshot -> snapshot.flowId().equals(abilityId)
+                && active(snapshot.status())).forEach(snapshot -> cancel(snapshot.id()));
+    }
+    public void unregisterAbility(String abilityId) {
+        synchronized (monitor) {
+            if (sessionManager.activeCount(abilityId) != 0) {
+                throw new KuudraException("Ability still owns active Sessions: " + abilityId);
+            }
+            if (flows.remove(abilityId) == null) return;
+            disabledAbilities.remove(abilityId); pausedAbilities.remove(abilityId);
+            event("ability.unregistered", Map.of("abilityId", abilityId));
+        }
+    }
     public void resume() {
         synchronized (monitor) { if (closed.get()) throw new KuudraException("Runtime is closed"); }
         synchronized (monitor) {
@@ -188,7 +232,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             RegisteredFlow flow=registeredFlow(target.flowId); FlowNode node=flow.flow.node(target.targetNodeId);
             if (node.inputDomain()!=EventDomain.RAW) throw new KuudraException("EventSource target must be RAW: "+target);
         }
-        ManagedSource managed=new ManagedSource(source,copy); synchronized(monitor){sources.add(managed);}
+        ManagedSource managed=new ManagedSource(source,copy,true); synchronized(monitor){sources.add(managed);}
         source.setEmitter(event -> copy.stream().mapToInt(t -> publish(t.flowId,t.targetNodeId,event)?1:0).sum()>0);
         return source.start().thenApply(ignored -> { event("event-source.started",Map.of("targets",copy.size())); return (SourceRegistration) () -> unregister(managed); })
                 .exceptionallyCompose(error -> {
@@ -200,9 +244,23 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                     });
                 });
     }
+    /** Binds an App-lifecycle-owned EventSource without invoking start/stop in Runtime. */
+    public SourceRegistration bindSource(List<SourceTarget> targets, EventSource source) {
+        Objects.requireNonNull(source); List<SourceTarget> copy = List.copyOf(targets);
+        for (SourceTarget target : copy) {
+            RegisteredFlow flow = registeredFlow(target.flowId); FlowNode node = flow.flow.node(target.targetNodeId);
+            if (node.inputDomain() != EventDomain.RAW) throw new KuudraException("EventSource target must be RAW: " + target);
+        }
+        ManagedSource managed = new ManagedSource(source, copy, false);
+        synchronized (monitor) { sources.add(managed); }
+        source.setEmitter(event -> copy.stream().mapToInt(target -> publish(
+                target.flowId, target.targetNodeId, event) ? 1 : 0).sum() > 0);
+        return () -> unregister(managed);
+    }
     private CompletionStage<Void> unregister(ManagedSource source) {
         if (!source.closed.compareAndSet(false,true)) return CompletableFuture.completedFuture(null);
-        synchronized(monitor){sources.remove(source);} return source.source.stop();
+        synchronized(monitor){sources.remove(source);}
+        return source.lifecycleOwned ? source.source.stop() : CompletableFuture.completedFuture(null);
     }
     public record SourceTarget(String flowId,String targetNodeId) { public SourceTarget { if(flowId==null||flowId.isBlank()||targetNodeId==null||targetNodeId.isBlank()) throw new IllegalArgumentException("source target must not be blank"); } }
 
@@ -215,12 +273,27 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     @Override public Optional<SessionSnapshot> session(UUID id) { return sessionManager.snapshot(id); }
     @Override public Optional<FlowSnapshot> flow(String id) { synchronized(monitor){ RegisteredFlow f=flows.get(id); return f==null?Optional.empty():Optional.of(new FlowSnapshot(id,f.flow.executionClass(),sessionManager.activeCount(id),queue.size())); } }
     public List<FlowSnapshot> flows(){ synchronized(monitor){return flows.keySet().stream().map(this::flow).flatMap(Optional::stream).toList();} }
+    public Optional<AbilitySnapshot> ability(String id) {
+        synchronized (monitor) {
+            RegisteredFlow ability = flows.get(id);
+            if (ability == null) return Optional.empty();
+            return Optional.of(new AbilitySnapshot(id, ability.flow.revision(),
+                    ability.flow.executionClass() == FlowExecutionClass.CONTROL
+                            ? AbilityExecutionClass.CONTROL : AbilityExecutionClass.DATA,
+                    sessionManager.activeCount(id), queue.size()));
+        }
+    }
+    public List<AbilitySnapshot> abilities() {
+        synchronized (monitor) { return flows.keySet().stream().map(this::ability).flatMap(Optional::stream).toList(); }
+    }
     public boolean awaitNoActiveSessions(Duration timeout)throws InterruptedException { sessionManager.awaitDrained(timeout.toMillis()); return sessionManager.snapshots().stream().noneMatch(s->active(s.status())); }
 
     private RegisteredFlow registeredFlow(String id){ synchronized(monitor){return requireFlow(id);} }
     private RegisteredFlow requireFlow(String id){RegisteredFlow flow=flows.get(id);if(flow==null)throw new KuudraException("Unknown Flow: "+id);return flow;}
     private boolean enqueue(RegisteredFlow flow,String nodeId,KuudraEventWrapper wrapper){
-        if(closed.get()||(paused&&flow.flow.executionClass()==FlowExecutionClass.DATA&&wrapper instanceof RawEventWrapper))return false;
+        if(closed.get()||disabledAbilities.contains(flow.flow.id())
+                ||(pausedAbilities.contains(flow.flow.id())&&wrapper instanceof RawEventWrapper)
+                ||(paused&&flow.flow.executionClass()==FlowExecutionClass.DATA&&wrapper instanceof RawEventWrapper))return false;
         FlowNode node=flow.flow.node(nodeId); if(node.inputDomain()!=wrapper.domain()) throw new KuudraException("Event domain mismatch at "+nodeId);
         if(wrapper.event().lineage().hops()>=maxEventHops){event("event.rejected.max-hops",Map.of("flowId",flow.flow.id(),"nodeId",nodeId,"maxEventHops",maxEventHops));return false;}
         SessionManager.ManagedSession owner=null;
@@ -247,8 +320,11 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             KuudraEvent input=task.wrapper().event();
             synchronized (monitor) { if (component != null && disabledComponents.contains(component)) return; }
             EventContext context=context(flow,session,node.id(),input,component,invocation);
+            if(node instanceof FlowNode.SourceNode) throw new KuudraException("EventSource nodes cannot receive routed Events");
             if(node instanceof FlowNode.IngressNode ingress){ executeIngress(flow,ingress,input,context); return; }
+            if(node instanceof FlowNode.JoinIngressNode ingress){ executeJoinIngress(flow,ingress,input,context); return; }
             if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; asynchronous=true; executeHandler(flow,handler,input,context,session,invocation,componentGate); componentGate=null; return; }
+            if(node instanceof FlowNode.ControllerNode controller){ releaseHere=false; asynchronous=true; executeController(flow,controller,input,context,session,invocation,componentGate); componentGate=null; return; }
             List<KuudraEvent> output;
             if(node instanceof FlowNode.AdapterNode adapter)output=adapter.adapter().adapt(input,context);
             else if(node instanceof FlowNode.InterpreterNode interpreter)output=interpreter.interpreter().interpret(input,context);
@@ -274,6 +350,69 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         catch(Throwable error){open.set(false);sessionManager.release(session,error);debugEvent("runtime.node.execution.completed",handlerCompletionData(flow,node,input,error));invocation.finish();if(componentGate!=null)componentGate.release();}
     }
 
+    private void executeController(RegisteredFlow flow, FlowNode.ControllerNode node, KuudraEvent input,
+                                   EventContext context, SessionManager.ManagedSession session,
+                                   Invocation invocation, Semaphore componentGate) {
+        if (session == null) throw new KuudraException("Controller handler requires a Session");
+        AtomicBoolean open = new AtomicBoolean(true);
+        EventEmitter emitter = output -> {
+            if (!open.get()) throw new KuudraException("Controller emitted after CompletionStage completion");
+            return routeOne(flow, node, new SessionEventWrapper(input, session.reference()),
+                    derive(input, output, false, session));
+        };
+        CurrentSessionControl sessionControl = currentSessionControl(session, node.id());
+        EventHandlerContext handlerContext = new EventHandlerContext() {
+            @Override public UUID sessionId() { return session.id; }
+            @Override public String abilityId() { return flow.flow.id(); }
+            @Override public long abilityRevision() { return flow.flow.revision(); }
+            @Override public String nodeId() { return node.id(); }
+            @Override public String handlerName() { return node.handlerName(); }
+            @Override public SessionContext session() { return session.context; }
+            @Override public AbilityContext ability() { return flow.context; }
+            @Override public GlobalContext global() { return globalContext; }
+            @Override public TypedValueMap arguments() { return TypedValueMap.of(context.configuration(), codec); }
+            @Override public ExecutionControl executionControl() { return context.executionControl(); }
+            @Override public CurrentSessionControl sessionControl() { return sessionControl; }
+            @Override public boolean emit(KuudraEvent event) { return emitter.emit(event); }
+        };
+        CompletionStage<Void> stage;
+        try { stage = node.handler().apply(input, handlerContext); }
+        catch (Throwable error) { stage = CompletableFuture.failedFuture(error); }
+        if (stage == null) stage = CompletableFuture.failedFuture(
+                new KuudraException("Controller handler returned null CompletionStage"));
+        stage.whenComplete((ignored, error) -> {
+            open.set(false);
+            sessionManager.release(session, error);
+            debugEvent("runtime.node.execution.completed", controllerCompletionData(flow, node, input, error));
+            invocation.finish();
+            if (componentGate != null) componentGate.release();
+            if (error == null) event("controller.handler.completed", Map.of("sessionId", session.id.toString(),
+                    "controllerNodeId", node.id(), "handler", node.handlerName()));
+        });
+    }
+
+    private CurrentSessionControl currentSessionControl(SessionManager.ManagedSession session, String nodeId) {
+        return new CurrentSessionControl() {
+            @Override public UUID sessionId() { return session.id; }
+            @Override public boolean requestCancellation(String reason) {
+                String detail = reason == null || reason.isBlank() ? "handler-requested" : reason;
+                boolean requested = cancel(session.id);
+                if (requested) event("session.cancellation.requested-by-handler", Map.of(
+                        "sessionId", session.id.toString(), "reason", detail, "nodeId", nodeId));
+                return requested;
+            }
+        };
+    }
+
+    private Map<String, Object> controllerCompletionData(RegisteredFlow flow, FlowNode.ControllerNode node,
+                                                         KuudraEvent input, Throwable error) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("abilityId", flow.flow.id()); data.put("nodeId", node.id()); data.put("handler", node.handlerName());
+        data.put("eventId", input.id().toString()); data.put("outcome", error == null ? "success" : "failed");
+        if (error != null) data.put("error", unwrapCompletionFailure(error).toString());
+        return Map.copyOf(data);
+    }
+
     private Map<String,Object> handlerCompletionData(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,Throwable error){
         Map<String,Object> data=new LinkedHashMap<>();
         data.put("flowId",flow.flow.id()); data.put("nodeId",node.id()); data.put("eventId",input.id().toString());
@@ -287,9 +426,12 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
 
     private Object component(FlowNode node) {
         return node instanceof FlowNode.InterpreterNode interpreter ? interpreter.interpreter()
+                : node instanceof FlowNode.SourceNode source ? source.source()
                 : node instanceof FlowNode.HandlerNode handler ? handler.handler()
+                : node instanceof FlowNode.ControllerNode controller ? controller.controller()
                 : node instanceof FlowNode.AdapterNode adapter ? adapter.adapter()
                 : node instanceof FlowNode.IngressNode ingress ? ingress.ingress()
+                : node instanceof FlowNode.JoinIngressNode ingress ? ingress.ingress()
                 : node instanceof FlowNode.EgressNode egress ? egress.egress() : null;
     }
 
@@ -313,9 +455,10 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                 "policies",matchingPolicies.stream().map(SessionCoordinationPolicy::name).toList()));return;}
         SessionCoordinationPolicy policy=matchingPolicies.isEmpty()?null:matchingPolicies.get(0);
         IngressConfiguration scheduling=policy==null?node.defaultScheduling():policy.scheduling();
-        List<SessionDependencyRequirement> dependencies=policy==null?List.of():policy.dependencies();
+        List<SessionDependencyRequirement> dependencies=policy==null?node.dependencies():policy.dependencies();
         String scope=flow.flow.id()+"@"+flow.flow.revision();
-        SessionCoordinator.Group group=new SessionCoordinator.Group(scope,node.instanceId(),groupKey);
+        SessionCoordinator.Group group=new SessionCoordinator.Group(scope,
+                scheduling.groupScope()==SessionGroupScope.ABILITY?"*":node.instanceId(),groupKey);
         Runnable launch=()->{
             SessionManager.ManagedSession session=sessionManager.create(flow.flow.id(),flow.flow.revision(),node.id(),groupKey,
                     labels,initialSessionContext,executor(flow));
@@ -338,13 +481,43 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private KuudraEvent derive(KuudraEvent input,KuudraEvent output,boolean egress,SessionManager.ManagedSession session){if(output==null)throw new KuudraException("Component emitted null");EventLineage lineage=output.lineage().hops()>input.lineage().hops()?output.lineage():(egress&&session!=null?input.lineage().descendFrom(input,session.reference()):input.lineage().descendFrom(input));return output.withLineage(lineage);}
     private EventContext context(RegisteredFlow flow,SessionManager.ManagedSession session,String nodeId,KuudraEvent event,Object component,Invocation invocation){
         Map<String,Object> sessionValues=session==null?Map.of():session.context.snapshot();SessionReference reference=session==null?null:session.reference();
-        ExecutionControl control=new RuntimeExecutionControl(component,session,invocation,flow.flow.executionClass());
+        ExecutionControl control=new RuntimeExecutionControl(component,session,invocation,flow.flow.id(),flow.flow.executionClass());
         EventContext base=new EventContext(flow.flow.id(),reference,sessionValues,session==null?null:session.context,flow.context.snapshot(),flow.context,control,globalContext.snapshot(),globalContext,Map.of());
         Map<String,Object> configuration=flow.configuration.get(nodeId).resolve(event,base);
         return new EventContext(base.flowId(),base.session(),base.sessionValues(),base.sessionContext(),base.flowValues(),base.flowContext(),base.executionControl(),base.globalValues(),base.globalContext(),configuration);
     }
+    private void executeJoinIngress(RegisteredFlow flow, FlowNode.JoinIngressNode node,
+                                    KuudraEvent input, EventContext context) {
+        IngressDecision decision = node.ingress().admit(input, context);
+        if (decision instanceof IngressDecision.Rejected rejected) {
+            event("ingress.join.rejected", Map.of("ingressId", node.id(), "reason", rejected.reason()));
+            return;
+        }
+        IngressDecision.Accepted accepted = (IngressDecision.Accepted) decision;
+        List<SessionSnapshot> matches = sessionManager.snapshots().stream()
+                .filter(snapshot -> snapshot.flowId().equals(flow.flow.id())
+                        && snapshot.flowRevision() == flow.flow.revision()
+                        && snapshot.ingressId().equals(node.targetIngress())
+                        && snapshot.groupKey().equals(accepted.groupKey())
+                        && active(snapshot.status()))
+                .toList();
+        if (matches.size() != 1) {
+            event("ingress.join.rejected", Map.of("ingressId", node.id(), "targetIngress", node.targetIngress(),
+                    "groupKey", accepted.groupKey(), "matches", matches.size(),
+                    "reason", matches.isEmpty() ? "target-session-not-found" : "target-session-ambiguous"));
+            return;
+        }
+        SessionManager.ManagedSession target = sessionManager.require(matches.get(0).id());
+        if (target == null || !target.active()) return;
+        SessionEventWrapper wrapper = new SessionEventWrapper(derive(input, accepted.event(), false, target),
+                target.reference());
+        boolean routed = false;
+        for (String next : flow.flow.next(node.id())) routed |= enqueue(flow, next, wrapper);
+        event("ingress.joined", Map.of("ingressId", node.id(), "targetIngress", node.targetIngress(),
+                "sessionId", target.id.toString(), "groupKey", accepted.groupKey(), "routed", routed));
+    }
     private void sessionTerminal(SessionManager.ManagedSession session){SessionCoordinator.Group group=findGroup(session);coordinator.terminal(group,session.id,target->{event("session.dependency.termination-propagated",Map.of("terminalSessionId",session.id.toString(),"targetSessionId",target.toString()));cancel(target);});event("session."+session.status.name().toLowerCase(),Map.of("sessionId",session.id.toString(),"groupKey",session.groupKey));}
-    private SessionCoordinator.Group findGroup(SessionManager.ManagedSession session){RegisteredFlow flow=registeredFlow(session.flowId);FlowNode.IngressNode ingress=(FlowNode.IngressNode)flow.flow.node(session.ingressId);String scope=flow.flow.id()+"@"+session.revision;return new SessionCoordinator.Group(scope,ingress.instanceId(),session.groupKey);}
+    private SessionCoordinator.Group findGroup(SessionManager.ManagedSession session){RegisteredFlow flow=registeredFlow(session.flowId);FlowNode.IngressNode ingress=(FlowNode.IngressNode)flow.flow.node(session.ingressId);String scope=flow.flow.id()+"@"+session.revision;String ingressScope=ingress.defaultScheduling().groupScope()==SessionGroupScope.ABILITY?"*":ingress.instanceId();return new SessionCoordinator.Group(scope,ingressScope,session.groupKey);}
     private ExecutorService executor(RegisteredFlow flow) {
         return flow.flow.executionClass() == FlowExecutionClass.CONTROL ? controlWorkers : workers;
     }
@@ -369,13 +542,15 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         private final Object component;
         private final SessionManager.ManagedSession session;
         private final Invocation invocation;
+        private final String abilityId;
         private final FlowExecutionClass executionClass;
 
         private RuntimeExecutionControl(Object component, SessionManager.ManagedSession session, Invocation invocation,
-                                        FlowExecutionClass executionClass) {
+                                        String abilityId, FlowExecutionClass executionClass) {
             this.component = component;
             this.session = session;
             this.invocation = invocation;
+            this.abilityId = abilityId;
             this.executionClass = executionClass;
         }
 
@@ -387,6 +562,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             synchronized (monitor) {
                 Set<SuspensionReason> reasons = EnumSet.noneOf(SuspensionReason.class);
                 if (paused && executionClass == FlowExecutionClass.DATA) reasons.add(SuspensionReason.KERNEL);
+                if (pausedAbilities.contains(abilityId)) reasons.add(SuspensionReason.ABILITY);
                 if (component != null && pausedComponents.contains(component)) reasons.add(SuspensionReason.COMPONENT);
                 if (session != null && session.paused) reasons.add(SuspensionReason.SESSION);
                 return Set.copyOf(reasons);
@@ -409,11 +585,11 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         }
 
         private ExecutionDecision decision() {
-            if (closed.get() || component != null && disabledComponents.contains(component)
+            if (closed.get() || disabledAbilities.contains(abilityId) || component != null && disabledComponents.contains(component)
                     || session != null && (session.cancelled.get() || !session.active() || session.failure.get() != null)) {
                 return ExecutionDecision.CANCEL;
             }
-            if (paused && executionClass == FlowExecutionClass.DATA
+            if (pausedAbilities.contains(abilityId) || paused && executionClass == FlowExecutionClass.DATA
                     || component != null && pausedComponents.contains(component) || session != null && session.paused) {
                 return ExecutionDecision.PAUSE;
             }
@@ -497,7 +673,9 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
 
     private int activeSessionCount(){return (int)sessionManager.snapshots().stream().filter(snapshot->active(snapshot.status())).count();}
     private static long elapsedMillis(long started){return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);}
-    private record ManagedSource(EventSource source,List<SourceTarget> targets,AtomicBoolean closed){ManagedSource(EventSource source,List<SourceTarget>targets){this(source,targets,new AtomicBoolean());}}
+    private record ManagedSource(EventSource source,List<SourceTarget> targets,boolean lifecycleOwned,AtomicBoolean closed){
+        ManagedSource(EventSource source,List<SourceTarget>targets,boolean lifecycleOwned){this(source,targets,lifecycleOwned,new AtomicBoolean());}
+    }
     private static final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;
         final Map<String,PlaceholderResolver.CompiledMap> configuration;

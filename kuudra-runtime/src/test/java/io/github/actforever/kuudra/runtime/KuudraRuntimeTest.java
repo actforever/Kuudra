@@ -24,7 +24,7 @@ class KuudraRuntimeTest {
         CountDownLatch requested = new CountDownLatch(1);
         AtomicReference<UUID> controlled = new AtomicReference<>();
         IngressConfiguration scheduling = new IngressConfiguration(
-                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 1, 1);
         try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
             runtime.registerFlow(new KuudraFlow("cancellable", Map.of(
                     "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
@@ -176,7 +176,7 @@ class KuudraRuntimeTest {
             return completion;
         };
         IngressConfiguration scheduling = new IngressConfiguration(
-                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 1, 1);
         try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
             runtime.registerFlow(new KuudraFlow("cooperative", Map.of(
                     "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
@@ -204,7 +204,7 @@ class KuudraRuntimeTest {
             return CompletableFuture.completedFuture(null);
         };
         IngressConfiguration scheduling = new IngressConfiguration(
-                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 1, 1);
         try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
             runtime.registerFlow(new KuudraFlow("gated", Map.of(
                     "ingress", new FlowNode.IngressNode("ingress", (event, context) ->
@@ -226,7 +226,7 @@ class KuudraRuntimeTest {
             return IngressDecision.reject("test");
         };
         IngressConfiguration scheduling = new IngressConfiguration(
-                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 1, 1);
+                SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 1, 1);
         try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
             runtime.registerFlow(new KuudraFlow("inactive", Map.of(
                     "ingress", new FlowNode.IngressNode("ingress", ingress, scheduling, Map.of())), Map.of()));
@@ -275,7 +275,7 @@ class KuudraRuntimeTest {
     void rawIngressSessionHandlerAndEgressFormClosedPipeline() throws Exception {
         CountDownLatch handled = new CountDownLatch(1); CountDownLatch exported = new CountDownLatch(1);
         AtomicReference<UUID> sessionId = new AtomicReference<>(); AtomicReference<Set<UUID>> lineage = new AtomicReference<>();
-        IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 4, 4);
+        IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 4, 4);
         try (KuudraRuntime runtime = new KuudraRuntime(32, 2)) {
             runtime.registerFlow(new KuudraFlow("flow", Map.of(
                     "interpret", new FlowNode.InterpreterNode("interpret", (event, context) -> List.of(event.retype("interpreted")), Map.of()),
@@ -303,7 +303,7 @@ class KuudraRuntimeTest {
     @Test
     void serialPolicyDefersSecondAdmissionUntilFirstLeaseCompletes() throws Exception {
         CountDownLatch firstStarted=new CountDownLatch(1);CountDownLatch release=new CountDownLatch(1);CountDownLatch both=new CountDownLatch(2);
-        IngressConfiguration serial=new IngressConfiguration(SessionSchedulingPolicy.SERIAL,SessionGroupScope.FLOW_BINDING,1,4);
+        IngressConfiguration serial=new IngressConfiguration(SessionSchedulingPolicy.SERIAL,SessionGroupScope.INGRESS,1,4);
         try(KuudraRuntime runtime=new KuudraRuntime(16,2)){
             runtime.registerFlow(new KuudraFlow("flow",Map.of(
                     "in",new FlowNode.IngressNode("in",(event,context)->IngressDecision.accept("same",event),serial,Map.of()),
@@ -378,7 +378,7 @@ class KuudraRuntimeTest {
     void failedSessionDrainsEveryLeaseBeforePublishingTerminalState() throws Exception {
         AtomicReference<UUID> sessionId = new AtomicReference<>();
         CountDownLatch created = new CountDownLatch(1);
-        IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 2, 2);
+        IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 2, 2);
         try (KuudraRuntime runtime = new KuudraRuntime(16, 1)) {
             runtime.registerFlow(new KuudraFlow("flow", Map.of(
                     "in", new FlowNode.IngressNode("in", (event, context) -> IngressDecision.accept("group", event), scheduling, Map.of()),
@@ -400,7 +400,7 @@ class KuudraRuntimeTest {
         SessionCoordinator coordinator = new SessionCoordinator();
         SessionCoordinator.Group group = new SessionCoordinator.Group("scope", "ingress", "key");
         IngressConfiguration configuration = new IngressConfiguration(SessionSchedulingPolicy.CANCEL_AND_REPLACE_PENDING,
-                SessionGroupScope.FLOW_BINDING, 1, 1);
+                SessionGroupScope.INGRESS, 1, 1);
         AtomicReference<UUID> active = new AtomicReference<>();
         AtomicInteger launches = new AtomicInteger();
         Runnable launch = () -> { UUID id = UUID.randomUUID(); active.set(id); launches.incrementAndGet(); coordinator.activated(group,

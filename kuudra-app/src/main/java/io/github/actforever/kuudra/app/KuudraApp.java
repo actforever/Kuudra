@@ -131,6 +131,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             KuudraConfig.NamespaceMode.ALL, java.util.Set.of());
     private KuudraRuntime runtime;
     private DefaultPluginManager plugins;
+    private AbilityManager abilityManager;
     private KuudraLogSession logSession;
     private ResourceStateStore stateStore;
     private java.util.concurrent.ScheduledExecutorService reconciliationExecutor;
@@ -219,6 +220,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         ensureDirectory(homeDirectory, "home", created);
         ensureDirectory(homeDirectory.resolve("plugins"), "plugins", created);
         ensureDirectory(homeDirectory.resolve("manifests"), "manifests", created);
+        ensureDirectory(homeDirectory.resolve("ability-profiles"), "ability-profiles", created);
         ensureDirectory(homeDirectory.resolve("logs"), "logs", created);
         ensureDirectory(homeDirectory.resolve("state"), "state", created);
         ensureDirectory(homeDirectory.resolve("locale"), "locale", created);
@@ -286,11 +288,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             plugins = new DefaultPluginManager(homes, pluginRuntimeServices(), events);
             plugins.startAll().toCompletableFuture().join();
             if (bootstrapConfig != null) {
-                KuudraManifest.Resources currentManifests = KuudraYamlLoader.loadManifests(
-                        bootstrapConfig.homeDirectory().resolve("manifests"));
+                KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(
+                        bootstrapConfig.homeDirectory().resolve("manifests"),
+                        bootstrapConfig.homeDirectory().resolve("ability-profiles"));
                 applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
                         bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
-                        bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(), currentManifests));
+                        bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(),
+                        KuudraManifest.Resources.EMPTY, deployment, bootstrapConfig.abilityProfiles()));
             }
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) startReconciliationLoop(bootstrapConfig.reconciliation());
@@ -351,6 +355,45 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public Optional<Plugin> plugin(String namespace, String pluginId) {
         try { return Optional.of(plugin(requirePlugins().pluginView(namespace, pluginId))); }
         catch (IllegalArgumentException missing) { return Optional.empty(); }
+    }
+    public synchronized List<Ability> abilities() {
+        if (abilityManager == null) return List.of();
+        return abilityManager.abilities().stream().map(view -> new Ability(view.id(), view.state().name(),
+                view.directOverride().name(), view.profileClaims(), view.dependsOn(), view.mutexWith(), view.detail())).toList();
+    }
+    public synchronized Optional<Ability> ability(String namespace, String name) {
+        String id = namespace + "/" + name;
+        return abilities().stream().filter(ability -> ability.id().equals(id)).findFirst();
+    }
+    public synchronized List<ManifestResource> manifestResources() {
+        if (abilityManager == null) return List.of();
+        return abilityManager.resourceViews().stream().map(view -> new ManifestResource(
+                view.id(), view.template(), view.state(), view.claimedBy(), view.detail())).toList();
+    }
+    public java.util.concurrent.CompletionStage<Void> controlAbility(String namespace, String name, String action) {
+        AbilityManager target;
+        synchronized (this) {
+            if (abilityManager == null) throw new KuudraException("Ability control is unavailable");
+            target = abilityManager;
+        }
+        AbilityManager.ControlOverride override = switch (action.toLowerCase(java.util.Locale.ROOT)) {
+            case "enable" -> AbilityManager.ControlOverride.ENABLED;
+            case "pause" -> AbilityManager.ControlOverride.PAUSED;
+            case "disable" -> AbilityManager.ControlOverride.DISABLED;
+            case "inherit" -> AbilityManager.ControlOverride.INHERIT;
+            case "resume" -> AbilityManager.ControlOverride.ENABLED;
+            default -> throw new IllegalArgumentException("Unsupported Ability action: " + action);
+        };
+        return target.control(namespace + "/" + name, override);
+    }
+    public List<ResourceTemplate> resourceTemplates() {
+        return requirePlugins().resourceTemplateViews().stream().map(view -> new ResourceTemplate(
+                view.reference(), view.pluginId(), view.namespace(), view.kind().manifestKind(), view.name(),
+                view.implementation(), new ResourcePolicyView(view.policy().maxInstances(),
+                view.policy().limitScope().name(), view.policy().exclusivityDomain(), view.policy().allowParallel()),
+                view.handlers().stream().map(handler -> new Handler(handler.name(), handler.purpose(),
+                        handler.arguments().stream().map(KuudraApp::configuration).toList(),
+                        handler.emittedEvents().stream().map(KuudraApp::event).toList())).toList())).toList();
     }
 
     /** Globally suspends event admission and waits queued work at Runtime safe points. */
@@ -572,6 +615,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.executionClass().name(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.labels(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
+    private static ConfigurationDocumentation configuration(
+            io.github.actforever.kuudra.plugin.PluginConfigurationDocumentation value) {
+        return new ConfigurationDocumentation(value.path(), value.type(), value.required(), value.defaultValue(),
+                value.description(), value.examples(), value.allowedValues());
+    }
+    private static EventDocumentation event(io.github.actforever.kuudra.plugin.PluginEventDocumentation value) {
+        return new EventDocumentation(value.stage(), value.eventType(), value.description(), value.dataExample());
+    }
     private static Plugin plugin(DefaultPluginManager.PluginView view) {
         return new Plugin(view.id(), view.namespace(), view.version(), view.state().name(), view.dependencies().stream()
                 .map(dependency -> new Dependency(dependency.namespace(), dependency.pluginId(), dependency.mandatory(), dependency.versionRange())).toList(),
@@ -626,6 +677,19 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             debug("plugin.scan.completed", Map.of("directory", pluginDirectory.toString(), "archives", pluginArchives.size()));
             loadPluginArchives(pluginArchives);
             startPlugins().toCompletableFuture().join();
+            if (!config.deployment().isEmpty()) {
+                if (stateStore == null) stateStore = new SqliteResourceStateStore(
+                        config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
+                stateStore.replaceDesired(config.deployment());
+                KuudraManifest.Deployment desired = stateStore.desiredDeployment();
+                abilityManager = new AbilityManager(desired, config.abilityProfiles(), requirePlugins(),
+                        requireRuntime(), config.runtime(), events);
+                abilityManager.start();
+                stateStore.markAllObserved("READY", "v1alpha2 deployment reconciled");
+                debug("configuration.apply.completed", Map.of("resources", desired.resources().size(),
+                        "abilities", desired.abilities().size(), "profiles", desired.profiles().size()));
+                return;
+            }
             if (stateStore == null) stateStore = new SqliteResourceStateStore(
                     config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
             validateDesiredStates(config.manifests());
@@ -647,6 +711,13 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private void releaseResources() {
         stopReconciliationLoop();
+        if (abilityManager != null) {
+            debug("app.shutdown.abilities.started", Map.of());
+            try { abilityManager.close(); }
+            catch (RuntimeException error) { events.publish(SystemEvent.of("app.shutdown.abilities.failed", Map.of("error", error.toString()))); }
+            abilityManager = null;
+            debug("app.shutdown.abilities.completed", Map.of());
+        }
         if (runtime != null) {
             debug("app.shutdown.runtime.started", Map.of());
             try { runtime.close(); }
@@ -1117,10 +1188,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
 
     private IngressConfiguration defaultIngressConfiguration() {
         KuudraConfig.SessionCoordinatorSettings defaults = bootstrapConfig == null
-                ? new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 64, 256)
+                ? new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 64, 256)
                 : bootstrapConfig.runtime().sessionCoordinator();
         return new IngressConfiguration(defaults.defaultPolicy(),
-                SessionGroupScope.FLOW_BINDING, defaults.maxParallelSessions(), defaults.queueCapacity());
+                SessionGroupScope.INGRESS, defaults.maxParallelSessions(), defaults.queueCapacity());
     }
     private static String text(Object value) { if (value == null) throw new IllegalArgumentException("Configuration value must not be null"); return value.toString(); }
     private static String componentReference(String type, String component) {
@@ -1130,6 +1201,23 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return type + "/" + component;
     }
     public record Flow(String id, String executionClass, int activeSessions, int deferredTasks, boolean selected) { }
+    public record Ability(String id, String state, String directOverride, Set<String> profileClaims,
+                          List<String> dependsOn, List<String> mutexWith, String detail) {
+        public Ability { profileClaims = Set.copyOf(profileClaims); dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
+    }
+    public record ManifestResource(String id, String template, String state, Set<String> claimedBy, String detail) {
+        public ManifestResource { claimedBy = Set.copyOf(claimedBy); }
+    }
+    public record ResourceTemplate(String reference, String pluginId, String namespace, String kind, String name,
+                                   String implementation, ResourcePolicyView policy, List<Handler> handlers) {
+        public ResourceTemplate { handlers = List.copyOf(handlers); }
+    }
+    public record ResourcePolicyView(int maxInstances, String limitScope, String exclusivityDomain,
+                                     boolean allowParallel) { }
+    public record Handler(String name, String purpose, List<ConfigurationDocumentation> arguments,
+                          List<EventDocumentation> emittedEvents) {
+        public Handler { arguments = List.copyOf(arguments); emittedEvents = List.copyOf(emittedEvents); }
+    }
     public record KernelCheckpoint(RuntimeCheckpoint runtime, List<ComponentResource> components) {
         public KernelCheckpoint { components = List.copyOf(components); }
     }

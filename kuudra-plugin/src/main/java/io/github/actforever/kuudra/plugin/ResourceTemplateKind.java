@@ -15,4 +15,8 @@ public enum ResourceTemplateKind {
     }
     public String prefix() { return prefix; }
     public String manifestKind() { return manifestKind; }
+    public static ResourceTemplateKind fromManifestKind(String value) {
+        return java.util.Arrays.stream(values()).filter(kind -> kind.manifestKind.equals(value)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported ResourceTemplate kind: " + value));
+    }
 }

@@ -1,60 +1,43 @@
-# Kuudra 家目录。相对路径以可执行 JAR 所在目录（独立 App 为工作目录）为基准。
+# Kuudra 家目录。打包 Web 中相对路径以可执行 JAR 所在目录为基准。
 home-directory: .kuudra
 
-# 是否在内核启动时向控制台打印 Kuudra Banner；关闭日志控制台输出不会隐式关闭该项。
+# 启动时是否显示 Banner。
 banner-enabled: true
 
 runtime:
-  # Runtime 待执行事件队列的最大容量；队列满时新事件会被拒绝。
+  # Runtime 事件队列容量与工作线程数。
   queue-capacity: 1024
-  # 执行 EventHandler 等异步任务的工作线程数。
   worker-threads: 2
-  # 单个事件允许经历的最大路由跳数，用于阻断意外循环。
+  # 单个事件允许经历的最大路由跳数。
   max-event-hops: 256
-  # Runtime 调度线程在队列为空时的轮询间隔，单位毫秒。
   dispatcher-poll-interval-ms: 200
-  # 内核停止时等待活动 Session 协作式结束的最长时间，单位毫秒；0 表示不等待。
+  # 停止整个内核时等待 Session 排空的时间。
   shutdown-session-drain-timeout-ms: 5000
-  session-coordinator:
-    # Ingress 未单独声明 policy 时采用的默认会话调度策略。
-    default-policy: parallel
-    # 默认会话组隔离范围：flow-binding 或 ingress。
-    default-group-scope: flow-binding
-    # PARALLEL 策略下每个会话组允许同时运行的最大 Session 数。
-    max-parallel-sessions: 64
-    # SERIAL 等需要等待的策略中，每个会话组允许积压的 Raw Event 数量。
-    queue-capacity: 256
+  # 禁用 Ability 前等待其 Session 自然排空的时间。
+  ability-drain-timeout-ms: 5000
+  # 请求取消后额外等待的宽限时间。
+  cancel-grace-timeout-ms: 5000
+  # 单次 ResourceLifecycle 操作的最长等待时间。
+  resource-lifecycle-timeout-ms: 120000
 
-# 资源命名空间部署选择。清单和 StateStore 始终保留全部声明，仅选中的资源会被实例化并接入 Runtime。
-resource-selection:
-  # ALL 启动全部命名空间；INCLUDE 仅启动 namespaces 中列出的一个或多个命名空间。
-  namespace-mode: ALL
-  # namespace-mode 为 INCLUDE 时不能为空；这里填写资源 metadata.namespace，而不是插件命名空间。
-  namespaces: []
+# 启动时选中的全局 AbilityProfile 名称。空列表表示不产生 Profile claim。
+ability-profiles: []
 
-# App 后台调谐循环。磁盘 manifests 仅在 start/restart 时重新导入；循环负责收敛 StateStore 中未完成或失败的 generation。
+# App 串行调谐与失败重试周期。
 reconciliation:
-  # 是否启用后台失败重试和代际收敛。
   enabled: true
-  # 上一轮调谐结束到下一轮开始之间的固定延迟，单位毫秒。
   interval-ms: 1000
 
 state-store:
-  # SQLite 遇到数据库锁时等待重试的时间，单位毫秒。
   busy-timeout-ms: 5000
 
 logging:
-  # TRACE、DEBUG、INFO、WARN、ERROR 或 OFF。
   level: info
-  # 是否向控制台输出 Kuudra 日志。
   console-enabled: true
-  # 是否写入 <home-directory>/logs/latest.log 并按启动批次归档。
   file-enabled: true
 
-# 国际化消息配置。自定义语言文件放在 <home-directory>/locale，文件名必须为 xx_XX.json。
 i18n:
-  # 首选语言；找不到对应消息或文件时自动回退到内置 en_US。
   preferred-locale: en_US
 
-# 全局上下文初始值，可通过 ${global#path} 或自动作用域查找读取。
+# 可通过 ${global#path} 读取的全局上下文初始值。
 global-context: {}

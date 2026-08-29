@@ -5,6 +5,19 @@ import java.util.List;
 
 /** SQL mapping for the resource StateStore. Transaction ownership remains in the store. */
 interface ResourceStateMapper {
+    @Update("CREATE TABLE IF NOT EXISTS kuudra_schema (name TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+    void createSchemaMetadata();
+
+    @Select("SELECT version FROM kuudra_schema WHERE name='control-plane'")
+    Integer schemaVersion();
+
+    @Insert("INSERT INTO kuudra_schema(name,version) VALUES('control-plane',#{version}) " +
+            "ON CONFLICT(name) DO UPDATE SET version=excluded.version")
+    void setSchemaVersion(@Param("version") int version);
+
+    @Update("DROP TABLE IF EXISTS resources")
+    void dropCoreResources();
+
     @Update("""
             CREATE TABLE IF NOT EXISTS resources (
               kind TEXT NOT NULL, namespace TEXT NOT NULL, name TEXT NOT NULL,

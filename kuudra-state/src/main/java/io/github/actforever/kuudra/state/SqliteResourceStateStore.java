@@ -25,6 +25,8 @@ import java.util.Set;
 
 /** SQLite StateStore whose SQL mapping is isolated behind MyBatis. */
 public final class SqliteResourceStateStore implements ResourceStateStore {
+    private static final int CONTROL_PLANE_SCHEMA_VERSION = 2;
+    private static final String PROFILE_NAMESPACE = "kuudra-system";
     private final SqlSessionFactory sessions;
     private final ObjectMapper json = JsonMapper.builder()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
@@ -48,9 +50,64 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         sessions = new SqlSessionFactoryBuilder().build(configuration);
         try (SqlSession session = sessions.openSession(true)) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            mapper.createSchemaMetadata();
+            Integer version = mapper.schemaVersion();
+            if (version == null || version != CONTROL_PLANE_SCHEMA_VERSION) {
+                // `resources` is a Kuudra-owned v0.4 control-plane table. No other
+                // table is dropped, so plugin-owned data in the same database survives.
+                mapper.dropCoreResources();
+                mapper.setSchemaVersion(CONTROL_PLANE_SCHEMA_VERSION);
+            }
             mapper.createSchema();
         } catch (RuntimeException error) {
             throw KuudraException.wrap("Failed to open StateStore " + normalized, error);
+        }
+    }
+
+    @Override public synchronized void replaceDesired(KuudraManifest.Deployment deployment) {
+        requireOpen();
+        try (SqlSession session = sessions.openSession(false)) {
+            ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
+            Set<KuudraManifest.ResourceId> retained = new HashSet<>();
+            deployment.resources().values().forEach(value -> persist(mapper, value.id(), "resource", value, retained));
+            deployment.abilities().values().forEach(value -> persist(mapper, value.id(), "ability", value, retained));
+            deployment.profiles().values().forEach(value -> persist(mapper,
+                    new KuudraManifest.ResourceId("AbilityProfile", PROFILE_NAMESPACE, value.name()),
+                    "ability-profile", value, retained));
+            mapper.findAll().stream().map(SqliteResourceStateStore::id).filter(id -> !retained.contains(id))
+                    .forEach(id -> mapper.delete(id.kind(), id.namespace(), id.name()));
+            session.commit();
+        } catch (RuntimeException error) {
+            throw KuudraException.wrap("Failed to persist desired deployment state", error);
+        }
+    }
+
+    @Override public synchronized KuudraManifest.Deployment desiredDeployment() {
+        requireOpen();
+        Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources = new LinkedHashMap<>();
+        Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities = new LinkedHashMap<>();
+        Map<String, KuudraManifest.AbilityProfile> profiles = new LinkedHashMap<>();
+        try (SqlSession session = sessions.openSession()) {
+            for (ResourceStateRow row : session.getMapper(ResourceStateMapper.class).findAll()) {
+                switch (row.getResourceType()) {
+                    case "resource" -> {
+                        KuudraManifest.Resource value = json.readValue(row.getDesiredJson(), KuudraManifest.Resource.class);
+                        resources.put(value.id(), value);
+                    }
+                    case "ability" -> {
+                        KuudraManifest.Ability value = json.readValue(row.getDesiredJson(), KuudraManifest.Ability.class);
+                        abilities.put(value.id(), value);
+                    }
+                    case "ability-profile" -> {
+                        KuudraManifest.AbilityProfile value = json.readValue(row.getDesiredJson(), KuudraManifest.AbilityProfile.class);
+                        profiles.put(value.name(), value);
+                    }
+                    default -> throw new KuudraException("Unknown v0.5 persisted resource type: " + row.getResourceType());
+                }
+            }
+            return new KuudraManifest.Deployment(resources, abilities, profiles);
+        } catch (Exception error) {
+            throw KuudraException.wrap("Failed to read desired deployment state", error);
         }
     }
 
@@ -113,6 +170,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         try (SqlSession session = sessions.openSession()) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
             return mapper.findAll().stream()
+                    .filter(row -> !"ability-profile".equals(row.getResourceType()))
                     .map(row -> new ResourceState(id(row), row.getGeneration(), row.getObservedGeneration(),
                             row.getPhase(), row.getMessage())).toList();
         } catch (RuntimeException error) {

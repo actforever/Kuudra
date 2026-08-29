@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SessionCoordinatorTest {
     private static final IngressConfiguration PARALLEL = new IngressConfiguration(
-            SessionSchedulingPolicy.PARALLEL, SessionGroupScope.FLOW_BINDING, 16, 16);
+            SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 16, 16);
 
     @Test
     void requiredTerminationCancelsDependentAndRemovesGraphEdge() {
@@ -57,7 +57,7 @@ class SessionCoordinatorTest {
         UUID required = activate(coordinator, requiredGroup, "flow", "ingress/test/b", "window", List.of());
         SessionCoordinator.Group serialGroup = group("serial");
         IngressConfiguration serial = new IngressConfiguration(
-                SessionSchedulingPolicy.SERIAL, SessionGroupScope.FLOW_BINDING, 1, 4);
+                SessionSchedulingPolicy.SERIAL, SessionGroupScope.INGRESS, 1, 4);
         UUID active = activate(coordinator, serialGroup, "flow", "ingress/test/a", "job", List.of());
 
         SessionDependencyRequirement requirement = requirement("flow-b", "ingress/test/b", "window",

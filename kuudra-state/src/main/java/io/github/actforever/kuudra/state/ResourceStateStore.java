@@ -5,7 +5,14 @@ import java.util.List;
 
 /** Persistent desired/observed resource state boundary. */
 public interface ResourceStateStore extends AutoCloseable {
+    void replaceDesired(KuudraManifest.Deployment deployment);
+    KuudraManifest.Deployment desiredDeployment();
+
+    /** Transitional v0.4 compatibility; v0.5 callers use Deployment. */
+    @Deprecated
     void replaceDesired(KuudraManifest.Resources resources);
+    /** Transitional v0.4 compatibility; v0.5 callers use Deployment. */
+    @Deprecated
     KuudraManifest.Resources desiredResources();
     List<ResourceState> states();
     void markAllObserved(String phase, String message);

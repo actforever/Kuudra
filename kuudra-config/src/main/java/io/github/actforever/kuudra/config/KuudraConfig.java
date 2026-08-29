@@ -18,21 +18,40 @@ public final class KuudraConfig {
     public record RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
                                 ReconciliationSettings reconciliation,
                                 StateStoreSettings stateStore, LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
-                                boolean bannerEnabled, Map<String, Object> globalContext, KuudraManifest.Resources manifests) {
+                                boolean bannerEnabled, Map<String, Object> globalContext, KuudraManifest.Resources manifests,
+                                KuudraManifest.Deployment deployment, java.util.List<String> abilityProfiles) {
+        public RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
+                             ReconciliationSettings reconciliation, StateStoreSettings stateStore,
+                             LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
+                             boolean bannerEnabled, Map<String, Object> globalContext,
+                             KuudraManifest.Resources manifests) {
+            this(runtime, resourceSelection, reconciliation, stateStore, logging, i18n, homeDirectory,
+                    bannerEnabled, globalContext, manifests, KuudraManifest.Deployment.EMPTY, java.util.List.of());
+        }
         public RuntimeConfig {
-            if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || i18n == null || manifests == null) {
-                throw new IllegalArgumentException("runtime, resourceSelection, reconciliation, stateStore, logging, i18n, and manifests must not be null");
+            if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || i18n == null || manifests == null || deployment == null) {
+                throw new IllegalArgumentException("runtime, reconciliation, stateStore, logging, i18n, and deployment must not be null");
             }
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
             globalContext = Map.copyOf(globalContext);
+            abilityProfiles = java.util.List.copyOf(abilityProfiles);
         }
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads, int maxEventHops,
                                   int dispatcherPollIntervalMs, int shutdownSessionDrainTimeoutMs,
-                                  SessionCoordinatorSettings sessionCoordinator) {
+                                  SessionCoordinatorSettings sessionCoordinator,
+                                  int abilityDrainTimeoutMs, int cancelGraceTimeoutMs,
+                                  int resourceLifecycleTimeoutMs) {
+        public RuntimeSettings(int queueCapacity, int workerThreads, int maxEventHops,
+                               int dispatcherPollIntervalMs, int shutdownSessionDrainTimeoutMs,
+                               SessionCoordinatorSettings sessionCoordinator) {
+            this(queueCapacity, workerThreads, maxEventHops, dispatcherPollIntervalMs,
+                    shutdownSessionDrainTimeoutMs, sessionCoordinator, 5_000, 5_000, 120_000);
+        }
         public RuntimeSettings {
             if (queueCapacity < 1 || workerThreads < 1 || maxEventHops < 1
-                    || dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0) {
+                    || dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0
+                    || abilityDrainTimeoutMs < 0 || cancelGraceTimeoutMs < 0 || resourceLifecycleTimeoutMs < 1) {
                 throw new IllegalArgumentException("runtime capacities and timeouts must be valid");
             }
             if (sessionCoordinator == null) throw new IllegalArgumentException("sessionCoordinator must not be null");

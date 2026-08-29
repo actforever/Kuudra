@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.stream.Stream;
 import io.github.actforever.kuudra.api.session.SessionGroupScope;
 import io.github.actforever.kuudra.api.session.SessionSchedulingPolicy;
+import io.github.actforever.kuudra.api.component.IngressConfiguration;
 
 /** Reads config.yaml plus Flow YAML files into the format-neutral configuration model. */
 public final class KuudraYamlLoader {
@@ -60,18 +61,25 @@ public final class KuudraYamlLoader {
         Map<String, Object> root = resource.values();
         if (root.containsKey("plugins")) throw new IOException("Configuration key 'plugins' has been removed; use <home-directory>/plugins");
         if (root.containsKey("flows-directory")) throw new IOException("Configuration key 'flows-directory' has been removed; use <home-directory>/manifests");
+        if (root.containsKey("resource-selection")) throw new IOException(
+                "Configuration key 'resource-selection' has been removed; use ability-profiles");
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
         int maxEventHops = integer(runtime, "max-event-hops", 256);
         int dispatcherPollIntervalMs = integer(runtime, "dispatcher-poll-interval-ms", 200);
         int shutdownSessionDrainTimeoutMs = nonNegativeInteger(runtime, "shutdown-session-drain-timeout-ms", 5_000);
+        int abilityDrainTimeoutMs = nonNegativeInteger(runtime, "ability-drain-timeout-ms", 5_000);
+        int cancelGraceTimeoutMs = nonNegativeInteger(runtime, "cancel-grace-timeout-ms", 5_000);
+        int resourceLifecycleTimeoutMs = integer(runtime, "resource-lifecycle-timeout-ms", 120_000);
+        if (runtime.containsKey("session-coordinator")) throw new IOException(
+                "runtime.session-coordinator has been removed; configure scheduling on CREATE Ingress nodes");
         Map<String, Object> coordinator = optionalMapping(runtime, "session-coordinator");
         SessionSchedulingPolicy defaultPolicy = enumValue(coordinator, "default-policy", SessionSchedulingPolicy.PARALLEL, SessionSchedulingPolicy.class);
-        SessionGroupScope defaultGroupScope = enumValue(coordinator, "default-group-scope", SessionGroupScope.FLOW_BINDING, SessionGroupScope.class);
+        SessionGroupScope defaultGroupScope = enumValue(coordinator, "default-group-scope", SessionGroupScope.INGRESS, SessionGroupScope.class);
         int maxParallelSessions = integer(coordinator, "max-parallel-sessions", 64);
         int sessionQueueCapacity = integer(coordinator, "queue-capacity", 256);
-        Map<String, Object> resourceSelection = optionalMapping(root, "resource-selection");
+        Map<String, Object> resourceSelection = Map.of();
         KuudraConfig.NamespaceMode namespaceMode = enumValue(resourceSelection, "namespace-mode",
                 KuudraConfig.NamespaceMode.ALL, KuudraConfig.NamespaceMode.class);
         java.util.Set<String> selectedNamespaces = stringSet(resourceSelection.get("namespaces"), "resource-selection.namespaces");
@@ -94,16 +102,19 @@ public final class KuudraYamlLoader {
         }
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         boolean bannerEnabled = bool(root.get("banner-enabled"), true);
-        KuudraManifest.Resources manifests = loadManifests(homeDirectory.resolve("manifests"));
+        KuudraManifest.Deployment deployment = loadDeployment(homeDirectory.resolve("manifests"),
+                homeDirectory.resolve("ability-profiles"));
+        List<String> abilityProfiles = strings(root, "ability-profiles");
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
-                new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity)),
+                new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity),
+                abilityDrainTimeoutMs, cancelGraceTimeoutMs, resourceLifecycleTimeoutMs),
                 new KuudraConfig.ResourceSelectionSettings(namespaceMode, selectedNamespaces),
                 new KuudraConfig.ReconciliationSettings(reconciliationEnabled, reconciliationIntervalMs),
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled),
                 new KuudraConfig.I18nSettings(preferredLocale), homeDirectory, bannerEnabled,
-                optionalMapping(root, "global-context"), manifests);
+                optionalMapping(root, "global-context"), KuudraManifest.Resources.EMPTY, deployment, abilityProfiles);
     }
 
     private static java.util.Set<String> stringSet(Object value, String path) throws IOException {
@@ -140,6 +151,165 @@ public final class KuudraYamlLoader {
             }
         }
         return new KuudraManifest.Resources(components, flows, policies);
+    }
+
+    /** Loads the v0.5 authoritative Resource/Ability set and global AbilityProfiles. */
+    public static KuudraManifest.Deployment loadDeployment(Path manifestsDirectory,
+                                                           Path profilesDirectory) throws IOException {
+        Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources = new LinkedHashMap<>();
+        Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities = new LinkedHashMap<>();
+        Map<String, KuudraManifest.AbilityProfile> profiles = new LinkedHashMap<>();
+        loadV2Directory(manifestsDirectory, false, (document, file, index) ->
+                loadV2Manifest(document, file, index, resources, abilities, profiles));
+        loadV2Directory(profilesDirectory, true, (document, file, index) ->
+                loadV2Manifest(document, file, index, resources, abilities, profiles));
+        return new KuudraManifest.Deployment(resources, abilities, profiles);
+    }
+
+    private static void loadV2Directory(Path directory, boolean profilesOnly,
+                                        V2DocumentConsumer consumer) throws IOException {
+        if (!Files.exists(directory)) return;
+        if (!Files.isDirectory(directory)) throw new IOException("Configuration path is not a directory: " + directory);
+        try (Stream<Path> files = Files.walk(directory)) {
+            for (Path file : files.filter(Files::isRegularFile).filter(KuudraYamlLoader::isYaml).sorted().toList()) {
+                int index = 0;
+                for (ManifestDocument document : readAll(file)) {
+                    index++;
+                    if (document.value() == null) continue;
+                    Map<String, Object> root = mapping(document.value(), file);
+                    String kind = string(root.get("kind"), file + ".kind");
+                    if (profilesOnly != "AbilityProfile".equals(kind)) {
+                        throw new IOException((profilesOnly ? "Only AbilityProfile is allowed under "
+                                : "AbilityProfile must be stored under ") + directory + ": " + file);
+                    }
+                    consumer.accept(document, file, index);
+                }
+            }
+        }
+    }
+
+    private static void loadV2Manifest(ManifestDocument document, Path file, int documentIndex,
+                                       Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources,
+                                       Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities,
+                                       Map<String, KuudraManifest.AbilityProfile> profiles) throws IOException {
+        String source = file + ":" + document.line("") + " (document " + documentIndex + ")";
+        Map<String, Object> root = mapping(document.value(), source);
+        String apiVersion = string(required(root, "apiVersion", document, "",
+                "apiVersion: " + KuudraManifest.API_VERSION), source + ".apiVersion");
+        if (KuudraManifest.LEGACY_API_VERSION.equals(apiVersion)) {
+            throw new IOException("apiVersion " + apiVersion + " is no longer accepted at " + source
+                    + "; migrate Flow to Ability, EventHandler to Controller handler nodes, and spec.component to spec.template");
+        }
+        if (!KuudraManifest.API_VERSION.equals(apiVersion)) {
+            throw new IOException("Unsupported apiVersion at " + source + ": " + apiVersion);
+        }
+        String kind = string(required(root, "kind"), source + ".kind");
+        Map<String, Object> metadataMap = mapping(required(root, "metadata"), source + ".metadata");
+        String name = string(required(metadataMap, "name"), source + ".metadata.name");
+        Map<String, Object> spec = mapping(required(root, "spec"), source + ".spec");
+        try {
+            if ("AbilityProfile".equals(kind)) {
+                if (metadataMap.containsKey("namespace")) {
+                    throw new IllegalArgumentException("AbilityProfile is global and metadata.namespace is forbidden");
+                }
+                KuudraManifest.AbilityProfile profile = new KuudraManifest.AbilityProfile(name,
+                        strings(spec, "abilities"), strings(spec, "namespaces"), strings(spec, "exclude"));
+                if (profiles.putIfAbsent(name, profile) != null) throw new IllegalArgumentException("Duplicate AbilityProfile: " + name);
+                return;
+            }
+            String namespace = string(metadataMap.getOrDefault("namespace", "default"), source + ".metadata.namespace");
+            KuudraManifest.Metadata metadata = new KuudraManifest.Metadata(namespace, name,
+                    stringMapping(metadataMap, "labels"), stringMapping(metadataMap, "annotations"));
+            if (KuudraManifest.RESOURCE_KINDS.containsKey(kind)) {
+                if (spec.containsKey("desiredState")) throw new IllegalArgumentException(
+                        "Resource desired state is inferred from Ability claims; spec.desiredState is forbidden");
+                KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
+                KuudraManifest.Resource resource = new KuudraManifest.Resource(id, metadata,
+                        string(required(spec, "template"), source + ".spec.template"), optionalMapping(spec, "options"));
+                if (resources.putIfAbsent(id, resource) != null) throw new IllegalArgumentException("Duplicate Resource: " + id);
+                return;
+            }
+            if (!"Ability".equals(kind)) throw new IllegalArgumentException("Unsupported v1alpha2 kind: " + kind);
+            KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
+            Map<String, KuudraManifest.AbilityResource> claims = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : mapping(required(spec, "resources"), source + ".spec.resources").entrySet()) {
+                Map<String, Object> value = mapping(entry.getValue(), source + ".spec.resources." + entry.getKey());
+                claims.put(entry.getKey(), new KuudraManifest.AbilityResource(new KuudraManifest.ResourceReference(
+                        string(required(value, "kind"), "resource.kind"),
+                        string(value.getOrDefault("namespace", namespace), "resource.namespace"),
+                        string(required(value, "name"), "resource.name"))));
+            }
+            Map<String, KuudraManifest.AbilityNode> nodes = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : mapping(required(spec, "nodes"), source + ".spec.nodes").entrySet()) {
+                Map<String, Object> value = mapping(entry.getValue(), source + ".spec.nodes." + entry.getKey());
+                nodes.put(entry.getKey(), new KuudraManifest.AbilityNode(
+                        string(required(value, "resource"), "node.resource"),
+                        value.containsKey("handler") ? string(value.get("handler"), "node.handler") : "",
+                        optionalMapping(value, "arguments"),
+                        value.containsKey("session") ? ingressSession(mapping(value.get("session"), "node.session"), source) : null));
+            }
+            List<KuudraConfig.EdgeConfig> edges = new ArrayList<>();
+            for (Object item : list(required(spec, "edges"))) {
+                Map<String, Object> edge = mapping(item, source + ".spec.edges[]");
+                edges.add(new KuudraConfig.EdgeConfig(string(required(edge, "from"), "edge.from"),
+                        string(required(edge, "to"), "edge.to")));
+            }
+            KuudraManifest.Ability ability = new KuudraManifest.Ability(id, metadata,
+                    enumValue(io.github.actforever.kuudra.api.runtime.AbilityExecutionClass.class,
+                            spec.getOrDefault("executionClass", "DATA")), claims, nodes, edges,
+                    strings(spec, "dependsOn"), strings(spec, "mutexWith"));
+            if (abilities.putIfAbsent(id, ability) != null) throw new IllegalArgumentException("Duplicate Ability: " + id);
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException("Invalid " + kind + " at " + source + ": " + invalid.getMessage(), invalid);
+        }
+    }
+
+    private static KuudraManifest.IngressSession ingressSession(Map<String, Object> value, String source)
+            throws IOException {
+        io.github.actforever.kuudra.api.session.SessionAdmissionMode mode = enumValue(
+                io.github.actforever.kuudra.api.session.SessionAdmissionMode.class,
+                value.getOrDefault("mode", "CREATE"));
+        if (mode == io.github.actforever.kuudra.api.session.SessionAdmissionMode.JOIN) {
+            return new KuudraManifest.IngressSession(mode,
+                    string(required(value, "targetIngress"), source + ".targetIngress"), null, List.of());
+        }
+        Map<String, Object> scheduling = optionalMapping(value, "scheduling");
+        IngressConfiguration configuration = new IngressConfiguration(
+                enumValue(SessionSchedulingPolicy.class, scheduling.getOrDefault("policy", "PARALLEL")),
+                enumValue(SessionGroupScope.class, scheduling.getOrDefault("groupScope", "INGRESS")),
+                integer(scheduling.getOrDefault("maxParallelSessions", 64), "scheduling.maxParallelSessions"),
+                integer(scheduling.getOrDefault("queueCapacity", 256), "scheduling.queueCapacity"));
+        return new KuudraManifest.IngressSession(mode, "", configuration,
+                sessionDependencies(optionalList(value, "dependencies"), source));
+    }
+
+    private static List<io.github.actforever.kuudra.api.session.SessionDependencyRequirement> sessionDependencies(
+            List<Object> values, String source) throws IOException {
+        List<io.github.actforever.kuudra.api.session.SessionDependencyRequirement> dependencies = new ArrayList<>();
+        for (Object item : values) {
+            Map<String, Object> dependency = mapping(item, source + ".dependencies[]");
+            Map<String, Object> selector = mapping(required(dependency, "requiredSessionSelector"),
+                    source + ".dependencies[].requiredSessionSelector");
+            dependencies.add(new io.github.actforever.kuudra.api.session.SessionDependencyRequirement(
+                    new io.github.actforever.kuudra.api.session.SessionSelector(stringMapping(selector, "matchLabels"),
+                            enumValue(io.github.actforever.kuudra.api.session.SessionMatchPolicy.class,
+                                    selector.getOrDefault("matchPolicy", "UNIQUE"))),
+                    enumValue(io.github.actforever.kuudra.api.session.SessionTerminationPolicy.class,
+                            dependency.getOrDefault("terminationPropagation", "CANCEL_DEPENDENT"))));
+        }
+        return List.copyOf(dependencies);
+    }
+
+    private static List<String> strings(Map<String, Object> map, String key) throws IOException {
+        if (!map.containsKey(key)) return List.of();
+        List<String> result = new ArrayList<>();
+        for (Object value : list(map.get(key))) result.add(string(value, key + "[]"));
+        return List.copyOf(result);
+    }
+
+    @FunctionalInterface
+    private interface V2DocumentConsumer {
+        void accept(ManifestDocument document, Path file, int documentIndex) throws IOException;
     }
 
     private static void loadManifest(ManifestDocument document, Path file, int documentIndex,
@@ -215,7 +385,7 @@ public final class KuudraYamlLoader {
                                             enumValue(io.github.actforever.kuudra.api.session.SessionSchedulingPolicy.class,
                                                     scheduling.getOrDefault("policy", "PARALLEL")),
                                             enumValue(io.github.actforever.kuudra.api.session.SessionGroupScope.class,
-                                                    scheduling.getOrDefault("groupScope", "FLOW_BINDING")),
+                                                    scheduling.getOrDefault("groupScope", "INGRESS")),
                                             integer(scheduling.getOrDefault("maxParallelSessions", 64), source + ".spec.scheduling.maxParallelSessions"),
                                             integer(scheduling.getOrDefault("queueCapacity", 256), source + ".spec.scheduling.queueCapacity"));
                             List<io.github.actforever.kuudra.api.session.SessionDependencyRequirement> dependencies = new ArrayList<>();

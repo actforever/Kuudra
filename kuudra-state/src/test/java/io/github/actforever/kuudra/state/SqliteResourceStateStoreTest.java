@@ -1,41 +1,80 @@
 package io.github.actforever.kuudra.state;
 
-import io.github.actforever.kuudra.config.KuudraConfig;
 import io.github.actforever.kuudra.config.KuudraManifest;
+import io.github.actforever.kuudra.config.KuudraYamlLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
+import java.sql.DriverManager;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class SqliteResourceStateStoreTest {
     @TempDir Path directory;
-    @Test void persistsDesiredAndObservedGenerations() {
-        var id=new KuudraManifest.ResourceId("Ingress","demo","gate");
-        var metadata=new KuudraManifest.Metadata("demo","gate",Map.of(),Map.of());
-        var component=new KuudraManifest.Component(id,metadata,"kuudra-official/default/plain-ingress","active",Map.of());
-        var flowId=new KuudraManifest.ResourceId("Flow","demo","route");
-        var flowMeta=new KuudraManifest.Metadata("demo","route",Map.of(),Map.of());
-        var flow=new KuudraManifest.Flow(flowId,flowMeta,Map.of("gate",new KuudraManifest.ResourceReference("Ingress","demo","gate")),java.util.List.<KuudraConfig.EdgeConfig>of());
-        var resources=new KuudraManifest.Resources(Map.of(id,component),Map.of(flowId,flow),Map.of());
-        Path database=directory.resolve("kuudra.db");
-        try(var store=new SqliteResourceStateStore(database)) {
-            store.replaceDesired(resources); assertEquals(resources,store.desiredResources());
-            assertTrue(store.states().stream().allMatch(state->state.generation()==1&&state.observedGeneration()==0));
-            store.markAllObserved("READY","ok");
-            assertTrue(store.states().stream().allMatch(state->state.observedGeneration()==1&&state.phase().equals("READY")));
-            store.replaceDesired(resources);
-            assertTrue(store.states().stream().allMatch(state->state.generation()==1));
-            var changed = new KuudraManifest.Component(id, metadata,
-                    "kuudra-official/default/plain-ingress", "active", Map.of("groupKey", "changed"));
-            store.replaceDesired(new KuudraManifest.Resources(Map.of(id, changed), Map.of(), Map.of()));
-            assertEquals(1, store.states().size());
-            assertEquals(2, store.states().get(0).generation());
-            assertEquals("PENDING", store.states().get(0).phase());
+
+    @Test
+    void persistsV1Alpha2DeploymentAndObservedGenerations() throws Exception {
+        Path manifests = directory.resolve("manifests");
+        Path profiles = directory.resolve("ability-profiles");
+        Files.createDirectories(manifests);
+        Files.createDirectories(profiles);
+        Files.writeString(manifests.resolve("ability.yaml"), """
+                apiVersion: kuudra.io/v1alpha2
+                kind: Controller
+                metadata: {namespace: demo, name: network}
+                spec: {template: test/native/network}
+                ---
+                apiVersion: kuudra.io/v1alpha2
+                kind: Ability
+                metadata: {namespace: demo, name: disconnect}
+                spec:
+                  resources:
+                    network: {kind: Controller, name: network}
+                  nodes:
+                    disconnect: {resource: network, handler: disconnect}
+                  edges: []
+                """);
+        Files.writeString(profiles.resolve("default.yaml"), """
+                apiVersion: kuudra.io/v1alpha2
+                kind: AbilityProfile
+                metadata: {name: default}
+                spec: {abilities: [demo/disconnect]}
+                """);
+        KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(manifests, profiles);
+        Path database = directory.resolve("kuudra.db");
+
+        try (var store = new SqliteResourceStateStore(database)) {
+            store.replaceDesired(deployment);
+            assertEquals(deployment, store.desiredDeployment());
+            assertEquals(2, store.states().size());
+            assertTrue(store.states().stream().allMatch(state -> state.generation() == 1 && state.observedGeneration() == 0));
+            store.markAllObserved("READY", "ok");
+            assertTrue(store.states().stream().allMatch(state -> state.observedGeneration() == 1 && state.phase().equals("READY")));
+            store.replaceDesired(deployment);
+            assertTrue(store.states().stream().allMatch(state -> state.generation() == 1));
         }
-        try(var reopened=new SqliteResourceStateStore(database)){
-            assertEquals(1, reopened.desiredResources().components().size());
-            assertTrue(reopened.desiredResources().flows().isEmpty());
+        try (var reopened = new SqliteResourceStateStore(database)) {
+            assertEquals(1, reopened.desiredDeployment().resources().size());
+            assertEquals(1, reopened.desiredDeployment().abilities().size());
+            assertEquals(1, reopened.desiredDeployment().profiles().size());
+        }
+    }
+
+    @Test
+    void rebuildsOnlyKuudraCoreTablesWhenMigratingV04Database() throws Exception {
+        Path database = directory.resolve("legacy.db");
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database)) {
+            connection.createStatement().execute("CREATE TABLE resources(kind TEXT)");
+            connection.createStatement().execute("CREATE TABLE plugin_state(value TEXT)");
+            connection.createStatement().execute("INSERT INTO plugin_state VALUES('preserved')");
+        }
+        try (var ignored = new SqliteResourceStateStore(database);
+             var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+             var rows = connection.createStatement().executeQuery("SELECT value FROM plugin_state")) {
+            assertTrue(rows.next());
+            assertEquals("preserved", rows.getString(1));
         }
     }
 }
