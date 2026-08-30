@@ -275,7 +275,25 @@ Resource 初始化且 `allowElevation: true` 时才启动提权 broker。可执�
 Controller。未来软断网、硬断网与恢复网络也应作为宿主提供的类型化能力，由下游
 Controller 二次封装；不得通过配置植入任意 PowerShell 命令。
 
-## 9. 状态库与故障定位
+## 9. 音频提示能力
+
+`actforever/audio-host` 提供无提权的跨平台音频租约，`actforever/audio-player` 将其封装为
+具有 `play`、`play-random`、`pause`、`resume`、`stop`、`set-volume` 入口的 Controller。
+音频文件固定从 `<plugins>/actforever/audio-player/audio` 读取，支持 WAV、MP3 和 OGG。
+
+```yaml
+apiVersion: kuudra.io/v1alpha2
+kind: Controller
+metadata: {namespace: notification, name: audio}
+spec:
+  template: actforever/audio-player/audio-player
+  options: {directory: audio, recursive: true, defaultVolume: 0.8}
+```
+
+Ability 节点使用 `handler: play` 和动态 `arguments.track` 选择提示音；`awaitCompletion: true`
+表示播完后再执行下游。完整的租约、暂停和文件边界见 `docs/kuudra-audio.md`。
+
+## 10. 状态库与故障定位
 
 每次启动都以磁盘上的 v1alpha2 清单为权威集合，并事务写入
 `state/kuudra.db`。首次打开旧 v0.4 数据库时，Kuudra 只重建自身的核心

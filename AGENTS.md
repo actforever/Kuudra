@@ -40,6 +40,8 @@ The external `actforever/windows-native-host` plugin embeds a self-contained .NE
 
 The Windows native host layering, dependency ClassLoader linkage, embedded C# build, authenticated dual Named Pipe protocol, Win32 execution and recovery boundaries are documented in `docs/kuudra-windows-native-host.md`; keep it synchronized with the external parent and dependent plugins.
 
+The external `actforever/audio-host` plugin mirrors the capability-host layering without elevation: it exports owner-scoped, single-track playback leases backed by Java Sound and bundled MP3/Vorbis decoder SPIs. Different leases may mix concurrently; reference-counted pause tokens isolate user, Resource lifecycle and Session pause reasons. `actforever/audio-player` is the dependent Controller wrapper with `play`, `play-random`, `pause`, `resume`, `stop`, and `set-volume` handlers. It scans `.wav/.mp3/.ogg` only under its own plugin home and never turns paths into arbitrary process execution. Keep `docs/kuudra-audio.md` and the external plugin READMEs synchronized.
+
 For packaged Web, the fixed plugin directory is `<jar-directory>/.kuudra/plugins`: every JAR is strictly loaded. A plugin home is `<plugins>/<namespace>/<plugin-id>` and is created only when that plugin enters initialization. Invalid/non-Kuudra JARs are fatal startup errors. `PluginContext.home()` and `ResourceContext.plugin().home()` are the supported persistence locations. Do not reintroduce configurable plugin directories or a collision with the build-only `plugins/` directory.
 
 ## Architecture decisions already made

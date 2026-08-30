@@ -96,6 +96,21 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 5. 在挂起窗口内停止 App，目标立即恢复，broker 退出，Web 状态为 STOPPED；
 6. Event/arguments 只能选择静态 allowlist 中的 alias、可选 PID 与有界时长，broker 不接收 Event/Context，也不提供 PowerShell/Shell 执行。
 
+## 场景四：音频宿主与提示音 Controller
+
+装入 `default`、`session-probe`、`actforever/audio-host` 和 `actforever/audio-player`，使用
+官方插件仓库 `examples/audio-prompt`，并将短 WAV 放入
+`.kuudra/plugins/actforever/audio-player/audio/notify.wav`。
+
+期望：
+
+1. 根 `abilities: [audio-demo/prompt]` 在无 Profile 时使 Ability 为 ENABLED，响应中 `configurationClaim=true`；
+2. audio-host 不发布 ResourceTemplate，audio-player 发布包含六个具名 handler 的 Controller；
+3. Resource 初始化只建库和获取租约，不播放声音；事件到达 `play` 后才打开默认输出设备；
+4. `awaitCompletion: true` 时 Session 保持活动直到 WAV 播放结束；pause/resume/stop 不互相覆盖生命周期暂停；
+5. 缺少 host JAR 时依赖校验失败，未知 track 或越界目录仅使对应调用/Ability 明确失败；
+6. audio-host fat JAR 保留 MP3/Vorbis `AudioFileReader` SPI 和第三方许可文件。
+
 ## 组合与失败矩阵
 
 | 组合/操作 | 期望 |
@@ -104,6 +119,9 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 | windows-native-host 单独加载 | 插件 ACTIVE，不启动 broker、不触发 UAC |
 | process-control 缺 host | 插件依赖校验失败 |
 | host + process-control，Ability 未 claim | 不物化 Controller，不启动 broker |
+| audio-host 单独加载 | 插件 ACTIVE，不打开音频设备、不发布 ResourceTemplate |
+| audio-player 缺 audio-host | 插件依赖校验失败 |
+| audio-host + audio-player + 直接 Ability claim | WAV 提示音执行，configurationClaim 可观测 |
 | `allowElevation: false` 后 claim | 仅该 Ability FAILED，其他独立 Ability 可继续收敛 |
 | 未知 Controller handler | Ability 编译失败并明确指出 handler |
 | 同一 Controller 的 `suspend`/`resume` 节点 | 分别路由到对应方法，不使用动态 action 分派 |
