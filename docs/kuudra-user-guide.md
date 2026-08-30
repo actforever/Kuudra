@@ -1,6 +1,6 @@
 # Kuudra v0.5 配置与使用指南
 
-本文是 `v0.5.0-alpha-1` 的用户入口。v0.5 只接受 `kuudra.io/v1alpha2` 清单；
+本文是 `v0.5.1-alpha-1` 的用户入口。v0.5 只接受 `kuudra.io/v1alpha2` 清单；
 旧的 `v1alpha1`、`Flow`、`EventHandler` 资源、`spec.component` 与 `desiredState`
 不会被静默兼容，加载器会给出迁移提示。
 
@@ -23,7 +23,7 @@
 启动命令：
 
 ```powershell
-java -jar kuudra-web-v0.5.0-alpha-1.jar
+java -jar kuudra-web-v0.5.1-alpha-1.jar
 ```
 
 首次启动会补齐以上目录和缺失的 `config.yaml`，不会覆盖已有配置。插件 home
