@@ -71,12 +71,15 @@ class AbilityAppTest {
         Path config = write(directory.resolve("config.yaml"), """
                 home-directory: home
                 ability-profiles: [default]
+                abilities: [demo/disconnect]
                 reconciliation: {enabled: true, interval-ms: 10}
                 logging: {console-enabled: false, file-enabled: false}
                 """);
 
         try (KuudraApp app = KuudraApp.createConfigured(config)) {
             assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
+            assertTrue(app.ability("demo", "disconnect").orElseThrow().configurationClaim());
+            assertEquals(java.util.Set.of("default"), app.ability("demo", "disconnect").orElseThrow().profileClaims());
             assertEquals(4, app.manifestResources().size());
             assertEquals(3, app.manifestResources().stream()
                     .filter(resource -> resource.state().equals("RUNNING")).count());
@@ -99,6 +102,10 @@ class AbilityAppTest {
             assertEquals("DISABLED", app.ability("demo", "disconnect").orElseThrow().state());
             assertTrue(app.manifestResources().stream().allMatch(resource -> resource.state().equals("DESTROYED")));
             assertEquals(1, TestAbilityPlugin.NetworkController.DESTROYS.get());
+
+            app.controlAbility("demo", "disconnect", "inherit").toCompletableFuture().get(3, TimeUnit.SECONDS);
+            assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
+            app.controlAbility("demo", "disconnect", "disable").toCompletableFuture().get(3, TimeUnit.SECONDS);
 
             var events = new CopyOnWriteArrayList<String>();
             try (AutoCloseable ignored = app.systemEvents().subscribe(event -> events.add(event.type()))) {

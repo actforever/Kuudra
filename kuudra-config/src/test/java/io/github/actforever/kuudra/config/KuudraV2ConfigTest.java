@@ -28,6 +28,7 @@ class KuudraV2ConfigTest {
         Path config = write(directory.resolve("config.yaml"), """
                 home-directory: home
                 ability-profiles: [default]
+                abilities: [default/network-control]
                 runtime:
                   ability-drain-timeout-ms: 6000
                   cancel-grace-timeout-ms: 7000
@@ -38,6 +39,7 @@ class KuudraV2ConfigTest {
         assertEquals(1, loaded.deployment().abilities().size());
         assertEquals(1, loaded.deployment().profiles().size());
         assertEquals(java.util.List.of("default"), loaded.abilityProfiles());
+        assertEquals(java.util.List.of("default/network-control"), loaded.abilities());
         assertEquals(6000, loaded.runtime().abilityDrainTimeoutMs());
         assertEquals(7000, loaded.runtime().cancelGraceTimeoutMs());
         assertEquals(90000, loaded.runtime().resourceLifecycleTimeoutMs());
@@ -98,6 +100,23 @@ class KuudraV2ConfigTest {
                 """);
         assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.load(coordinator))
                 .getMessage().contains("CREATE Ingress"));
+    }
+
+    @Test
+    void rejectsInvalidAndDuplicateConfiguredAbilities() throws Exception {
+        Path invalid = write(directory.resolve("invalid-ability.yaml"), """
+                home-directory: invalid-home
+                abilities: [missing-namespace]
+                """);
+        assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.load(invalid))
+                .getMessage().contains("namespace/name"));
+
+        Path duplicate = write(directory.resolve("duplicate-ability.yaml"), """
+                home-directory: duplicate-home
+                abilities: [demo/notify, demo/notify]
+                """);
+        assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.load(duplicate))
+                .getMessage().contains("Duplicate"));
     }
 
     @Test

@@ -51,6 +51,9 @@ runtime:
 ability-profiles:
   - default
 
+abilities:
+  - automation/suspend-ping
+
 reconciliation:
   enabled: true
   interval-ms: 1000
@@ -69,11 +72,14 @@ i18n:
 global-context: {}
 ```
 
-`ability-profiles` 决定本次启动选择哪些全局 Profile。v0.5 已移除
-`resource-selection` 和根级 `runtime.session-coordinator`：部署选择由 Profile 完成，
+`ability-profiles` 决定本次启动选择哪些全局 Profile；`abilities` 可以使用完整的
+`namespace/name` 直接选择少量 Ability。两者产生的启动 claim 取并集。列表中的重复值、
+格式错误或不存在的 Ability 会使启动失败；高优先级配置中的列表整体替换低优先级列表。
+v0.5 已移除 `resource-selection` 和根级 `runtime.session-coordinator`：部署选择由这两类 claim 完成，
 Session 调度由每个 CREATE Ingress 节点声明。
 Profile 文件存在并不等于被启用；示例 Ability 要自动运行时必须显式写入对应名称，例如
-`ability-profiles: [default]`。空列表会让没有 direct override 的 Ability 保持 DISABLED。
+`ability-profiles: [default]`，也可以直接写 `abilities: [automation/suspend-ping]`。两个列表均为空时，
+没有运行时 direct override 的 Ability 保持 DISABLED；`inherit` 恢复配置与 Profile 合并后的状态。
 
 三个新超时分别约束 Ability 排空、取消后的宽限期和单次 Resource 生命周期调用。
 所有值以毫秒计，必须为非负数。

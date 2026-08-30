@@ -10,7 +10,7 @@
   -> 校验插件依赖并启动插件
   -> 发布 ResourceTemplate
   -> 将 Deployment 写入 StateStore
-  -> 解析所选 AbilityProfile 的 claim
+  -> 合并所选 AbilityProfile 与 config.yaml abilities 的 claim
   -> 按需物化 Resource
   -> 编译并注册 Ability
   -> 绑定 EventSource
@@ -41,6 +41,7 @@ runtime:
   cancel-grace-timeout-ms: 5000
   resource-lifecycle-timeout-ms: 120000
 ability-profiles: []
+abilities: []
 reconciliation: {enabled: true, interval-ms: 1000}
 state-store: {busy-timeout-ms: 5000}
 logging: {level: info, console-enabled: true, file-enabled: true}
@@ -48,8 +49,9 @@ i18n: {preferred-locale: en_US}
 global-context: {}
 ```
 
-不存在全局 namespace selection 或 SessionCoordinator 默认值。`ability-profiles`
-选择部署单元；每个 CREATE Ingress 节点拥有自己的有界调度配置。
+不存在全局 namespace selection 或 SessionCoordinator 默认值。`ability-profiles` 选择可复用的
+部署组合，`abilities` 使用完整 `namespace/name` 直接选择 Ability；两者的启动 claim 取并集。
+高优先级配置中的列表整体替换低优先级列表。每个 CREATE Ingress 节点拥有自己的有界调度配置。
 
 ## v1alpha2 清单
 

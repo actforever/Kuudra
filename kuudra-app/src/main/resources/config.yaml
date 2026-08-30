@@ -23,6 +23,9 @@ runtime:
 # 启动时选中的全局 AbilityProfile 名称。空列表表示不产生 Profile claim。
 ability-profiles: []
 
+# 启动时直接激活的 Ability，使用完整 namespace/name。它与所选 Profile 的 claim 取并集。
+abilities: []
+
 # App 串行调谐与失败重试周期。
 reconciliation:
   enabled: true

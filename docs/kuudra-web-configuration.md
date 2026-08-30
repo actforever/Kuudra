@@ -40,9 +40,14 @@ Web 将可执行 JAR 所在目录作为 App 配置基目录；从 classes 目录
 ```yaml
 runtime:
   worker-threads: 4
+ability-profiles: [desktop]
+abilities: [notification/startup-sound]
 global-context:
   profile: production
 ```
+
+`ability-profiles` 与完整 `namespace/name` 形式的 `abilities` 产生的启动 claim 取并集；
+运行时 direct override 优先，`inherit` 恢复到该合并状态。配置深度合并时列表整体替换。
 
 代码宿主可通过 `KuudraApp.createConfigured(KuudraConfigResource)` 传入最高优先级配置。App 配置使用 kebab-case；v1alpha2 清单字段使用 camelCase。
 

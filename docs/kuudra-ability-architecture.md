@@ -54,14 +54,16 @@ ResourceTemplate 策略包括：
 
 ## Ability claim 与状态
 
-Ability 是运行时的控制和排空边界。Profile claim 与直接覆盖共同计算有效状态：
+Ability 是运行时的控制和排空边界。Profile claim、`config.yaml abilities` configuration
+claim 与运行时直接覆盖共同计算有效状态：
 
 - 没有 claim：DISABLED；
 - 至少一个 ENABLED claim：ENABLED；
 - 只有 PAUSED claim：PAUSED；
 - 初始化或调谐失败：FAILED，并保留可观测 detail。
 
-直接控制优先于 Profile；`inherit` 删除直接覆盖。`dependsOn` 在同 namespace 内级联
+configuration claim 与 Profile claim 取并集；直接控制优先于二者，`inherit` 删除直接覆盖并
+恢复到配置合并状态。`dependsOn` 在同 namespace 内级联
 暂停/禁用，`mutexWith` 阻止互斥 Ability 同时有效。一个 Profile 成员失败不应阻止其他
 独立成员收敛。
 
@@ -92,7 +94,7 @@ Ability 暂停是独立的 ExecutionControl 原因，不会改写 Session 自身
 
 StateStore 记录 v1alpha2 Deployment 和 observed generation。Web 只通过 App 暴露：
 
-- `/api/v1/runtime/abilities`：有效状态、直接覆盖、Profile claim、依赖和互斥；
+- `/api/v1/runtime/abilities`：有效状态、直接覆盖、configuration claim、Profile claim、依赖和互斥；
 - `/api/v1/runtime/resources`：实际生命周期状态和 claimedBy；
 - `/api/v1/plugin/resource-templates`：插件发布的构造策略、handler 文档与事件说明。
 

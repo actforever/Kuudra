@@ -103,7 +103,9 @@ spec:
     - demo/hello
 ```
 
-Profile 固定放在 `abilities/profiles/`。根配置的 `ability-profiles` 选择全局 Profile；直接控制与 Profile claims 合并为 Ability 的 ENABLED、PAUSED 或 DISABLED 状态。Resource 生命周期是所有活动 Ability 节点 claims 的合并结果。
+Profile 固定放在 `abilities/profiles/`。根配置的 `ability-profiles` 选择全局 Profile，根配置的
+`abilities` 以 `namespace/name` 直接选择 Ability；二者的启动 claims 取并集。运行时直接控制优先，
+`inherit` 恢复配置合并状态。Resource 生命周期是所有活动 Ability 节点 claims 的合并结果。
 
 ## 加载与失败边界
 

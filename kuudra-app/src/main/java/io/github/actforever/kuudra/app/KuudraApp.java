@@ -296,7 +296,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
                         bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
                         bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(),
-                        KuudraManifest.Resources.EMPTY, deployment, bootstrapConfig.abilityProfiles()));
+                        KuudraManifest.Resources.EMPTY, deployment, bootstrapConfig.abilityProfiles(),
+                        bootstrapConfig.abilities()));
             }
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) startReconciliationLoop(bootstrapConfig.reconciliation());
@@ -361,7 +362,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public synchronized List<Ability> abilities() {
         if (abilityManager == null) return List.of();
         return abilityManager.abilities().stream().map(view -> new Ability(view.id(), view.state().name(),
-                view.directOverride().name(), view.profileClaims(), view.dependsOn(), view.mutexWith(), view.detail())).toList();
+                view.directOverride().name(), view.configurationClaim(), view.profileClaims(),
+                view.dependsOn(), view.mutexWith(), view.detail())).toList();
     }
     public synchronized Optional<Ability> ability(String namespace, String name) {
         String id = namespace + "/" + name;
@@ -686,7 +688,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                         config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
                 stateStore.replaceDesired(config.deployment());
                 KuudraManifest.Deployment desired = stateStore.desiredDeployment();
-                abilityManager = new AbilityManager(desired, config.abilityProfiles(), requirePlugins(),
+                abilityManager = new AbilityManager(desired, config.abilityProfiles(), config.abilities(), requirePlugins(),
                         requireRuntime(), config.runtime(), events);
                 abilityManager.start();
                 stateStore.markAllObserved("READY", "v1alpha2 deployment reconciled");
@@ -1208,7 +1210,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return type + "/" + component;
     }
     public record Flow(String id, String executionClass, int activeSessions, int deferredTasks, boolean selected) { }
-    public record Ability(String id, String state, String directOverride, Set<String> profileClaims,
+    public record Ability(String id, String state, String directOverride, boolean configurationClaim,
+                          Set<String> profileClaims,
                           List<String> dependsOn, List<String> mutexWith, String detail) {
         public Ability { profileClaims = Set.copyOf(profileClaims); dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
     }

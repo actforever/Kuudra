@@ -32,10 +32,11 @@ mvn package -DskipTests=false -Dexec.skip=true
     profiles/
 ```
 
-`config.yaml` 必须显式选择示例 Profile，例如：
+`config.yaml` 必须显式选择示例 Profile 或 Ability，例如：
 
 ```yaml
 ability-profiles: [default]
+# 也可以使用：abilities: [hello-world-demo/hello-to-log]
 ```
 
 只复制当前场景需要的插件 JAR。每个 JAR 都会被严格加载，缺失强依赖、重复身份、版本范围不兼容和普通非插件 JAR 都必须使启动失败。
@@ -67,7 +68,7 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 - 最终状态异步收敛；
 - DISABLED 时 Resource 无其他 claim 才 stop/destroy；
 - PAUSED 不销毁 Resource；
-- Profile claim 与 direct override 的优先级符合用户指南。
+- configuration/Profile claim 与 direct override 的优先级符合用户指南，`inherit` 恢复二者的并集。
 
 生产 JAR 不依赖 Java 反射参数名。所有 Spring `@PathVariable` 必须显式写变量名；Ability、Resource、Plugin 和 ResourceTemplate 的单项查询应返回 200 或业务 404，不能因缺少 `-parameters` 返回 500。
 

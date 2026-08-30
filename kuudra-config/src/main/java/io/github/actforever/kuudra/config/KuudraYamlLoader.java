@@ -104,6 +104,7 @@ public final class KuudraYamlLoader {
         boolean bannerEnabled = bool(root.get("banner-enabled"), true);
         KuudraManifest.Deployment deployment = loadDeployment(homeDirectory);
         List<String> abilityProfiles = strings(root, "ability-profiles");
+        List<String> abilities = abilityReferences(root, "abilities");
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
                 new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity),
@@ -113,7 +114,8 @@ public final class KuudraYamlLoader {
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled),
                 new KuudraConfig.I18nSettings(preferredLocale), homeDirectory, bannerEnabled,
-                optionalMapping(root, "global-context"), KuudraManifest.Resources.EMPTY, deployment, abilityProfiles);
+                optionalMapping(root, "global-context"), KuudraManifest.Resources.EMPTY, deployment,
+                abilityProfiles, abilities);
     }
 
     private static java.util.Set<String> stringSet(Object value, String path) throws IOException {
@@ -407,6 +409,22 @@ public final class KuudraYamlLoader {
         List<String> result = new ArrayList<>();
         for (Object value : list(map.get(key))) result.add(string(value, key + "[]"));
         return List.copyOf(result);
+    }
+
+    private static List<String> abilityReferences(Map<String, Object> map, String key) throws IOException {
+        List<String> values = strings(map, key);
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>();
+        for (String value : values) {
+            String[] parts = value.split("/", -1);
+            if (parts.length != 2) throw new IOException(
+                    "Expected namespace/name Ability reference at " + key + "[]: " + value);
+            try { new KuudraManifest.ResourceId("Ability", parts[0], parts[1]); }
+            catch (IllegalArgumentException error) {
+                throw new IOException("Invalid Ability reference at " + key + "[]: " + value, error);
+            }
+            if (!unique.add(value)) throw new IOException("Duplicate value at " + key + ": " + value);
+        }
+        return List.copyOf(unique);
     }
 
     @FunctionalInterface

@@ -22,7 +22,8 @@ final class AbilityManager implements AutoCloseable {
     enum State { ENABLED, PAUSED, DISABLED, FAILED }
     enum ControlOverride { INHERIT, ENABLED, PAUSED, DISABLED }
 
-    record AbilityView(String id, State state, ControlOverride directOverride, Set<String> profileClaims,
+    record AbilityView(String id, State state, ControlOverride directOverride, boolean configurationClaim,
+                       Set<String> profileClaims,
                        List<String> dependsOn, List<String> mutexWith, String detail) {
         AbilityView { profileClaims = Set.copyOf(profileClaims); dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
     }
@@ -32,6 +33,7 @@ final class AbilityManager implements AutoCloseable {
 
     private final KuudraManifest.Deployment deployment;
     private final List<String> selectedProfiles;
+    private final Set<String> selectedAbilities;
     private final DefaultPluginManager plugins;
     private final KuudraRuntime runtime;
     private final SystemEventPublisher events;
@@ -46,9 +48,11 @@ final class AbilityManager implements AutoCloseable {
     private final List<SourceRegistration> sourceBindings = new ArrayList<>();
 
     AbilityManager(KuudraManifest.Deployment deployment, List<String> selectedProfiles,
+                   List<String> selectedAbilities,
                    DefaultPluginManager plugins, KuudraRuntime runtime,
                    KuudraConfig.RuntimeSettings settings, SystemEventPublisher events) {
         this.deployment = Objects.requireNonNull(deployment); this.selectedProfiles = List.copyOf(selectedProfiles);
+        this.selectedAbilities = Set.copyOf(selectedAbilities);
         this.plugins = Objects.requireNonNull(plugins); this.runtime = Objects.requireNonNull(runtime);
         this.events = Objects.requireNonNull(events);
         this.drainTimeout = Duration.ofMillis(settings.abilityDrainTimeoutMs());
@@ -77,7 +81,7 @@ final class AbilityManager implements AutoCloseable {
     synchronized List<AbilityView> abilities() {
         return deployment.abilities().values().stream().map(ability -> {
             String id = ability.qualifiedName();
-            return new AbilityView(id, states.get(id), overrides.get(id), profileClaims(id),
+            return new AbilityView(id, states.get(id), overrides.get(id), selectedAbilities.contains(id), profileClaims(id),
                     normalized(ability, ability.dependsOn()), normalized(ability, ability.mutexWith()), details.get(id));
         }).toList();
     }
@@ -138,7 +142,8 @@ final class AbilityManager implements AutoCloseable {
             String id = ability.qualifiedName(); ControlOverride direct = overrides.get(id);
             desired.put(id, switch (direct) {
                 case ENABLED -> State.ENABLED; case PAUSED -> State.PAUSED; case DISABLED -> State.DISABLED;
-                case INHERIT -> profileClaims(id).isEmpty() ? State.DISABLED : State.ENABLED;
+                case INHERIT -> profileClaims(id).isEmpty() && !selectedAbilities.contains(id)
+                        ? State.DISABLED : State.ENABLED;
             });
         }
         boolean changed;
@@ -170,6 +175,7 @@ final class AbilityManager implements AutoCloseable {
     }
 
     private void validateProfiles() {
+        selectedAbilities.forEach(this::requireAbility);
         for (String profile : selectedProfiles) if (!deployment.profiles().containsKey(profile)) {
             throw new KuudraException("Unknown AbilityProfile selected by config: " + profile);
         }
