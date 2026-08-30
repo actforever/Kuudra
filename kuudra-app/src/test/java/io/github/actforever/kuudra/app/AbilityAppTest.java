@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.jar.*;
 
@@ -22,6 +23,11 @@ class AbilityAppTest {
         pluginJar(home.resolve("plugins/ability-test.jar"));
         write(home.resolve("manifests/network.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
+                kind: EventSource
+                metadata: {namespace: demo, name: source}
+                spec: {template: test/ability-test/bound-source}
+                ---
+                apiVersion: kuudra.io/v1alpha2
                 kind: Ingress
                 metadata: {namespace: demo, name: ingress}
                 spec: {template: test/ability-test/group-ingress}
@@ -36,9 +42,11 @@ class AbilityAppTest {
                 metadata: {namespace: demo, name: disconnect}
                 spec:
                   resources:
+                    source: {kind: EventSource, name: source}
                     ingress: {kind: Ingress, name: ingress}
                     network: {kind: Controller, name: network}
                   nodes:
+                    source: {resource: source}
                     admit:
                       resource: ingress
                       arguments: {group: game}
@@ -47,7 +55,7 @@ class AbilityAppTest {
                       resource: network
                       handler: disconnect
                       arguments: {alias: '${event#alias}'}
-                  edges: [{from: admit, to: disconnect}]
+                  edges: [{from: source, to: admit}, {from: admit, to: disconnect}]
                 """);
         write(home.resolve("ability-profiles/default.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
@@ -58,12 +66,13 @@ class AbilityAppTest {
         Path config = write(directory.resolve("config.yaml"), """
                 home-directory: home
                 ability-profiles: [default]
+                reconciliation: {enabled: true, interval-ms: 10}
                 logging: {console-enabled: false, file-enabled: false}
                 """);
 
         try (KuudraApp app = KuudraApp.createConfigured(config)) {
             assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
-            assertEquals(2, app.manifestResources().size());
+            assertEquals(3, app.manifestResources().size());
             assertTrue(app.manifestResources().stream().allMatch(resource -> resource.state().equals("RUNNING")));
             assertEquals("disconnect", app.resourceTemplates().stream()
                     .filter(template -> template.kind().equals("Controller")).findFirst().orElseThrow()
@@ -81,6 +90,14 @@ class AbilityAppTest {
             assertEquals("DISABLED", app.ability("demo", "disconnect").orElseThrow().state());
             assertTrue(app.manifestResources().stream().allMatch(resource -> resource.state().equals("DESTROYED")));
             assertEquals(1, TestAbilityPlugin.NetworkController.DESTROYS.get());
+
+            var events = new CopyOnWriteArrayList<String>();
+            try (AutoCloseable ignored = app.systemEvents().subscribe(event -> events.add(event.type()))) {
+                app.restart();
+                Thread.sleep(100);
+                assertFalse(events.contains("reconciliation.loop.failed"),
+                        "v1alpha2 deployments must not enter the legacy v1alpha1 reconciler");
+            }
         }
     }
 
@@ -94,7 +111,8 @@ class AbilityAppTest {
                     entrypoint = "io.github.actforever.kuudra.app.TestAbilityPlugin"
                     """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             for (Class<?> type : java.util.List.of(TestAbilityPlugin.class,
-                    TestAbilityPlugin.GroupIngress.class, TestAbilityPlugin.NetworkController.class)) {
+                    TestAbilityPlugin.BoundSource.class, TestAbilityPlugin.GroupIngress.class,
+                    TestAbilityPlugin.NetworkController.class)) {
                 String name = type.getName().replace('.', '/') + ".class";
                 try (var input = type.getClassLoader().getResourceAsStream(name)) {
                     add(output, name, java.util.Objects.requireNonNull(input).readAllBytes());

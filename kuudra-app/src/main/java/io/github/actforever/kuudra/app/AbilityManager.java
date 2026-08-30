@@ -116,6 +116,9 @@ final class AbilityManager implements AutoCloseable {
                     } catch (RuntimeException error) { markFailed(desired, Set.of(entry.getKey()), error); }
                 }
             }
+            // EventSource.start() is allowed to require an emitter. Bind sources after their
+            // Ability graph exists but before any Resource lifecycle enters start().
+            rebuildSourceBindings(desired);
             claims = resourceClaims(desired);
             reconcileResourceLifecycles(claims, desired);
             claims = resourceClaims(desired);
@@ -255,7 +258,11 @@ final class AbilityManager implements AutoCloseable {
 
     private void reconcileResourceLifecycles(Map<KuudraManifest.ResourceId, Set<String>> claims,
                                              Map<String, State> desired) {
-        for (Map.Entry<KuudraManifest.ResourceId, Set<String>> entry : claims.entrySet()) {
+        // Start downstream consumers before sources can emit their first Event.
+        List<Map.Entry<KuudraManifest.ResourceId, Set<String>>> orderedClaims = claims.entrySet().stream()
+                .sorted(Comparator.comparing(entry -> deployment.resources().get(entry.getKey()).type().equals("event-source")))
+                .toList();
+        for (Map.Entry<KuudraManifest.ResourceId, Set<String>> entry : orderedClaims) {
             ManagedResource managed = resources.get(entry.getKey());
             boolean running = entry.getValue().stream().anyMatch(id -> desired.get(id) == State.ENABLED);
             try {

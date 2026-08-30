@@ -3,6 +3,7 @@ package io.github.actforever.kuudra.app;
 import io.github.actforever.kuudra.api.component.IngressDecision;
 import io.github.actforever.kuudra.api.context.EventContext;
 import io.github.actforever.kuudra.api.event.EventHandlerContext;
+import io.github.actforever.kuudra.api.event.EventEmitter;
 import io.github.actforever.kuudra.api.event.KuudraEvent;
 import io.github.actforever.kuudra.plugin.*;
 import io.github.actforever.kuudra.plugin.annotation.*;
@@ -19,6 +20,17 @@ public final class TestAbilityPlugin implements KuudraPlugin {
     public static final class GroupIngress implements io.github.actforever.kuudra.api.component.Ingress, ResourceLifecycle {
         @Override public IngressDecision admit(KuudraEvent event, EventContext context) {
             return IngressDecision.accept(context.configuration("group", String.class), event);
+        }
+    }
+
+    @io.github.actforever.kuudra.plugin.annotation.EventSource("bound-source")
+    public static final class BoundSource implements io.github.actforever.kuudra.api.component.EventSource, ResourceLifecycle {
+        private EventEmitter emitter;
+        @Override public void setEmitter(EventEmitter emitter) { this.emitter = emitter; }
+        @Override public CompletionStage<Void> start() {
+            if (emitter == null) return CompletableFuture.failedFuture(
+                    new IllegalStateException("EventSource emitter must be bound before start"));
+            return CompletableFuture.completedFuture(null);
         }
     }
 

@@ -40,6 +40,21 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/runtime/flows")).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/runtime/components")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/kuudra/resource-documentation"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].apiVersion").value(org.hamcrest.Matchers.everyItem(
+                        org.hamcrest.Matchers.is("kuudra.io/v1alpha2"))))
+                .andExpect(jsonPath("$[*].kind", org.hamcrest.Matchers.containsInAnyOrder(
+                        "Ability", "AbilityProfile")));
+    }
+
+    @Test
+    void bindsExplicitPathVariableNamesInPackagedControllers() throws Exception {
+        mvc.perform(get("/api/v1/runtime/abilities/demo/missing")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/runtime/resources/Controller/demo/missing")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/plugin/demo/missing")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/plugin/resource-templates/controller/demo/missing/entry"))
+                .andExpect(status().isNotFound());
     }
 
     @Test

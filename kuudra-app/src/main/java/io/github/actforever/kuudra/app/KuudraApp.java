@@ -59,53 +59,55 @@ import java.util.LinkedHashMap;
 
 /** Framework-independent App facade. Its lifecycle owns a Runtime but not any HTTP/Web/TUI adapter. */
 public final class KuudraApp implements AutoCloseable, AppLifecycle {
-    private static final ResourceDocumentation FLOW_DOCUMENTATION = new ResourceDocumentation(
-            "kuudra.io/v1alpha1", "kuudra-official", "Flow",
-            "Declares an immutable routing graph by importing resources and connecting import aliases.",
+    private static final ResourceDocumentation ABILITY_DOCUMENTATION = new ResourceDocumentation(
+            "kuudra.io/v1alpha2", "kuudra-official", "Ability",
+            "Declares a claimable execution graph over named Resource instances and Controller handler entries.",
             List.of(
                     new ResourceFieldDocumentation("metadata.namespace", "String", true,
-                            "Resource namespace. Unqualified imports default to this namespace.", List.of("dev")),
+                            "Ability namespace. Unqualified Resource references default to this namespace.", List.of("dev")),
                     new ResourceFieldDocumentation("metadata.name", "String", true,
-                            "Flow resource name.", List.of("flow-1")),
-                    new ResourceFieldDocumentation("spec.session.executionClass", "FlowExecutionClass", false,
+                            "Ability name.", List.of("disconnect")),
+                    new ResourceFieldDocumentation("spec.executionClass", "AbilityExecutionClass", false,
                             "DATA is suspended by a kernel pause; CONTROL remains routable and defaults are DATA.",
                             List.of("DATA", "CONTROL")),
-                    new ResourceFieldDocumentation("spec.imports", "Map<String, ResourceReference>", true,
-                            "Import alias map. Namespace defaults to the Flow namespace; an explicit namespace may reference "
+                    new ResourceFieldDocumentation("spec.resources", "Map<String, ResourceReference>", true,
+                            "Resource alias map. Namespace defaults to the Ability namespace; an explicit namespace may reference "
                                     + "a resource in another activated namespace.", List.of(Map.of(
                                     "source", Map.of("kind", "EventSource", "name", "mysource"),
-                                    "handler", Map.of("kind", "EventHandler", "namespace", "system", "name", "myhandler")))),
+                                    "controller", Map.of("kind", "Controller", "namespace", "system", "name", "network")))),
+                    new ResourceFieldDocumentation("spec.nodes", "Map<String, Node>", true,
+                            "Invocation nodes select a Resource alias; Controller nodes additionally select a named handler.",
+                            List.of(Map.of("disconnect", Map.of("resource", "controller", "handler", "disconnect")))),
                     new ResourceFieldDocumentation("spec.edges", "List<Edge>", true,
-                            "Directed edges whose from/to values reference keys in spec.imports.",
-                            List.of(List.of(Map.of("from", "source", "to", "handler"))))),
+                            "Directed edges whose from/to values reference keys in spec.nodes.",
+                            List.of(List.of(Map.of("from", "source", "to", "disconnect"))))),
             List.of(Map.of(
-                    "apiVersion", "kuudra.io/v1alpha1", "kind", "Flow",
-                    "metadata", Map.of("namespace", "dev", "name", "flow-1"),
+                    "apiVersion", "kuudra.io/v1alpha2", "kind", "Ability",
+                    "metadata", Map.of("namespace", "dev", "name", "disconnect"),
                     "spec", Map.of(
-                            "session", Map.of("executionClass", "DATA"),
-                            "imports", Map.of(
+                            "executionClass", "DATA",
+                            "resources", Map.of(
                                     "source", Map.of("kind", "EventSource", "name", "mysource"),
-                                    "handler", Map.of("kind", "EventHandler", "name", "myhandler")),
-                            "edges", List.of(Map.of("from", "source", "to", "handler"))))));
-    private static final ResourceDocumentation SESSION_POLICY_DOCUMENTATION = new ResourceDocumentation(
-            "kuudra.io/v1alpha1", "kuudra-official", "SessionCoordinationPolicy",
-            "Selects Ingress-produced Session labels within each Flow and declares group scheduling plus Session dependencies.",
+                                    "controller", Map.of("kind", "Controller", "name", "network")),
+                            "nodes", Map.of(
+                                    "source", Map.of("resource", "source"),
+                                    "disconnect", Map.of("resource", "controller", "handler", "disconnect")),
+                            "edges", List.of(Map.of("from", "source", "to", "disconnect"))))));
+    private static final ResourceDocumentation ABILITY_PROFILE_DOCUMENTATION = new ResourceDocumentation(
+            "kuudra.io/v1alpha2", "kuudra-official", "AbilityProfile",
+            "Globally selects Abilities by qualified name or namespace, with explicit exclusions.",
             List.of(
-                    new ResourceFieldDocumentation("spec.selector.matchLabels", "Map<String,String>", true,
-                            "Labels of newly admitted Sessions managed by this policy; exactly zero or one policy may match.", List.of(Map.of("role", "job"))),
-                    new ResourceFieldDocumentation("spec.scheduling", "Scheduling", false,
-                            "Group scheduling policy and bounds.", List.of(Map.of("policy", "SERIAL", "queueCapacity", 32))),
-                    new ResourceFieldDocumentation("spec.dependencies[].requiredSessionSelector.matchLabels", "Map<String,String>", false,
-                            "Labels used to select required active Sessions inside the same Flow.", List.of(Map.of("role", "window"))),
-                    new ResourceFieldDocumentation("spec.dependencies[].terminationPropagation", "String", false,
-                            "Terminal propagation direction.", List.of("CANCEL_DEPENDENT"))),
-            List.of(Map.of("apiVersion", "kuudra.io/v1alpha1", "kind", "SessionCoordinationPolicy",
-                    "metadata", Map.of("namespace", "dev", "name", "jobs-in-window"),
-                    "spec", Map.of("selector", Map.of("matchLabels", Map.of("role", "job")),
-                            "scheduling", Map.of("policy", "SERIAL"),
-                            "dependencies", List.of(Map.of("requiredSessionSelector", Map.of(
-                                    "matchLabels", Map.of("role", "window"), "matchPolicy", "UNIQUE"),
-                                    "terminationPropagation", "CANCEL_DEPENDENT"))))));
+                    new ResourceFieldDocumentation("metadata.name", "String", true,
+                            "Global profile name; AbilityProfile has no namespace.", List.of("default")),
+                    new ResourceFieldDocumentation("spec.abilities", "List<String>", false,
+                            "Qualified namespace/name Ability identities.", List.of(List.of("dev/disconnect"))),
+                    new ResourceFieldDocumentation("spec.namespaces", "List<String>", false,
+                            "Namespaces whose Abilities are selected.", List.of(List.of("dev"))),
+                    new ResourceFieldDocumentation("spec.exclude", "List<String>", false,
+                            "Qualified Ability identities removed from the selection.", List.of(List.of("dev/diagnostics")))),
+            List.of(Map.of("apiVersion", "kuudra.io/v1alpha2", "kind", "AbilityProfile",
+                    "metadata", Map.of("name", "default"),
+                    "spec", Map.of("abilities", List.of("dev/disconnect")))));
     private final int queueCapacity;
     private final int workerThreads;
     private final KuudraConfig.RuntimeConfig bootstrapConfig;
@@ -483,7 +485,9 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                 && policy.name().equals(name)).findFirst();
     }
     /** Core resource schemas use a documentation-provider namespace, independent from resource instance namespaces. */
-    public List<ResourceDocumentation> resourceDocumentations() { return List.of(FLOW_DOCUMENTATION, SESSION_POLICY_DOCUMENTATION); }
+    public List<ResourceDocumentation> resourceDocumentations() {
+        return List.of(ABILITY_DOCUMENTATION, ABILITY_PROFILE_DOCUMENTATION);
+    }
     public Optional<ResourceDocumentation> resourceDocumentation(String namespace, String kind) {
         return resourceDocumentations().stream().filter(documentation -> documentation.namespace().equals(namespace)
                 && documentation.kind().equalsIgnoreCase(kind)).findFirst();
@@ -764,7 +768,10 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
 
     private void startReconciliationLoop(KuudraConfig.ReconciliationSettings settings) {
-        if (!settings.enabled() || reconciliationExecutor != null) return;
+        // v1alpha2 is reconciled synchronously by AbilityManager whenever its claim set changes.
+        // The legacy loop decodes only v1alpha1 component/flow rows and must never consume the
+        // unified v1alpha2 StateStore, which also contains ability and ability-profile records.
+        if (abilityManager != null || !settings.enabled() || reconciliationExecutor != null) return;
         reconciliationExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "kuudra-app-reconciler");
             thread.setDaemon(true);

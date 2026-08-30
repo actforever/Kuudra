@@ -71,6 +71,8 @@ global-context: {}
 `ability-profiles` 决定本次启动选择哪些全局 Profile。v0.5 已移除
 `resource-selection` 和根级 `runtime.session-coordinator`：部署选择由 Profile 完成，
 Session 调度由每个 CREATE Ingress 节点声明。
+Profile 文件存在并不等于被启用；示例 Ability 要自动运行时必须显式写入对应名称，例如
+`ability-profiles: [default]`。空列表会让没有 direct override 的 Ability 保持 DISABLED。
 
 三个新超时分别约束 Ability 排空、取消后的宽限期和单次 Resource 生命周期调用。
 所有值以毫秒计，必须为非负数。
@@ -94,7 +96,7 @@ spec:
     allowElevation: true
     targets:
       ping:
-        executable: 'C:\Windows\System32\PING.EXE'
+        executablePath: 'C:\Windows\System32\PING.EXE'
 ```
 
 `spec.template` 固定为 `plugin-namespace/plugin-id/template-name`。App 结合 kind
@@ -106,6 +108,8 @@ Resource 不再声明 `desiredState`；它是否物化及应处于 RUNNING、PAU
 `initialize/start/pause/resume/stop/destroy`。App 是唯一生命周期所有者。
 ResourceTemplate 的 `maxInstances`、`APP/ABILITY` 限额、`exclusivityDomain` 和
 `allowParallel` 在物化与调度时生效。
+对 EventSource，App 会在 `start()` 前完成 Ability 注册和 emitter 绑定，并在同批
+Resource 中最后启动 Source。
 
 ## 4. Controller 的具名入口
 
@@ -144,7 +148,7 @@ spec:
   options:
     allowElevation: true
     targets:
-      ping: {executable: 'C:\Windows\System32\PING.EXE'}
+      ping: {executablePath: 'C:\Windows\System32\PING.EXE'}
 ---
 apiVersion: kuudra.io/v1alpha2
 kind: Ability

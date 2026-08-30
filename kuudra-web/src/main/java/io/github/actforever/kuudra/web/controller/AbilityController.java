@@ -26,15 +26,16 @@ public final class AbilityController {
 
     @Operation(summary = "获取 Ability")
     @GetMapping("/{namespace}/{name}")
-    KuudraApp.Ability ability(@PathVariable String namespace, @PathVariable String name) {
+    KuudraApp.Ability ability(@PathVariable("namespace") String namespace, @PathVariable("name") String name) {
         return app.ability(namespace, name).orElseThrow(() -> notFound("Ability", namespace + "/" + name));
     }
 
     @Operation(summary = "异步控制 Ability")
     @ApiResponse(responseCode = "202", description = "控制请求已接受")
     @PostMapping("/{namespace}/{name}/{action}")
-    ResponseEntity<ControlRequest> control(@PathVariable String namespace, @PathVariable String name,
-                                           @PathVariable String action) {
+    ResponseEntity<ControlRequest> control(@PathVariable("namespace") String namespace,
+                                           @PathVariable("name") String name,
+                                           @PathVariable("action") String action) {
         String ability = namespace + "/" + name;
         UUID requestId = UUID.randomUUID();
         app.controlAbility(namespace, name, action);

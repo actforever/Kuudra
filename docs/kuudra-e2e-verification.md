@@ -1,197 +1,119 @@
-# Kuudra 内核闭环验证
+# Kuudra v0.5 真实插件端到端验证
 
-本文记录可重复执行的真实插件端到端验证，而不仅是模块单元测试。验证基线使用根目录 `.kuudra/plugins` 中的三个插件 JAR：
+本矩阵验证打包后的 Web JAR、外部插件 JAR、v1alpha2 清单、Ability claim、Resource 生命周期与 HTTP 适配器。单元测试不能替代这些检查。
 
-- `kuudra-official/default`：提供 `plain-ingress`；
-- `kuudra-official/hello-world`：提供周期 EventSource；
-- `kuudra-official/logging`：提供 EventHandler，并经 App SystemEventBus 输出日志。
+## 构建前提
 
-## Windows 原生进程控制验证矩阵
+```powershell
+$env:MAVEN_OPTS='-Xmx384m -XX:+UseSerialGC'
+mvn test -DskipTests=false
+mvn package -DskipTests
 
-外部插件仓库的 `examples/process-control-safe` 使用独立测试进程验证特权边界；自动测试不得选择 GTA 或其他用户进程。
+cd ..\kuudra-official-plugins
+$env:MAVEN_OPTS='-Xmx256m -XX:+UseSerialGC'
+mvn clean test -DskipTests=false -Dexec.skip=true
+mvn package -DskipTests=false -Dexec.skip=true
+```
 
-| 场景 | 预期结果 |
-| --- | --- |
-| 只加载 `windows-native-host` JAR | 不请求 UAC，不注册 Component |
-| `allowElevation: false` | Component 在请求 UAC 前明确失败 |
-| 首个允许提升的 Component | 请求一次 UAC；后续 Component 复用同一宿主 |
-| 暂停 `ping` 至自然截止时间 | 进程自动恢复，恢复日志清除 |
-| 同一进程重复暂停 | 返回冲突，不叠加线程暂停计数 |
-| 同一路径存在多个进程 | 要求 PID，并再次验证 PID、启动时间和镜像路径 |
-| Kuudra/Session 暂停 | 原生截止时间继续计时，不因 checkpoint 延长 |
-| Session 取消、组件停止 | 主动恢复该所有者持有的操作 |
-| JVM 被终止 | 宿主保持到原截止时间后恢复并退出 |
-| 宿主被终止 | 下次启动根据日志和进程身份安全恢复 |
+原生宿主的正式包必须由 `.NET 8 SDK` 执行 `dotnet publish --runtime win-x64 --self-contained true` 生成。内嵌的 `Kuudra.Windows.PrivilegedHost.exe` 应是约 67 MB 的单文件发布物；约 9 MB 的普通 apphost 会依赖旁边的 DLL，不得装入 JAR。Maven Ant copy 必须使用 `overwrite=true`，不能让旧 `target/classes` 按时间戳覆盖本轮 publish 结果。
 
-C# 集成测试会启动独立 `cmd /c ping -t 127.0.0.1` 子进程，实际调用 Win32 挂起/恢复并检查日志清理；交互式 UAC 仍应按示例做人工冒烟验证。
+若本机没有 .NET SDK，可以复用由同一 C# 源码生成且哈希已验证的 self-contained 产物完成 Java/黑箱验证，但必须明确记录 `dotnet test/publish` 未在本轮执行。
 
-2026-08-29 的管理员 PowerShell 黑箱回归使用完整打包 JAR 和真实 Web 启动验证了以下组合：基础 HelloWorld→Ingress→Logging 闭环；12 个插件无清单空载共存；缺少宿主依赖和 `allowElevation: false` 的预期启动失败；Session dependency 建立、传播取消和排队后拒绝；单个 `PING.EXE` 的限时挂起/自然恢复。宿主场景最终观测到 Session 完成、`PING.EXE` 仍运行、恢复日志已删除、App stop 在约 0.2 秒内完成且 broker 退出。两个同路径 `PING.EXE` 并存时返回 `Multiple matching processes require pid`，验证了歧义保护。
+## 固定部署结构
 
-该轮黑箱同时发现并修复了单 Named Pipe 同步 handle 的首帧互锁，以及 I/O executor 内同步完成 Future 导致的生命周期重入自锁。回归基线因此要求 command request/response 与异步 event 使用两条分别做 SID/PID 验证的 pipe，并要求 Future 回调离开 I/O 线程。AWT safe macro 在当前无桌面会话的执行环境中按设计以 `AWT Robot is unavailable in a headless environment` 失败；应在交互式桌面中另行验证，不把该环境失败记作业务回归。
+将 Web JAR 复制到一个空目录，并在其同级创建：
 
-## 验证清单
+```text
+.kuudra/
+  config.yaml
+  plugins/
+  manifests/
+  ability-profiles/
+```
 
-在 `.kuudra/manifests/hello-world.yaml` 使用一个多文档 YAML 声明三个 Component 和一个 Flow：
+`config.yaml` 必须显式选择示例 Profile，例如：
 
 ```yaml
-apiVersion: kuudra.io/v1alpha1
-kind: EventSource
-metadata: {namespace: dev, name: hello-world-source}
-spec:
-  component: kuudra-official/hello-world/hello-world
-  desiredState: running
-  options: {intervalMillis: 1000}
----
-apiVersion: kuudra.io/v1alpha1
-kind: Ingress
-metadata: {namespace: dev, name: plain-ingress}
-spec:
-  component: kuudra-official/default/plain-ingress
-  desiredState: active
-  options:
-    groupKey: "${event#hello-world.message}"
-    sessionLabels: {role: hello-world}
----
-apiVersion: kuudra.io/v1alpha1
-kind: SessionCoordinationPolicy
-metadata: {namespace: dev, name: hello-world-serial}
-spec:
-  selector: {matchLabels: {role: hello-world}}
-  scheduling: {policy: SERIAL, maxParallelSessions: 1, queueCapacity: 32}
----
-apiVersion: kuudra.io/v1alpha1
-kind: EventHandler
-metadata: {namespace: dev, name: event-logger}
-spec:
-  component: kuudra-official/logging/event-logger
-  desiredState: running
-  options:
-    level: INFO
-    message: "E2E received ${event#hello-world.message}"
-    includeData: true
----
-apiVersion: kuudra.io/v1alpha1
-kind: Flow
-metadata: {namespace: dev, name: hello-world-flow}
-spec:
-  imports:
-    source: {kind: EventSource, name: hello-world-source}
-    ingress: {kind: Ingress, name: plain-ingress}
-    logger: {kind: EventHandler, name: event-logger}
-  edges:
-    - {from: source, to: ingress}
-    - {from: ingress, to: logger}
+ability-profiles: [default]
 ```
 
-EventSource 和 EventHandler 实现生命周期，因此期望状态是 `running/stopped`；无生命周期的 Ingress 使用 `active/inactive`。混用两组状态会在启动校验阶段失败。
+只复制当前场景需要的插件 JAR。每个 JAR 都会被严格加载，缺失强依赖、重复身份、版本范围不兼容和普通非插件 JAR 都必须使启动失败。
 
-## 复验步骤与判定
+## 场景一：HelloWorld、边界与具名 Controller
 
-使用项目根目录作为可执行 JAR 的目录启动 Web，确保固定家目录解析为根目录 `.kuudra`：
+使用官方插件仓库 `examples/hello-world-logging` 的 `v1alpha2` Resource、Ability 与 AbilityProfile，并装入：
+
+- `kuudra-official/default`
+- `kuudra-official/hello-world`
+- `kuudra-official/logging`
+
+期望：
+
+1. `/api/v1/runtime/abilities/hello-world-demo/hello-to-log` 返回 `ENABLED`，`profileClaims` 包含 `default`；
+2. EventSource、Ingress、Controller 三个 Resource 均为 `RUNNING`；
+3. `/api/v1/plugin/resource-templates/controller/kuudra-official/logging/event-logger` 发布 `log` handler；
+4. 日志持续出现 `received hello-world`，且带 Ability ID 与 Session ID；
+5. 不出现 `ability.reconciliation.failed`、`reconciliation.loop.failed` 或 HTTP 500；
+6. `POST /api/v1/kuudra/stop` 后 HTTP 仍可查询到 `STOPPED`。
+
+EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全部 Resource、注册 Ability、绑定 Source，再按“下游优先、EventSource 最后”启动生命周期。该顺序必须有 App 回归测试。
+
+## 场景二：Ability 控制与路径参数 API
+
+对上述 Ability 依次调用 `pause`、`resume`、`disable`、`enable`、`inherit`：
+
+- 控制端点立即返回 `202 Accepted`；
+- 最终状态异步收敛；
+- DISABLED 时 Resource 无其他 claim 才 stop/destroy；
+- PAUSED 不销毁 Resource；
+- Profile claim 与 direct override 的优先级符合用户指南。
+
+生产 JAR 不依赖 Java 反射参数名。所有 Spring `@PathVariable` 必须显式写变量名；Ability、Resource、Plugin 和 ResourceTemplate 的单项查询应返回 200 或业务 404，不能因缺少 `-parameters` 返回 500。
+
+## 场景三：Windows 原生宿主与 process-control
+
+在管理员 PowerShell 中装入：
+
+- `kuudra-official/default`
+- `kuudra-official/session-probe`
+- `actforever/windows-native-host`
+- `actforever/process-control`
+
+使用官方插件仓库 `examples/process-control-safe`。启动一个测试目标：
 
 ```powershell
-mvn -pl kuudra-web -am package -DskipTests
-Copy-Item kuudra-web/target/kuudra-web-v0.4.4.jar ./kuudra-e2e.jar
-java -jar ./kuudra-e2e.jar
+$ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1' -WindowStyle Hidden -PassThru
 ```
 
-通过以下接口观察，不直接访问 Runtime：
+期望：
 
-- `GET /api/v1/kuudra/status`；
-- `GET /api/v1/plugin`；
-- `GET /api/v1/runtime/components`；
-- `GET /api/v1/runtime/flows`；
-- `GET /api/v1/runtime/session-coordination-policies`；
-- `GET /api/v1/runtime/sessions/dependencies`；
-- `GET /api/v1/runtime/components/reconciliation-states`。
+1. 仅加载 host JAR 不产生 UAC；被 Profile claim 的 process-control Resource 初始化且 `allowElevation: true` 时才启动 broker；
+2. host、process-control、session-probe 的插件依赖顺序正确，Ability 为 ENABLED，三个 Resource 为 RUNNING；
+3. `process-controller` 发布 `suspend` 与 `resume` 两个 handler，清单显式选择 `suspend`；
+4. 事件触发后 `PING.EXE` 线程可观测到 `WaitReason=Suspended`，有界时长后自动恢复且进程仍存活；
+5. 在挂起窗口内停止 App，目标立即恢复，broker 退出，Web 状态为 STOPPED；
+6. Event/arguments 只能选择静态 allowlist 中的 alias、可选 PID 与有界时长，broker 不接收 Event/Context，也不提供 PowerShell/Shell 执行。
 
-当前闭环判定矩阵如下：
+## 组合与失败矩阵
 
-| 能力 | 操作 | 必须观察到的结果 |
-| --- | --- | --- |
-| 插件加载 | 启动包含三个 JAR 的内核 | API 返回三个 `ACTIVE` 插件，插件 home 使用 `<plugins>/<namespace>/<plugin-id>` |
-| 事件路由 | 保持四个资源清单生效 | 周期出现 `E2E received hello-world`；Session 创建后归零，无租约泄漏 |
-| 周期调谐 | `reconciliation.enabled=true` 且日志为 TRACE | 每周期严格成对出现 `reconciliation.cycle.started/completed` |
-| 调谐禁用 | 关闭配置并重启 Web 进程 | 不产生周期调谐事件，资源仍在启动阶段完成首次收敛 |
-| 状态可见性 | 改写任一 Component desiredState | DEBUG 出现 `component.state.changed`，INFO 出现 `resource.state.changed`；无变化的周期不重复输出 |
-| 生命周期门控 | EventSource 或 EventHandler 改为 `stopped` | observed/effective 均为 `STOPPED`，组件不再产生或处理事件；恢复 `running` 后继续 |
-| 被动组件门控 | Ingress 改为 `inactive` | 资源实例和 Flow 绑定保留，但事件不再准入；恢复 `active` 后继续 |
-| StateStore | API 将磁盘中为 running 的资源改为 stopped | 当前 generation 收敛并持久化；下一次 start 以 manifests 为权威恢复 running |
-| 失败重试 | 生命周期第一次调谐失败 | StateStore 先记录 FAILED，周期循环重试同一 generation，最终进入 READY |
-| DATA 内核暂停 | DATA Flow 下调用 `/pause` | observed state 不变，effectiveStatus 为 `SUSPENDED` 且原因是 `KERNEL`，DATA 事件停止流转 |
-| CONTROL 暂停旁路 | `system` CONTROL Flow 显式导入 `macro` EventSource 后调用 `/pause` | 两个 namespace 均被选中；Flow 继续输出控制事件，共享 Source 保持 available，组件/Session 自身暂停仍有效 |
-| 内核恢复 | 调用 `/resume` | effectiveStatus 恢复，事件从保留的组件状态继续流转 |
-| 暂停态停止 | `PAUSED` 时调用 `/stop` | 正常走 `STOPPING -> STOPPED`，释放 Runtime、Session、组件和插件 |
-| 暂停态重启 | `PAUSED` 时调用 `/restart` | 正常停止后重新加载 manifests，最终回到 RUNNING，不走强制清空分支 |
-| 清单重载 | 修改 EventSource interval 后 `/restart` | 新实例采用新间隔；运行期间不会隐式扫描磁盘 |
-| 清单诊断 | 将 `spec.edges` 误写后 `/restart` | 返回失败并进入 FAILED，错误包含文件、文档号、附近行、资源身份、字段和正确格式；修复后 `/start` 可恢复 |
-| 文件日志 | 正常停止并再次启动 | 停止产生日期序号 gzip 且保留 latest.log；下一次启动才新建 latest.log |
+| 组合/操作 | 期望 |
+| --- | --- |
+| default + hello-world + logging | 完整事件链路，无错误 |
+| windows-native-host 单独加载 | 插件 ACTIVE，不启动 broker、不触发 UAC |
+| process-control 缺 host | 插件依赖校验失败 |
+| host + process-control，Ability 未 claim | 不物化 Controller，不启动 broker |
+| `allowElevation: false` 后 claim | 仅该 Ability FAILED，其他独立 Ability 可继续收敛 |
+| 未知 Controller handler | Ability 编译失败并明确指出 handler |
+| 同一 Controller 的 `suspend`/`resume` 节点 | 分别路由到对应方法，不使用动态 action 分派 |
+| App restart | 重新读取磁盘 manifests/profiles，正常 stop 后再 start |
+| App stop during suspension | 恢复目标、清空 owner 操作、关闭 broker |
 
-### 跨命名空间控制 Flow 黑箱验证
+## 2026-08-30 实测记录
 
-使用真实 `kuudra-official/hello-world`、`kuudra-official/default` 和 `kuudra-official/logging` JAR：在 `macro` namespace 只声明一个周期 EventSource，在 `system` namespace 声明 plain Ingress、日志 Handler 与 `spec.session.executionClass: CONTROL` Flow。Flow 的 source import 显式写 `namespace: macro`，根配置使用 `resource-selection.namespace-mode: INCLUDE` 并同时选择 `[macro, system]`。
+本轮在管理员 Windows 会话中验证：
 
-验证时先确认 Flow API 返回 `executionClass: CONTROL` 且日志持续出现事件，再调用 `/api/v1/kuudra/pause`。等待至少两个 EventSource 周期后，日志计数必须继续增长，`EventSource/macro/...` 的 `status/effectiveStatus` 均保持 `RUNNING` 且 `available: true`。随后从 PAUSED 调用 `/stop`，两类执行器、组件和插件必须正常释放。另一次启动只选择 `system` 时必须因所引用的 `macro` 资源不在激活闭包内而失败，不能隐式扩大 namespace 集合。
-
-### 会话依赖真实插件验证
-
-会话依赖不能只依赖单元测试。发布前还应使用官方 `kuudra-official/session-probe` 与 `kuudra-official/conditional-boundary` 真实插件 JAR，在同一个 Flow 中声明窗口和作业两个分支（可直接采用官方插件仓库的 `examples/session-dependency/manifests.yaml`）：两个 Ingress 只生成 `role=window/job` 标签，`SessionCoordinationPolicy` 自动选择作业 Session、使用 `SERIAL` 调度并声明 `UNIQUE + CANCEL_DEPENDENT` 标签依赖。验证顺序如下：
-
-1. 先启动 B，再准入 A，依赖查询接口必须在二者存活期间返回一条活动边；
-2. B 正常结束后，SystemEvent 必须依次包含 `session.dependency.established` 和 `session.dependency.termination-propagated`，A 的协作式执行控制必须观察到取消；
-3. A 的第二个事件只能在首个 Session 终止后从 SERIAL 队列出队；此时 B 已不存在，依赖应在实际启动时重新解析并产生 `session.dependency.rejected`；
-4. 被拒绝的 Session 不得路由到 EventHandler，最终活动 Session、依赖边和延迟任务均归零；
-5. 通过 App 停止接口关闭内核后，状态应为 `STOPPED`，Flow、Session、依赖边及任务队列均已释放。
-
-该用例同时证明：调度策略先于依赖解析、排队任务不会沿用过期选择结果、终止传播可被插件通过协作式检查观察，以及依赖图能够通过 App/Web 查询而不泄露 Runtime。
-
-### 平台无关输入真实插件验证
-
-使用 `actforever/user-interaction-spec`、`actforever/jnativehook`、`kuudra-official/default` 和 `kuudra-official/logging` 四个真实插件 JAR，以及外部插件仓库 `examples/user-interaction-logging` 的清单。JNativeHook 插件必须是包含第三方 native 资源的 shade 归档，不能把原始第三方 JAR 单独放进严格插件目录。
-
-验证步骤：
-
-1. 启动后 `/api/v1/plugin/actforever/jnativehook` 返回 `ACTIVE`，依赖列表包含强制的 `actforever/user-interaction-spec [0.1.0,0.2.0)`；
-2. ComponentTemplate API 返回四个 EventSource、完整生命周期、`RUNNING/PAUSED/STOPPED` 和 MouseMotion 结构化配置；
-3. `EventSource/macro/keyboard` 收敛为 `RUNNING`，Flow 与 Ingress 正常注册；
-4. 产生一次系统级 F24 press/release，日志必须依次出现 `Keyboard PRESSED: F24` 和 `Keyboard RELEASED: F24`；
-5. 日志中的业务数据必须是 `user-interaction.key={code=F24, location=STANDARD}`，原始码只出现在独立 `jnativehook` namespace；
-6. 正常停止 App，确认监听器、native hook lease 和采样线程释放。
-
-shade 归档包含 `META-INF/versions/**` 时，组件扫描器必须跳过这些 multi-release 类路径并让 JVM ClassLoader 选择版本；对应回归测试位于 `PluginArchiveLoaderTest`。
-
-`POST /api/v1/kuudra/restart` 重建的是 App 内核，并按约定重新读取 manifests；`config.yaml` 在 Web 宿主创建 App Bean 时合并，修改根配置（包括调谐开关、日志级别）后需要重启 Web 进程。二者不要混为同一种重载语义。
-
-### Kotlin 宏真实插件黑箱验证
-
-使用外部插件仓库 `examples/macro-kotlin-safe`，部署七份真实 JAR：HelloWorld、default、logging、user-interaction-spec、macro-spec、macro-kotlin 和 awt-robot。该用例不注入键鼠，只由 AWT Handler 执行条件与 `emit`，因此不会改变用户输入状态。
-
-```powershell
-mvn -pl kuudra-web -am clean package -DskipTests
-mvn -f D:/Users/pinec/Documents/Code/Java/kuudra-official-plugins/pom.xml clean package -DskipTests
-
-# 将七份插件 JAR 放入测试目录 .kuudra/plugins；复制示例 manifests.yaml。
-# 脚本必须位于 AWT 插件自己的家目录。
-Copy-Item safe-emit.kt .kuudra/plugins/actforever/awt-robot/macros/safe-emit.kt
-java -Djava.awt.headless=false -jar kuudra-web.jar --server.port=18081
-```
-
-判定标准：
-
-1. `/api/v1/kuudra/status` 返回 `RUNNING`、`flowCount: 1`，Flow ID 为 `macro-kotlin-demo/safe-kotlin-macro`；
-2. 日志显示 `actforever/macro-kotlin`、`actforever/awt-robot` 均为 ACTIVE，robot 和 logger 资源均调谐到 RUNNING；
-3. 日志周期出现 `Kotlin macro emitted compiled-and-executed`，并包含 `eventType=macro.kotlin.completed`、Flow ID 和 Session ID；测试观测窗口内错误数和错误分支计数均必须为 0；
-4. `POST /api/v1/kuudra/stop` 返回 `STOPPED`、`flowCount: 0`、`queuedTasks: 0`。
-
-2026-08-28 的实际黑箱执行发现并修复了三类只在真实插件环境出现的问题：组件文档字符串示例必须是合法 JSON 字面量；Kotlin 编译/求值必须使用依赖感知插件 ClassLoader，否则 `macro-spec` 会不可见或出现重复 `MacroProgramDefinition` 类型；Java `Consumer<MacroBuilder>` 不能直接充当 Kotlin receiver DSL，否则嵌套 then/else 会误写到外层程序。修复后状态为 RUNNING、Flow 数为 1，观测到 42 次正确分支、0 次错误分支、0 条 ERROR；停止结果为 STOPPED、Flow 0、队列 0。
-
-## 自动化回归
-
-真实插件验证之外，以下测试为高并发或故障分支提供确定性覆盖：
-
-```powershell
-mvn test -DskipTests=false
-mvn -f D:/Users/pinec/Documents/Code/Java/kuudra-official-plugins/pom.xml test -DskipTests=false
-```
-
-其中 Runtime 测试覆盖 RAW/SESSION 域边界、非法边、占位符作用域、Session 串行调度、替换策略、租约排空、最大跳数和协作式暂停；Plugin 测试会真实编译 A/B 两个 JAR，证明 B 能引用 A 的类和资源、共享同一个 `Class<?>` 并完成父插件 POJO 的 JSON 往返，同时验证依赖身份、版本范围、缺失依赖和环检测。宏插件测试还覆盖完整 IR 往返、真实 `.kt` 编译、嵌套条件构建和 AWT 六组暂停/取消/释放执行语义。本机分页文件不足时可按 AGENTS.md 使用 `-DforkCount=0` 运行目标模块，并明确记录这一环境差异。
+- 13 个官方插件 Maven 模块 Java 测试全部通过；机器只有 .NET Runtime、没有 SDK，因此 C# `dotnet test/publish` 未执行；
+- HelloWorld 组合 Ability 为 ENABLED，3 个 Resource 为 RUNNING，观测到 19 条连续业务日志、0 条 ERROR；
+- 修复了 v1alpha2 被旧周期调谐器误解码、EventSource 在 emitter 绑定前 start、生产 JAR 路径变量 500 三个内核问题；
+- process-control 组合观测到 `PING.EXE` 的 `Suspended` 等待原因，自动恢复后进程存活，日志 0 ERROR；
+- 在下一次挂起期间执行 App stop 后，目标立即恢复、broker 退出、App 为 STOPPED。

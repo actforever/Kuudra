@@ -22,8 +22,9 @@ public final class ResourceController {
 
     @Operation(summary = "获取 Resource")
     @GetMapping("/{kind}/{namespace}/{name}")
-    KuudraApp.ManifestResource resource(@PathVariable String kind, @PathVariable String namespace,
-                                        @PathVariable String name) {
+    KuudraApp.ManifestResource resource(@PathVariable("kind") String kind,
+                                        @PathVariable("namespace") String namespace,
+                                        @PathVariable("name") String name) {
         String id = kind + "/" + namespace + "/" + name;
         return app.manifestResources().stream().filter(resource -> resource.id().equals(id)).findFirst()
                 .orElseThrow(() -> notFound("Resource", id));

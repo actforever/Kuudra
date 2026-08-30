@@ -2,6 +2,7 @@ package io.github.actforever.kuudra.api.context;
 
 import io.github.actforever.kuudra.api.action.ActionContext;
 import io.github.actforever.kuudra.api.event.EventDomain;
+import io.github.actforever.kuudra.api.event.EventHandlerContext;
 import io.github.actforever.kuudra.api.event.KuudraEvent;
 
 import java.lang.reflect.Type;
@@ -10,9 +11,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Precompiled lookup of a dynamic Event/Session/Flow/Global value. */
+/** Precompiled lookup of a dynamic Event/Session/Ability/Global value. */
 public final class ContextValueReference {
-    private static final java.util.Set<String> SCOPES = java.util.Set.of("event", "session", "flow", "global");
+    private static final java.util.Set<String> SCOPES = java.util.Set.of("event", "session", "ability", "flow", "global");
     private final String source;
     private final String scope;
     private final String[] path;
@@ -47,6 +48,21 @@ public final class ContextValueReference {
         return lookup(event, context.flowId(), session, flow, global, context.sessionContext() != null);
     }
 
+    public Optional<Object> find(KuudraEvent event, EventHandlerContext context) {
+        Objects.requireNonNull(event, "event"); Objects.requireNonNull(context, "context");
+        return lookup(event, context.abilityId(), context.session().snapshot(), context.ability().snapshot(),
+                context.global().snapshot(), true);
+    }
+
+    public Object get(KuudraEvent event, EventHandlerContext context) {
+        return find(event, context).orElseThrow(() -> new IllegalArgumentException(
+                "Unresolved context reference: " + source));
+    }
+
+    public <T> T get(KuudraEvent event, EventHandlerContext context, Class<T> type) {
+        return ContextCodecs.defaultCodec().decode(get(event, context), type);
+    }
+
     public Object get(KuudraEvent event, ActionContext context) {
         return find(event, context).orElseThrow(() -> new IllegalArgumentException("Unresolved context reference: " + source));
     }
@@ -64,7 +80,7 @@ public final class ContextValueReference {
         if (scope != null) return switch (scope) {
             case "event" -> event(event, path);
             case "session" -> hasSession ? nested(session, path) : Optional.empty();
-            case "flow" -> path.length == 1 && path[0].equals("id") ? Optional.of(flowId) : nested(flow, path);
+            case "ability", "flow" -> path.length == 1 && path[0].equals("id") ? Optional.of(flowId) : nested(flow, path);
             case "global" -> nested(global, path);
             default -> Optional.empty();
         };

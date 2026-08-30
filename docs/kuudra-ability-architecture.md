@@ -60,6 +60,11 @@ Resource 状态由全部有效 claim 合并：有运行 claim 时 RUNNING，仅�
 PAUSED，无 claim 时 stop/destroy。`options` 相同身份的 Resource 永远是同一实例；
 不同 Resource 身份才产生不同实例。
 
+EventSource 的 emitter 是启动前置条件。App 先物化所需 Resource、注册 Ability 图并绑定
+Source，再启动生命周期；同一批 Resource 中先启动下游消费者，最后启动 EventSource，
+避免首个 Event 早于 Controller 或边界就绪。v1alpha2 claim 变化由 AbilityManager 同步
+调谐，不进入只理解 v1alpha1 行的旧周期调谐器。
+
 ## Session 边界
 
 v1alpha2 的 Ingress 节点显式选择：
