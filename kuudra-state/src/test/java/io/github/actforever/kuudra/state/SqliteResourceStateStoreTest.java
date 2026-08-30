@@ -17,21 +17,24 @@ class SqliteResourceStateStoreTest {
     @Test
     void persistsV1Alpha2DeploymentAndObservedGenerations() throws Exception {
         Path manifests = directory.resolve("manifests");
-        Path profiles = directory.resolve("ability-profiles");
+        Path abilities = directory.resolve("abilities");
+        Path profiles = abilities.resolve("profiles");
         Files.createDirectories(manifests);
+        Files.createDirectories(abilities);
         Files.createDirectories(profiles);
-        Files.writeString(manifests.resolve("ability.yaml"), """
+        Files.writeString(manifests.resolve("resource.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: Controller
                 metadata: {namespace: demo, name: network}
                 spec: {template: test/native/network}
-                ---
+                """);
+        Files.writeString(abilities.resolve("ability.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: Ability
                 metadata: {namespace: demo, name: disconnect}
                 spec:
                   resources:
-                    network: {kind: Controller, name: network}
+                    network: Controller/demo/network
                   nodes:
                     disconnect: {resource: network, handler: disconnect}
                   edges: []
@@ -42,7 +45,7 @@ class SqliteResourceStateStoreTest {
                 metadata: {name: default}
                 spec: {abilities: [demo/disconnect]}
                 """);
-        KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(manifests, profiles);
+        KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(manifests, abilities, profiles);
         Path database = directory.resolve("kuudra.db");
 
         try (var store = new SqliteResourceStateStore(database)) {

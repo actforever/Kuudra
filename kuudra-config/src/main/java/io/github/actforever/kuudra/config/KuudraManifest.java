@@ -45,6 +45,7 @@ public final class KuudraManifest {
             requireDnsLabel(namespace, "reference.namespace"); requireDnsLabel(name, "reference.name");
         }
         public ResourceId id() { return new ResourceId(kind, namespace, name); }
+        public String canonicalName() { return kind + "/" + namespace + "/" + name; }
     }
 
     public record Component(ResourceId id, Metadata metadata, String component,
@@ -129,10 +130,6 @@ public final class KuudraManifest {
         public String templateReference() { return type() + "/" + template; }
     }
 
-    public record AbilityResource(ResourceReference reference) {
-        public AbilityResource { Objects.requireNonNull(reference, "reference"); }
-    }
-
     public record IngressSession(io.github.actforever.kuudra.api.session.SessionAdmissionMode mode,
                                  String targetIngress, IngressConfiguration scheduling,
                                  List<SessionDependencyRequirement> dependencies) {
@@ -153,10 +150,10 @@ public final class KuudraManifest {
     }
 
     /** One routed invocation. Controller nodes select a named handler. */
-    public record AbilityNode(String resource, String handler, Map<String, Object> arguments,
+    public record AbilityNode(ResourceReference resource, String handler, Map<String, Object> arguments,
                               IngressSession session) {
         public AbilityNode {
-            requireText(resource, "node.resource");
+            Objects.requireNonNull(resource, "node.resource");
             handler = handler == null ? "" : handler;
             arguments = Map.copyOf(arguments);
         }
@@ -164,7 +161,7 @@ public final class KuudraManifest {
 
     public record Ability(ResourceId id, Metadata metadata,
                           io.github.actforever.kuudra.api.runtime.AbilityExecutionClass executionClass,
-                          Map<String, AbilityResource> resources, Map<String, AbilityNode> nodes,
+                          Map<String, ResourceReference> resources, Map<String, AbilityNode> nodes,
                           List<KuudraConfig.EdgeConfig> edges,
                           List<String> dependsOn, List<String> mutexWith) {
         public Ability {
@@ -173,12 +170,21 @@ public final class KuudraManifest {
             Objects.requireNonNull(executionClass, "executionClass");
             resources = Map.copyOf(resources); nodes = Map.copyOf(nodes); edges = List.copyOf(edges);
             dependsOn = uniqueNames(dependsOn, "dependsOn"); mutexWith = uniqueNames(mutexWith, "mutexWith");
-            if (resources.isEmpty() || nodes.isEmpty()) throw new IllegalArgumentException("Ability resources and nodes must not be empty");
+            if (nodes.isEmpty()) throw new IllegalArgumentException("Ability nodes must not be empty");
+            resources.forEach((alias, reference) -> {
+                requireDnsLabel(alias, "Resource alias");
+                Objects.requireNonNull(reference, "Resource alias reference");
+                requireResourceReference(reference);
+            });
+            Set<ResourceReference> eventSources = new HashSet<>();
             for (Map.Entry<String, AbilityNode> entry : nodes.entrySet()) {
                 String nodeId = entry.getKey(); AbilityNode node = entry.getValue();
                 requireDnsLabel(nodeId, "node id");
-                if (!resources.containsKey(node.resource())) throw new IllegalArgumentException(
-                        "Unknown Ability node Resource alias: " + node.resource());
+                requireResourceReference(node.resource());
+                if ("EventSource".equals(node.resource().kind()) && !eventSources.add(node.resource())) {
+                    throw new IllegalArgumentException("An EventSource Resource may appear in only one node: "
+                            + node.resource().canonicalName());
+                }
             }
             Set<KuudraConfig.EdgeConfig> uniqueEdges = new HashSet<>();
             for (KuudraConfig.EdgeConfig edge : edges) {
@@ -203,6 +209,13 @@ public final class KuudraManifest {
             validateSameNamespace(id.namespace(), mutexWith, "mutexWith");
         }
         public String qualifiedName() { return id.qualifiedName(); }
+
+        private static void requireResourceReference(ResourceReference reference) {
+            if (!RESOURCE_KINDS.containsKey(reference.kind())) {
+                throw new IllegalArgumentException("Ability Resource reference kind must be a concrete Resource kind: "
+                        + reference.kind());
+            }
+        }
     }
 
     /** Global profile; profile names have no namespace. */

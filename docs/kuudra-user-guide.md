@@ -12,8 +12,9 @@
 .kuudra/
   config.yaml
   plugins/                  # 所有 JAR 都会被严格加载
-  manifests/                # Resource 与 Ability
-  ability-profiles/         # 仅允许 AbilityProfile
+  manifests/                # 仅允许 Resource
+  abilities/                # 仅允许 Ability
+    profiles/               # 仅允许 AbilityProfile
   locale/
   logs/latest.log
   state/kuudra.db
@@ -127,7 +128,9 @@ Event、Session、Ability 和 Global 上下文占位符。不要把事件相关�
 
 ## 5. Ability 与 Profile 示例
 
-下面的清单创建一个 Session，并调用 process-control Controller 的 `suspend` 入口：
+下面的 Resource 文档放入 `.kuudra/manifests/`，Ability 文档放入
+`.kuudra/abilities/`。它们创建一个 Session，并调用 process-control Controller 的
+`suspend` 入口：
 
 ```yaml
 apiVersion: kuudra.io/v1alpha2
@@ -149,7 +152,11 @@ spec:
     allowElevation: true
     targets:
       ping: {executablePath: 'C:\Windows\System32\PING.EXE'}
----
+```
+
+`.kuudra/abilities/suspend-ping.yaml`：
+
+```yaml
 apiVersion: kuudra.io/v1alpha2
 kind: Ability
 metadata:
@@ -158,8 +165,8 @@ metadata:
 spec:
   executionClass: DATA
   resources:
-    admission: {kind: Ingress, name: admission}
-    process: {kind: Controller, name: process-control}
+    admission: Ingress/automation/admission
+    process: {kind: Controller, namespace: automation, name: process-control}
   nodes:
     admit:
       resource: admission
@@ -172,7 +179,7 @@ spec:
           maxParallelSessions: 1
           queueCapacity: 8
     suspend:
-      resource: process
+      resource: Controller/automation/process-control
       handler: suspend
       arguments:
         target: ping
@@ -182,7 +189,15 @@ spec:
     - {from: admit, to: suspend}
 ```
 
-把 Profile 单独放入 `.kuudra/ability-profiles/default.yaml`：
+`spec.resources` 是可选 alias 表，值既可以是 `kind/namespace/name` 字符串，也可以是
+`{kind, namespace, name}` 对象。节点的 `resource` 同样接受两种完整引用；不含 `/` 的
+字符串才按 alias 解析。Resource 引用必须显式包含 namespace，绝不继承 Ability
+namespace。未使用 alias 合法但不产生 claim。
+
+Resource 和 Ability 自身没有显式 `metadata.namespace` 时均使用 `default`，与 Kubernetes
+习惯一致。同一 Resource 被多个节点或 alias 引用时，claim 按完整三元组去重。
+
+把 Profile 单独放入 `.kuudra/abilities/profiles/default.yaml`：
 
 ```yaml
 apiVersion: kuudra.io/v1alpha2
@@ -271,5 +286,5 @@ Controller 二次封装；不得通过配置植入任意 PowerShell 命令。
 - `maxInstances exceeded`：ResourceTemplate 的 APP 或 ABILITY 实例限额被突破。
 
 日志默认写入 `.kuudra/logs/latest.log`。正常停止会归档为日期序号 `.log.gz`；
-修改 manifests 或 profiles 后使用内核 restart 重新读取，修改根 `config.yaml` 后重启
+修改 manifests、abilities 或 profiles 后使用内核 restart 重新读取，修改根 `config.yaml` 后重启
 Web 进程。

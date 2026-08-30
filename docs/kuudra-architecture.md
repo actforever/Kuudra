@@ -50,7 +50,9 @@ Resource 身份为 `kind/namespace/name`，模板引用为
 `type/plugin-namespace/plugin-id/template-name`。同一 Resource 被多个 Ability claim 时
 共享一个 App 所有的实例；Runtime 仅尊重 `allowParallel` 调用策略，不启动或销毁它。
 
-Ability 显式声明 resources、nodes 和 edges。节点引用 Resource alias；Controller 节点
+Ability 显式声明可选 Resource aliases、nodes 和 edges。节点可引用 alias，也可用
+`kind/namespace/name` 字符串或 `{kind, namespace, name}` 对象直接引用 Resource；两种格式
+在加载期归一化，且 Resource namespace 不继承 Ability namespace。Controller 节点
 还选择 handler，节点 arguments 是动态调用参数。Ability 是启用、暂停、排空、依赖和
 互斥边界，所有 Ability 都是对等的。
 

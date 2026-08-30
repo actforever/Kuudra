@@ -17,12 +17,13 @@ class KuudraV2ConfigTest {
     @Test
     void loadsResourcesAbilitiesProfilesAndTimeouts() throws Exception {
         Path home = directory.resolve("home");
-        write(home.resolve("manifests/pipeline.yaml"), pipeline("JOIN", "targetIngress: admit"));
-        write(home.resolve("ability-profiles/default.yaml"), """
+        write(home.resolve("manifests/resources.yaml"), resources());
+        write(home.resolve("abilities/pipeline.yaml"), pipeline("JOIN", "targetIngress: admit"));
+        write(home.resolve("abilities/profiles/default.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: AbilityProfile
                 metadata: {name: default}
-                spec: {namespaces: [demo], exclude: [demo/disabled]}
+                spec: {namespaces: [default], exclude: [default/disabled]}
                 """);
         Path config = write(directory.resolve("config.yaml"), """
                 home-directory: home
@@ -45,14 +46,19 @@ class KuudraV2ConfigTest {
         assertEquals(SessionAdmissionMode.CREATE, ability.nodes().get("admit").session().mode());
         assertEquals(SessionAdmissionMode.JOIN, ability.nodes().get("join").session().mode());
         assertEquals(SessionGroupScope.INGRESS, ability.nodes().get("admit").session().scheduling().groupScope());
+        assertEquals("Ingress/shared/ingress", ability.nodes().get("admit").resource().canonicalName());
+        assertEquals("Controller/operations/network", ability.nodes().get("disconnect").resource().canonicalName());
+        assertEquals("default", ability.id().namespace());
     }
 
     @Test
     void validatesJoinStaticOptionsAndMigrationBoundary() throws Exception {
-        Path badJoin = directory.resolve("bad-join/manifests");
-        write(badJoin.resolve("pipeline.yaml"), pipeline("JOIN", "targetIngress: absent"));
+        Path badJoin = directory.resolve("bad-join");
+        write(badJoin.resolve("manifests/resources.yaml"), resources());
+        write(badJoin.resolve("abilities/pipeline.yaml"), pipeline("JOIN", "targetIngress: absent"));
         assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.loadDeployment(
-                badJoin, directory.resolve("bad-join/profiles"))).getMessage().contains("same Ability"));
+                badJoin.resolve("manifests"), badJoin.resolve("abilities"),
+                badJoin.resolve("abilities/profiles"))).getMessage().contains("same Ability"));
         Path staticOptions = directory.resolve("static/manifests");
         write(staticOptions.resolve("resource.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
@@ -63,7 +69,8 @@ class KuudraV2ConfigTest {
                   options: {target: '${event#pid}'}
                 """);
         assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.loadDeployment(
-                staticOptions, directory.resolve("static/profiles"))).getMessage().contains("static"));
+                staticOptions, directory.resolve("static/abilities"),
+                directory.resolve("static/abilities/profiles"))).getMessage().contains("static"));
         Path legacy = directory.resolve("legacy/manifests");
         write(legacy.resolve("legacy.yaml"), """
                 apiVersion: kuudra.io/v1alpha1
@@ -72,7 +79,8 @@ class KuudraV2ConfigTest {
                 spec: {}
                 """);
         assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.loadDeployment(
-                legacy, directory.resolve("legacy/profiles"))).getMessage().contains("migrate Flow to Ability"));
+                legacy, directory.resolve("legacy/abilities"),
+                directory.resolve("legacy/abilities/profiles"))).getMessage().contains("Only Resource kinds"));
     }
 
     @Test
@@ -92,42 +100,77 @@ class KuudraV2ConfigTest {
                 .getMessage().contains("CREATE Ingress"));
     }
 
+    @Test
+    void enforcesDirectoryBoundariesAndCompleteResourceReferences() throws Exception {
+        Path misplaced = directory.resolve("misplaced");
+        write(misplaced.resolve("manifests/ability.yaml"), pipeline("JOIN", "targetIngress: admit"));
+        assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.loadDeployment(
+                misplaced.resolve("manifests"), misplaced.resolve("abilities"),
+                misplaced.resolve("abilities/profiles"))).getMessage().contains("must be stored under"));
+
+        Path incomplete = directory.resolve("incomplete");
+        write(incomplete.resolve("manifests/resources.yaml"), resources());
+        write(incomplete.resolve("abilities/ability.yaml"), pipeline("JOIN", "targetIngress: admit")
+                .replace("Ingress/shared/ingress", "Ingress/ingress"));
+        assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.loadDeployment(
+                incomplete.resolve("manifests"), incomplete.resolve("abilities"),
+                incomplete.resolve("abilities/profiles"))).getMessage().contains("kind/namespace/name"));
+
+        Path legacyProfiles = directory.resolve("legacy-profile-home");
+        write(legacyProfiles.resolve("ability-profiles/default.yaml"), """
+                apiVersion: kuudra.io/v1alpha2
+                kind: AbilityProfile
+                metadata: {name: default}
+                spec: {}
+                """);
+        Path config = write(directory.resolve("legacy-profile-config.yaml"), """
+                home-directory: legacy-profile-home
+                """);
+        assertTrue(assertThrows(IOException.class, () -> KuudraYamlLoader.load(config))
+                .getMessage().contains("has moved"));
+    }
+
     private static String pipeline(String joinMode, String joinExtra) {
         return """
                 apiVersion: kuudra.io/v1alpha2
-                kind: Ingress
-                metadata: {namespace: demo, name: ingress}
-                spec: {template: kuudra-official/default/plain-ingress}
-                ---
-                apiVersion: kuudra.io/v1alpha2
-                kind: Controller
-                metadata: {namespace: demo, name: network}
-                spec:
-                  template: actforever/network/network-controller
-                  options: {allowElevation: true}
-                ---
-                apiVersion: kuudra.io/v1alpha2
                 kind: Ability
-                metadata: {namespace: demo, name: network-control}
+                metadata: {name: network-control}
                 spec:
                   resources:
-                    ingress: {kind: Ingress, name: ingress}
-                    network: {kind: Controller, name: network}
+                    ingress: Ingress/shared/ingress
+                    network: {kind: Controller, namespace: operations, name: network}
+                    unused: Controller/operations/network
                   nodes:
                     admit:
                       resource: ingress
                       session: {mode: CREATE}
                     join:
-                      resource: ingress
+                      resource: {kind: Ingress, namespace: shared, name: ingress}
                       session:
                         mode: %s
                         %s
                     disconnect:
-                      resource: network
+                      resource: Controller/operations/network
                       handler: disconnect
                       arguments: {target: '${event#processAlias}'}
                   edges: [{from: admit, to: disconnect}]
                 """.formatted(joinMode, joinExtra);
+    }
+
+    private static String resources() {
+        return """
+                apiVersion: kuudra.io/v1alpha2
+                kind: Ingress
+                metadata: {namespace: shared, name: ingress}
+                spec: {template: kuudra-official/default/plain-ingress}
+                ---
+                apiVersion: kuudra.io/v1alpha2
+                kind: Controller
+                metadata: {namespace: operations, name: network}
+                spec:
+                  template: actforever/network/network-controller
+                  options: {allowElevation: true}
+                """;
     }
 
     private static Path write(Path file, String value) throws IOException {

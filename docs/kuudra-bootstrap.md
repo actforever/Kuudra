@@ -5,7 +5,7 @@
 ```text
 解析并合并 config.yaml
   -> 创建固定 home 目录
-  -> 读取 manifests/**/*.yaml 与 ability-profiles/**/*.yaml
+  -> 读取 manifests/**/*.yaml、abilities/**/*.yaml 与 abilities/profiles/**/*.yaml
   -> 严格扫描 plugins/*.jar
   -> 校验插件依赖并启动插件
   -> 发布 ResourceTemplate
@@ -23,7 +23,7 @@
 ## 固定目录
 
 打包 Web 使用 `<jar-directory>/.kuudra`。App 初始化确保存在 `plugins/`、
-`manifests/`、`ability-profiles/`、`logs/`、`state/`、`locale/`。插件目录中的每个 JAR
+`manifests/`、`abilities/`、`abilities/profiles/`、`logs/`、`state/`、`locale/`。插件目录中的每个 JAR
 都必须是有效 Kuudra 插件，且所有强制依赖的身份和版本范围必须满足。
 
 ## 根配置默认值
@@ -53,8 +53,9 @@ global-context: {}
 
 ## v1alpha2 清单
 
-`manifests/` 只允许 Resource kind 与 `Ability`，`ability-profiles/` 只允许
-`AbilityProfile`。一个文件可以用 `---` 包含多个文档，身份在整个递归目录中必须唯一。
+`manifests/` 只允许 Resource kind，`abilities/`（排除保留的 `profiles/` 子树）只允许
+`Ability`，`abilities/profiles/` 只允许 `AbilityProfile`。一个文件可以用 `---` 包含多个
+同类文档，身份在对应递归目录中必须唯一。
 
 Resource 示例：
 
@@ -75,7 +76,7 @@ kind: Ability
 metadata: {namespace: demo, name: disconnect}
 spec:
   resources:
-    network: {kind: Controller, name: network}
+    network: {kind: Controller, namespace: demo, name: network}
   nodes:
     disconnect:
       resource: network
@@ -85,6 +86,9 @@ spec:
 ```
 
 Resource options 是静态配置，加载时拒绝占位符；节点 arguments 可在执行时解析作用域。
+`spec.resources` 可省略，alias 值与节点直接引用都支持 `kind/namespace/name` 字符串和
+`{kind, namespace, name}` 对象。完整 Resource 引用必须包含 namespace，且不继承 Ability
+namespace；未使用 alias 不产生 claim。
 Controller 节点必须选择插件已发布的具名 handler。v1alpha1 会被明确拒绝，不执行隐式
 升级，因为 Flow/Component 的生命周期语义无法无歧义映射到 Ability claim。
 

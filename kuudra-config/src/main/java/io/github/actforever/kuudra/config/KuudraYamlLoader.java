@@ -24,7 +24,7 @@ import io.github.actforever.kuudra.api.session.SessionGroupScope;
 import io.github.actforever.kuudra.api.session.SessionSchedulingPolicy;
 import io.github.actforever.kuudra.api.component.IngressConfiguration;
 
-/** Reads config.yaml plus Flow YAML files into the format-neutral configuration model. */
+/** Reads config.yaml plus Resource, Ability and AbilityProfile YAML into the format-neutral model. */
 public final class KuudraYamlLoader {
     private KuudraYamlLoader() { }
 
@@ -102,8 +102,7 @@ public final class KuudraYamlLoader {
         }
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         boolean bannerEnabled = bool(root.get("banner-enabled"), true);
-        KuudraManifest.Deployment deployment = loadDeployment(homeDirectory.resolve("manifests"),
-                homeDirectory.resolve("ability-profiles"));
+        KuudraManifest.Deployment deployment = loadDeployment(homeDirectory);
         List<String> abilityProfiles = strings(root, "ability-profiles");
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
@@ -153,34 +152,48 @@ public final class KuudraYamlLoader {
         return new KuudraManifest.Resources(components, flows, policies);
     }
 
-    /** Loads the v0.5 authoritative Resource/Ability set and global AbilityProfiles. */
+    /** Loads the v0.5 authoritative deployment rooted at one Kuudra home directory. */
+    public static KuudraManifest.Deployment loadDeployment(Path homeDirectory) throws IOException {
+        Path home = Objects.requireNonNull(homeDirectory, "homeDirectory").toAbsolutePath().normalize();
+        rejectLegacyAbilityProfiles(home.resolve("ability-profiles"));
+        return loadDeployment(home.resolve("manifests"), home.resolve("abilities"),
+                home.resolve("abilities/profiles"));
+    }
+
+    /** Loads the v0.5 authoritative Resource, Ability and global AbilityProfile sets. */
     public static KuudraManifest.Deployment loadDeployment(Path manifestsDirectory,
+                                                           Path abilitiesDirectory,
                                                            Path profilesDirectory) throws IOException {
         Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities = new LinkedHashMap<>();
         Map<String, KuudraManifest.AbilityProfile> profiles = new LinkedHashMap<>();
-        loadV2Directory(manifestsDirectory, false, (document, file, index) ->
+        loadV2Directory(manifestsDirectory, V2Directory.RESOURCES, (document, file, index) ->
                 loadV2Manifest(document, file, index, resources, abilities, profiles));
-        loadV2Directory(profilesDirectory, true, (document, file, index) ->
+        loadV2Directory(abilitiesDirectory, V2Directory.ABILITIES, (document, file, index) ->
                 loadV2Manifest(document, file, index, resources, abilities, profiles));
+        loadV2Directory(profilesDirectory, V2Directory.PROFILES, (document, file, index) ->
+                loadV2Manifest(document, file, index, resources, abilities, profiles));
+        validateResourceReferences(resources, abilities);
         return new KuudraManifest.Deployment(resources, abilities, profiles);
     }
 
-    private static void loadV2Directory(Path directory, boolean profilesOnly,
+    private static void loadV2Directory(Path directory, V2Directory expected,
                                         V2DocumentConsumer consumer) throws IOException {
         if (!Files.exists(directory)) return;
         if (!Files.isDirectory(directory)) throw new IOException("Configuration path is not a directory: " + directory);
         try (Stream<Path> files = Files.walk(directory)) {
-            for (Path file : files.filter(Files::isRegularFile).filter(KuudraYamlLoader::isYaml).sorted().toList()) {
+            Path profiles = directory.resolve("profiles").normalize();
+            for (Path file : files.filter(Files::isRegularFile).filter(KuudraYamlLoader::isYaml)
+                    .filter(path -> expected != V2Directory.ABILITIES || !path.normalize().startsWith(profiles))
+                    .sorted().toList()) {
                 int index = 0;
                 for (ManifestDocument document : readAll(file)) {
                     index++;
                     if (document.value() == null) continue;
                     Map<String, Object> root = mapping(document.value(), file);
                     String kind = string(root.get("kind"), file + ".kind");
-                    if (profilesOnly != "AbilityProfile".equals(kind)) {
-                        throw new IOException((profilesOnly ? "Only AbilityProfile is allowed under "
-                                : "AbilityProfile must be stored under ") + directory + ": " + file);
+                    if (!expected.accepts(kind)) {
+                        throw new IOException(expected.error(kind, directory, file));
                     }
                     consumer.accept(document, file, index);
                 }
@@ -231,19 +244,17 @@ public final class KuudraYamlLoader {
             }
             if (!"Ability".equals(kind)) throw new IllegalArgumentException("Unsupported v1alpha2 kind: " + kind);
             KuudraManifest.ResourceId id = new KuudraManifest.ResourceId(kind, namespace, name);
-            Map<String, KuudraManifest.AbilityResource> claims = new LinkedHashMap<>();
-            for (Map.Entry<String, Object> entry : mapping(required(spec, "resources"), source + ".spec.resources").entrySet()) {
-                Map<String, Object> value = mapping(entry.getValue(), source + ".spec.resources." + entry.getKey());
-                claims.put(entry.getKey(), new KuudraManifest.AbilityResource(new KuudraManifest.ResourceReference(
-                        string(required(value, "kind"), "resource.kind"),
-                        string(value.getOrDefault("namespace", namespace), "resource.namespace"),
-                        string(required(value, "name"), "resource.name"))));
+            Map<String, KuudraManifest.ResourceReference> aliases = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : optionalMapping(spec, "resources").entrySet()) {
+                aliases.put(entry.getKey(), resourceReference(entry.getValue(),
+                        source + ".spec.resources." + entry.getKey()));
             }
             Map<String, KuudraManifest.AbilityNode> nodes = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : mapping(required(spec, "nodes"), source + ".spec.nodes").entrySet()) {
                 Map<String, Object> value = mapping(entry.getValue(), source + ".spec.nodes." + entry.getKey());
                 nodes.put(entry.getKey(), new KuudraManifest.AbilityNode(
-                        string(required(value, "resource"), "node.resource"),
+                        resolveNodeResource(required(value, "resource"), aliases,
+                                source + ".spec.nodes." + entry.getKey() + ".resource"),
                         value.containsKey("handler") ? string(value.get("handler"), "node.handler") : "",
                         optionalMapping(value, "arguments"),
                         value.containsKey("session") ? ingressSession(mapping(value.get("session"), "node.session"), source) : null));
@@ -256,11 +267,102 @@ public final class KuudraYamlLoader {
             }
             KuudraManifest.Ability ability = new KuudraManifest.Ability(id, metadata,
                     enumValue(io.github.actforever.kuudra.api.runtime.AbilityExecutionClass.class,
-                            spec.getOrDefault("executionClass", "DATA")), claims, nodes, edges,
+                            spec.getOrDefault("executionClass", "DATA")), aliases, nodes, edges,
                     strings(spec, "dependsOn"), strings(spec, "mutexWith"));
             if (abilities.putIfAbsent(id, ability) != null) throw new IllegalArgumentException("Duplicate Ability: " + id);
         } catch (IllegalArgumentException invalid) {
             throw new IOException("Invalid " + kind + " at " + source + ": " + invalid.getMessage(), invalid);
+        }
+    }
+
+    private static KuudraManifest.ResourceReference resolveNodeResource(
+            Object value, Map<String, KuudraManifest.ResourceReference> aliases, String source) throws IOException {
+        if (value instanceof String text && !text.contains("/")) {
+            KuudraManifest.ResourceReference reference = aliases.get(text);
+            if (reference == null) throw new IOException("Unknown Resource alias at " + source + ": " + text);
+            return reference;
+        }
+        return resourceReference(value, source);
+    }
+
+    private static KuudraManifest.ResourceReference resourceReference(Object value, String source) throws IOException {
+        try {
+            if (value instanceof String text) {
+                String[] identity = text.split("/", -1);
+                if (identity.length != 3) throw new IllegalArgumentException(
+                        "Resource reference must be kind/namespace/name: " + text);
+                return newResourceReference(identity[0], identity[1], identity[2]);
+            }
+            Map<String, Object> object = mapping(value, source);
+            return newResourceReference(
+                    string(required(object, "kind"), source + ".kind"),
+                    string(required(object, "namespace"), source + ".namespace"),
+                    string(required(object, "name"), source + ".name"));
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException("Invalid Resource reference at " + source + ": " + invalid.getMessage(), invalid);
+        }
+    }
+
+    private static KuudraManifest.ResourceReference newResourceReference(
+            String kind, String namespace, String name) {
+        if (!KuudraManifest.RESOURCE_KINDS.containsKey(kind)) {
+            throw new IllegalArgumentException("Unsupported Resource kind: " + kind);
+        }
+        return new KuudraManifest.ResourceReference(kind, namespace, name);
+    }
+
+    private static void validateResourceReferences(
+            Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources,
+            Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities) throws IOException {
+        for (KuudraManifest.Ability ability : abilities.values()) {
+            for (KuudraManifest.ResourceReference reference : ability.resources().values()) {
+                requireResource(resources, ability, reference, "alias");
+            }
+            for (Map.Entry<String, KuudraManifest.AbilityNode> node : ability.nodes().entrySet()) {
+                requireResource(resources, ability, node.getValue().resource(), "node " + node.getKey());
+            }
+        }
+    }
+
+    private static void requireResource(Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources,
+                                        KuudraManifest.Ability ability,
+                                        KuudraManifest.ResourceReference reference,
+                                        String location) throws IOException {
+        if (!resources.containsKey(reference.id())) throw new IOException("Ability " + ability.qualifiedName()
+                + " " + location + " references unknown Resource " + reference.canonicalName());
+    }
+
+    private static void rejectLegacyAbilityProfiles(Path directory) throws IOException {
+        if (!Files.isDirectory(directory)) return;
+        try (Stream<Path> files = Files.walk(directory)) {
+            if (files.anyMatch(path -> Files.isRegularFile(path) && isYaml(path))) {
+                throw new IOException("AbilityProfile directory has moved from " + directory
+                        + " to <home-directory>/abilities/profiles");
+            }
+        }
+    }
+
+    private enum V2Directory {
+        RESOURCES, ABILITIES, PROFILES;
+
+        boolean accepts(String kind) {
+            return switch (this) {
+                case RESOURCES -> KuudraManifest.RESOURCE_KINDS.containsKey(kind);
+                case ABILITIES -> "Ability".equals(kind);
+                case PROFILES -> "AbilityProfile".equals(kind);
+            };
+        }
+
+        String error(String kind, Path directory, Path file) {
+            return switch (this) {
+                case RESOURCES -> kind.equals("Ability")
+                        ? "Ability must be stored under <home-directory>/abilities: " + file
+                        : "Only Resource kinds are allowed under " + directory + ": " + file;
+                case ABILITIES -> kind.equals("AbilityProfile")
+                        ? "AbilityProfile must be stored under <home-directory>/abilities/profiles: " + file
+                        : "Only Ability is allowed under " + directory + ": " + file;
+                case PROFILES -> "Only AbilityProfile is allowed under " + directory + ": " + file;
+            };
         }
     }
 

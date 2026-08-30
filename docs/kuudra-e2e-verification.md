@@ -28,7 +28,8 @@ mvn package -DskipTests=false -Dexec.skip=true
   config.yaml
   plugins/
   manifests/
-  ability-profiles/
+  abilities/
+    profiles/
 ```
 
 `config.yaml` 必须显式选择示例 Profile，例如：
@@ -105,15 +106,15 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 | `allowElevation: false` 后 claim | 仅该 Ability FAILED，其他独立 Ability 可继续收敛 |
 | 未知 Controller handler | Ability 编译失败并明确指出 handler |
 | 同一 Controller 的 `suspend`/`resume` 节点 | 分别路由到对应方法，不使用动态 action 分派 |
-| App restart | 重新读取磁盘 manifests/profiles，正常 stop 后再 start |
+| App restart | 重新读取磁盘 manifests/abilities/profiles，正常 stop 后再 start |
 | App stop during suspension | 恢复目标、清空 owner 操作、关闭 broker |
 
 ## 2026-08-30 实测记录
 
 本轮在管理员 Windows 会话中验证：
 
-- 13 个官方插件 Maven 模块 Java 测试全部通过；机器只有 .NET Runtime、没有 SDK，因此 C# `dotnet test/publish` 未执行；
-- HelloWorld 组合 Ability 为 ENABLED，3 个 Resource 为 RUNNING，观测到 19 条连续业务日志、0 条 ERROR；
-- 修复了 v1alpha2 被旧周期调谐器误解码、EventSource 在 emitter 绑定前 start、生产 JAR 路径变量 500 三个内核问题；
-- process-control 组合观测到 `PING.EXE` 的 `Suspended` 等待原因，自动恢复后进程存活，日志 0 ERROR；
-- 在下一次挂起期间执行 App stop 后，目标立即恢复、broker 退出、App 为 STOPPED。
+- 核心 10 模块 `mvn test -DskipTests=false` 全部通过；13 个官方插件模块 Java/Kotlin 测试、Windows native host 的 3 个 C# 测试及 self-contained `win-x64` publish 全部通过；
+- HelloWorld 示例按 `manifests/`、`abilities/`、`abilities/profiles/` 部署，字符串与对象 Resource 引用均成功解析；Ability 为 ENABLED，3 个 Resource 为 RUNNING，`log` handler 持续收到带 Ability/Session ID 的事件，日志 0 ERROR；
+- Ability 的 pause/resume/disable/enable/inherit 均返回 HTTP 202，并依次收敛到 PAUSED/ENABLED/DISABLED/ENABLED/ENABLED；restart 返回 200，重新读取三类目录后恢复 ENABLED + INHERIT；
+- App stop 后 HTTP 仍可查询到 STOPPED，验证 Web 与 App 生命周期边界；
+- conditional-boundary + session-probe 组合物化 6 个 RUNNING Resource，建立 Session dependency，并在 required Session 完成后按 `CANCEL_DEPENDENT` 取消 dependent Session，日志 0 ERROR。

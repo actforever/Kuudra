@@ -84,7 +84,7 @@ The minimal end-to-end path is implemented:
 ```text
 kuudra-web
   -> KuudraApp
-  -> config.yaml + manifests/**/*.yaml + ability-profiles/**/*.yaml
+  -> config.yaml + manifests/**/*.yaml + abilities/**/*.yaml + abilities/profiles/**/*.yaml
   -> plugin JAR scan
   -> metadata/dependency resolution and plugin startup
   -> Ability claims -> on-demand Resource materialization
@@ -93,14 +93,14 @@ kuudra-web
 ```
 
 - App configuration is owned entirely by `KuudraApp`; Web does not source Kuudra settings from Spring. Configuration is deeply merged in ascending priority: packaged `kuudra-app/src/main/resources/config.yaml`, `<home-directory>/config.yaml`, then an explicit `KuudraConfigResource` or configuration path passed while creating the App. For packaged Web, relative paths use the executable JAR directory as their base; standalone App defaults to the working directory.
-- Global YAML contains root `home-directory`, `banner-enabled`, runtime queue/worker/timing settings, `max-event-hops`, Ability drain/cancel grace/Resource lifecycle timeouts, selected `ability-profiles`, reconciliation, StateStore, logging, I18n and `global-context`. App config keys use lowercase kebab-case; v1alpha2 resource manifests use camelCase. App initialization ensures fixed `plugins/`, `manifests/`, `ability-profiles/`, `logs/`, `state/`, and `locale/` directories exist. Do not reintroduce `resource-selection`, root SessionCoordinator defaults, or a top-level `flows/` directory.
-- An Ability declares Resource aliases, nodes and edges. Supported Resource kinds are `EventSource`, `EventInterpreter`, `EventAdapter`, `Ingress`, `Controller`, and `Egress`. Controller nodes must select `handler`; every Ingress node must select CREATE or JOIN. EventAdapter domain is inferred from topology. Do not reintroduce Flow resources, `kind: EventHandler`, `spec.component`, `desiredState`, `resource-selection`, or `SessionCoordinationPolicy` manifests.
+- Global YAML contains root `home-directory`, `banner-enabled`, runtime queue/worker/timing settings, `max-event-hops`, Ability drain/cancel grace/Resource lifecycle timeouts, selected `ability-profiles`, reconciliation, StateStore, logging, I18n and `global-context`. App config keys use lowercase kebab-case; v1alpha2 resource manifests use camelCase. App initialization ensures fixed `plugins/`, `manifests/`, `abilities/`, `abilities/profiles/`, `logs/`, `state/`, and `locale/` directories exist. Do not reintroduce `resource-selection`, root SessionCoordinator defaults, or a top-level `flows/` directory.
+- An Ability declares optional Resource aliases, nodes and edges. Alias values and direct node Resource references accept either a complete `kind/namespace/name` string or `{kind, namespace, name}` object; Resource namespace never defaults from Ability namespace. Claims are derived only from distinct node references, so unused aliases are valid but do not materialize Resources. Supported Resource kinds are `EventSource`, `EventInterpreter`, `EventAdapter`, `Ingress`, `Controller`, and `Egress`. Controller nodes must select `handler`; every Ingress node must select CREATE or JOIN. EventAdapter domain is inferred from topology. Do not reintroduce Flow resources, `kind: EventHandler`, `spec.component`, `desiredState`, `resource-selection`, or `SessionCoordinationPolicy` manifests.
 - Ability claim state, Resource lifecycle state, Session state and kernel state are independent axes. Profiles and direct overrides determine ENABLED/PAUSED/DISABLED; Resource lifecycle is the merge of all active claims. Stable App lifecycle and graceful stop/restart semantics remain unchanged.
 - `kind/namespace/name` identifies one App-owned Resource instance. Multiple Ability aliases may claim the same identity only with identical static `options`; different names create different instances. `ResourcePolicy.allowParallel=false` serializes invocations of the shared instance across Abilities.
 - `spec.executionClass` is `DATA` by default or `CONTROL`. Kernel pause gates DATA work; CONTROL remains routable while App is PAUSED. Use CONTROL only for bounded control paths.
-- Multi-document YAML and recursive discovery remain supported. `<home>/manifests` is authoritative for Resource and Ability declarations; `<home>/ability-profiles` is authoritative for global AbilityProfiles. StateStore persists their generations/observed generations but never Sessions, event payloads or contexts.
+- Multi-document YAML and recursive discovery remain supported. `<home>/manifests` is authoritative for Resource declarations, `<home>/abilities` for Ability declarations, and `<home>/abilities/profiles` for global AbilityProfiles. StateStore persists their generations/observed generations but never Sessions, event payloads or contexts.
 - The built-in `controller/kuudra-official/default/system-control` exposes the `control` handler over the narrow `PluginRuntimeServices` port. Plugins must not depend on `KuudraApp` directly.
-- Resource and Ability manifests live under fixed `<home-directory>/manifests`; global AbilityProfile manifests live under fixed `<home-directory>/ability-profiles`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
+- Resource manifests live under fixed `<home-directory>/manifests`; Ability manifests live under fixed `<home-directory>/abilities`; global AbilityProfile manifests live under fixed `<home-directory>/abilities/profiles`. Plugin JARs live under fixed `<home-directory>/plugins`; they are local deployment artifacts and are not part of the core reactor.
 - The exact startup procedure and failure behavior are documented in `docs/kuudra-bootstrap.md`.
 - Logging event coverage, isolation and file rotation are documented in `docs/kuudra-logging.md`.
 - The repeatable real-plugin verification matrix is documented in `docs/kuudra-e2e-verification.md`; keep it aligned with lifecycle, reconciliation, manifest reload and HTTP control semantics.
@@ -135,7 +135,7 @@ mvn -f plugins/pom.xml clean package
 
 The current machine has previously failed full forked tests because of a small Windows paging file. Running Surefire in-process can then fail Spring/Mockito's ByteBuddy self-attach requirement. These are environment failures, not established product failures. Prefer targeted module tests and a real packaged Web bootstrap verification; report the exact command and limitation in handoff/final output.
 
-For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write Resource and Ability manifests under `.kuudra/manifests/`, select an AbilityProfile, launch `kuudra-web`, then query `GET /api/v1/kuudra/status` and the Runtime Ability/Resource endpoints.
+For the HelloWorld smoke test: build the plugin, place its JAR in `.kuudra/plugins/`, write Resources under `.kuudra/manifests/`, Ability under `.kuudra/abilities/`, and Profile under `.kuudra/abilities/profiles/`, launch `kuudra-web`, then query `GET /api/v1/kuudra/status` and the Runtime Ability/Resource endpoints.
 
 ## Working rules
 

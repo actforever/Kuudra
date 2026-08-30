@@ -70,14 +70,14 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     new ResourceFieldDocumentation("spec.executionClass", "AbilityExecutionClass", false,
                             "DATA is suspended by a kernel pause; CONTROL remains routable and defaults are DATA.",
                             List.of("DATA", "CONTROL")),
-                    new ResourceFieldDocumentation("spec.resources", "Map<String, ResourceReference>", true,
-                            "Resource alias map. Namespace defaults to the Ability namespace; an explicit namespace may reference "
-                                    + "a resource in another activated namespace.", List.of(Map.of(
-                                    "source", Map.of("kind", "EventSource", "name", "mysource"),
+                    new ResourceFieldDocumentation("spec.resources", "Map<String, String|ResourceReference>", false,
+                            "Optional Resource aliases. Values are kind/namespace/name strings or structured references; "
+                                    + "Resource namespace never defaults from Ability namespace.", List.of(Map.of(
+                                    "source", "EventSource/shared/mysource",
                                     "controller", Map.of("kind", "Controller", "namespace", "system", "name", "network")))),
                     new ResourceFieldDocumentation("spec.nodes", "Map<String, Node>", true,
-                            "Invocation nodes select a Resource alias; Controller nodes additionally select a named handler.",
-                            List.of(Map.of("disconnect", Map.of("resource", "controller", "handler", "disconnect")))),
+                            "Invocation nodes select an alias or use a direct string/object Resource reference; Controller nodes additionally select a named handler.",
+                            List.of(Map.of("disconnect", Map.of("resource", "Controller/system/network", "handler", "disconnect")))),
                     new ResourceFieldDocumentation("spec.edges", "List<Edge>", true,
                             "Directed edges whose from/to values reference keys in spec.nodes.",
                             List.of(List.of(Map.of("from", "source", "to", "disconnect"))))),
@@ -87,8 +87,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                     "spec", Map.of(
                             "executionClass", "DATA",
                             "resources", Map.of(
-                                    "source", Map.of("kind", "EventSource", "name", "mysource"),
-                                    "controller", Map.of("kind", "Controller", "name", "network")),
+                                    "source", "EventSource/shared/mysource",
+                                    "controller", Map.of("kind", "Controller", "namespace", "system", "name", "network")),
                             "nodes", Map.of(
                                     "source", Map.of("resource", "source"),
                                     "disconnect", Map.of("resource", "controller", "handler", "disconnect")),
@@ -222,7 +222,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         ensureDirectory(homeDirectory, "home", created);
         ensureDirectory(homeDirectory.resolve("plugins"), "plugins", created);
         ensureDirectory(homeDirectory.resolve("manifests"), "manifests", created);
-        ensureDirectory(homeDirectory.resolve("ability-profiles"), "ability-profiles", created);
+        ensureDirectory(homeDirectory.resolve("abilities"), "abilities", created);
+        ensureDirectory(homeDirectory.resolve("abilities/profiles"), "ability-profiles", created);
         ensureDirectory(homeDirectory.resolve("logs"), "logs", created);
         ensureDirectory(homeDirectory.resolve("state"), "state", created);
         ensureDirectory(homeDirectory.resolve("locale"), "locale", created);
@@ -291,8 +292,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             plugins.startAll().toCompletableFuture().join();
             if (bootstrapConfig != null) {
                 KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(
-                        bootstrapConfig.homeDirectory().resolve("manifests"),
-                        bootstrapConfig.homeDirectory().resolve("ability-profiles"));
+                        bootstrapConfig.homeDirectory());
                 applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
                         bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
                         bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(),

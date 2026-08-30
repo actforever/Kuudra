@@ -24,40 +24,45 @@ class AbilityAppTest {
         write(home.resolve("manifests/network.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: EventSource
-                metadata: {namespace: demo, name: source}
+                metadata: {namespace: input, name: source}
                 spec: {template: test/ability-test/bound-source}
                 ---
                 apiVersion: kuudra.io/v1alpha2
                 kind: Ingress
-                metadata: {namespace: demo, name: ingress}
+                metadata: {namespace: shared, name: ingress}
                 spec: {template: test/ability-test/group-ingress}
                 ---
                 apiVersion: kuudra.io/v1alpha2
                 kind: Controller
-                metadata: {namespace: demo, name: network}
+                metadata: {namespace: operations, name: network}
                 spec: {template: test/ability-test/network-controller}
                 ---
+                apiVersion: kuudra.io/v1alpha2
+                kind: Controller
+                metadata: {namespace: operations, name: unused}
+                spec: {template: test/ability-test/network-controller}
+                """);
+        write(home.resolve("abilities/network.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: Ability
                 metadata: {namespace: demo, name: disconnect}
                 spec:
                   resources:
-                    source: {kind: EventSource, name: source}
-                    ingress: {kind: Ingress, name: ingress}
-                    network: {kind: Controller, name: network}
+                    source: EventSource/input/source
+                    unused: {kind: Controller, namespace: operations, name: unused}
                   nodes:
                     source: {resource: source}
                     admit:
-                      resource: ingress
+                      resource: {kind: Ingress, namespace: shared, name: ingress}
                       arguments: {group: game}
                       session: {mode: CREATE}
                     disconnect:
-                      resource: network
+                      resource: Controller/operations/network
                       handler: disconnect
                       arguments: {alias: '${event#alias}'}
                   edges: [{from: source, to: admit}, {from: admit, to: disconnect}]
                 """);
-        write(home.resolve("ability-profiles/default.yaml"), """
+        write(home.resolve("abilities/profiles/default.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
                 kind: AbilityProfile
                 metadata: {name: default}
@@ -72,8 +77,12 @@ class AbilityAppTest {
 
         try (KuudraApp app = KuudraApp.createConfigured(config)) {
             assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
-            assertEquals(3, app.manifestResources().size());
-            assertTrue(app.manifestResources().stream().allMatch(resource -> resource.state().equals("RUNNING")));
+            assertEquals(4, app.manifestResources().size());
+            assertEquals(3, app.manifestResources().stream()
+                    .filter(resource -> resource.state().equals("RUNNING")).count());
+            assertEquals("DESTROYED", app.manifestResources().stream()
+                    .filter(resource -> resource.id().equals("Controller/operations/unused"))
+                    .findFirst().orElseThrow().state());
             assertEquals("disconnect", app.resourceTemplates().stream()
                     .filter(template -> template.kind().equals("Controller")).findFirst().orElseThrow()
                     .handlers().get(0).name());

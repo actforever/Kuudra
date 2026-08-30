@@ -11,6 +11,15 @@ Plugin archive
                   -> edge（Event 路由）
 ```
 
+Resource 清单固定放在 `manifests/`，Ability 放在 `abilities/`，全局 AbilityProfile
+放在 `abilities/profiles/`。Ability namespace 只属于 Ability 身份和选择域，不参与
+Resource 引用解析。
+
+Ability 节点可以通过 `spec.resources` 中的 alias 引用 Resource，也可以直接使用
+`kind/namespace/name` 字符串或 `{kind, namespace, name}` 对象。两种格式在加载期统一为
+完整 `ResourceReference`；Resource namespace 必须显式出现在引用中。未使用 alias 合法，
+但不会产生 claim。实际 claim 始终从节点引用去重计算。
+
 ## Controller 与 EventHandler
 
 插件以类型级 `@Controller` 发布 Controller ResourceTemplate，以方法级

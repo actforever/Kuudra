@@ -198,10 +198,10 @@ final class AbilityManager implements AutoCloseable {
         for (KuudraManifest.Ability ability : deployment.abilities().values()) {
             if (desired.get(ability.qualifiedName()) == State.DISABLED
                     || desired.get(ability.qualifiedName()) == State.FAILED) continue;
-            for (KuudraManifest.AbilityResource claim : ability.resources().values()) {
-                if (!deployment.resources().containsKey(claim.reference().id())) throw new KuudraException(
-                        "Ability " + ability.qualifiedName() + " references unknown Resource " + claim.reference().id());
-                result.computeIfAbsent(claim.reference().id(), ignored -> new LinkedHashSet<>()).add(ability.qualifiedName());
+            for (KuudraManifest.ResourceReference reference : referencedResources(ability)) {
+                if (!deployment.resources().containsKey(reference.id())) throw new KuudraException(
+                        "Ability " + ability.qualifiedName() + " references unknown Resource " + reference.id());
+                result.computeIfAbsent(reference.id(), ignored -> new LinkedHashSet<>()).add(ability.qualifiedName());
             }
         }
         result.replaceAll((id, claims) -> Set.copyOf(claims)); return Map.copyOf(result);
@@ -226,7 +226,7 @@ final class AbilityManager implements AutoCloseable {
         }
         for (KuudraManifest.Ability ability : deployment.abilities().values()) {
             if (desired.get(ability.qualifiedName()) == State.DISABLED) continue;
-            Map<String, Long> counts = ability.resources().values().stream().map(claim -> deployment.resources().get(claim.reference().id()))
+            Map<String, Long> counts = referencedResources(ability).stream().map(reference -> deployment.resources().get(reference.id()))
                     .map(this::template).filter(template -> template.policy().limitScope() == ResourceLimitScope.ABILITY)
                     .collect(java.util.stream.Collectors.groupingBy(ResourceTemplateDefinition::reference,
                             java.util.stream.Collectors.counting()));
@@ -330,7 +330,7 @@ final class AbilityManager implements AutoCloseable {
         Map<String, EventDomain> adapterDomains = inferAdapterDomains(ability);
         for (Map.Entry<String, KuudraManifest.AbilityNode> entry : ability.nodes().entrySet()) {
             String nodeId = entry.getKey(); KuudraManifest.AbilityNode node = entry.getValue();
-            KuudraManifest.Resource resource = claimedResource(ability, node.resource());
+            KuudraManifest.Resource resource = claimedResource(node.resource());
             ManagedResource managed = resources.get(resource.id());
             FlowNode compiled = switch (resource.type()) {
                 case "event-source" -> new FlowNode.SourceNode(nodeId, (EventSource) managed.instance);
@@ -380,7 +380,7 @@ final class AbilityManager implements AutoCloseable {
                     || desired.get(ability.qualifiedName()) == State.FAILED)
                     || !registeredAbilities.contains(ability.qualifiedName())) continue;
             for (KuudraConfig.EdgeConfig edge : ability.edges()) {
-                KuudraManifest.Resource source = claimedResource(ability, ability.nodes().get(edge.from()).resource());
+                KuudraManifest.Resource source = claimedResource(ability.nodes().get(edge.from()).resource());
                 if (source.type().equals("event-source")) targets.computeIfAbsent(source.id(), ignored -> new ArrayList<>())
                         .add(new KuudraRuntime.SourceTarget(ability.qualifiedName(), edge.to()));
             }
@@ -399,8 +399,8 @@ final class AbilityManager implements AutoCloseable {
         do {
             changed = false;
             for (KuudraConfig.EdgeConfig edge : ability.edges()) {
-                String fromType = claimedResource(ability, ability.nodes().get(edge.from()).resource()).type();
-                String toType = claimedResource(ability, ability.nodes().get(edge.to()).resource()).type();
+                String fromType = claimedResource(ability.nodes().get(edge.from()).resource()).type();
+                String toType = claimedResource(ability.nodes().get(edge.to()).resource()).type();
                 EventDomain output = fromType.equals("event-adapter") ? domains.get(edge.from()) : fixedOutput(fromType);
                 EventDomain input = toType.equals("event-adapter") ? domains.get(edge.to()) : fixedInput(toType);
                 if (fromType.equals("event-adapter") && output == null && input != null) { domains.put(edge.from(), input); changed = true; }
@@ -410,7 +410,7 @@ final class AbilityManager implements AutoCloseable {
             }
         } while (changed);
         ability.nodes().forEach((id, node) -> {
-            if (claimedResource(ability, node.resource()).type().equals("event-adapter") && !domains.containsKey(id)) {
+            if (claimedResource(node.resource()).type().equals("event-adapter") && !domains.containsKey(id)) {
                 throw new KuudraException("Cannot infer EventAdapter domain: " + ability.qualifiedName() + "/" + id);
             }
         });
@@ -426,12 +426,16 @@ final class AbilityManager implements AutoCloseable {
             case "ingress", "controller" -> EventDomain.SESSION; default -> null; };
     }
 
-    private KuudraManifest.Resource claimedResource(KuudraManifest.Ability ability, String alias) {
-        KuudraManifest.AbilityResource claim = ability.resources().get(alias);
-        if (claim == null) throw new KuudraException("Unknown Ability Resource alias: " + alias);
-        KuudraManifest.Resource resource = deployment.resources().get(claim.reference().id());
-        if (resource == null) throw new KuudraException("Unknown claimed Resource: " + claim.reference().id());
-        if (!resource.id().kind().equals(claim.reference().kind())) throw new KuudraException("Resource kind mismatch: " + alias);
+    private Set<KuudraManifest.ResourceReference> referencedResources(KuudraManifest.Ability ability) {
+        return ability.nodes().values().stream().map(KuudraManifest.AbilityNode::resource)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private KuudraManifest.Resource claimedResource(KuudraManifest.ResourceReference reference) {
+        KuudraManifest.Resource resource = deployment.resources().get(reference.id());
+        if (resource == null) throw new KuudraException("Unknown claimed Resource: " + reference.id());
+        if (!resource.id().kind().equals(reference.kind())) throw new KuudraException(
+                "Resource kind mismatch: " + reference.canonicalName());
         return resource;
     }
 
