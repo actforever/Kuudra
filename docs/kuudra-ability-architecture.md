@@ -52,6 +52,24 @@ ResourceTemplate 策略包括：
 归档可提供 `META-INF/kuudra-plugin/resources.idx` 限定扫描类；空索引表示不发布资源。
 扫描必须跳过 shaded multi-release JAR 的 `META-INF/versions/**`。
 
+## EventAdapter 与 EventInterpreter
+
+EventAdapter 对单个 Event 做无状态、同步的过滤或映射，并以 `List<KuudraEvent>` 返回结果。
+EventInterpreter 用于连击、序列、组合键和其他跨 Event 状态机，签名固定为：
+
+```java
+void interpret(KuudraEvent event, EventInterpreterContext context)
+```
+
+Interpreter 不返回同步列表；立即和延迟结果都调用 `context.emit`。Context 提供节点 arguments、
+节点私有 `state()`、命名 `buffer()`、可替换/取消的命名定时任务，以及支持多原因 Event 的
+emit。Runtime 以 `ability/revision/node` 为作用域串行执行输入和超时回调，所以同一 Resource
+实例被多个 Ability claim 时不会混合窗口状态。`allowParallel=false` 仍额外串行化不同节点
+对共享实例的调用。
+
+Ability 暂停、Resource 暂停、DATA 内核暂停、禁用、注销和关闭都会丢弃未完成窗口：取消
+定时任务、清空 state/buffer，并使旧 context 无法继续发射。恢复后从新的输入重新计数。
+
 ## Ability claim 与状态
 
 Ability 是运行时的控制和排空边界。Profile claim、`config.yaml abilities` configuration

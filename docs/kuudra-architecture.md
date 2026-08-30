@@ -40,15 +40,23 @@ RAW->SESSION 边界，Egress 是唯一 SESSION->RAW 边界并保留 EventLineage
 Egress。Controller 通过多个具名 `@EventHandler` 方法提供业务入口；Handler 异步返回
 `CompletionStage<Void>`，可在 stage 完成前 emit，并继承当前 Session 和 lineage。
 
-同步 Adapter/Interpreter/Ingress/Egress 应轮询 `ExecutionControl.poll()` 并快速返回；
-长运行 Handler 可在稳定边界调用 `checkpoint()`。SessionControl 只能操作当前 Session，
-Runtime 仍拥有工作租约、终态和依赖传播。
+Adapter 是无状态的同步过滤/映射扩展点，Ingress/Egress 也是同步边界。EventInterpreter
+则是有状态的 RAW 域解释器，签名为
+`void interpret(KuudraEvent, EventInterpreterContext)`：立即结果和窗口到期结果都通过
+`context.emit(...)` 主动产生。Runtime 为每个 `ability/revision/node` 隔离状态、事件缓冲和
+命名定时任务，并串行执行该节点的输入与超时回调；等待窗口不会占用 Session lease。
+
+聚合解释器通过 `emit(output, causes)` 声明全部原因 Event，Runtime 合并 parent Event、
+parent Session 和 hops。Ability/Resource/DATA 内核暂停、禁用、注销或关闭会取消定时器、
+清空节点状态并撤销旧 context。长运行 Handler 仍可在稳定边界调用 `checkpoint()`；
+SessionControl 只能操作当前 Session，Runtime 拥有工作租约、终态和依赖传播。
 
 ## Ability、Resource 与 Session
 
 Resource 身份为 `kind/namespace/name`，模板引用为
 `type/plugin-namespace/plugin-id/template-name`。同一 Resource 被多个 Ability claim 时
 共享一个 App 所有的实例；Runtime 仅尊重 `allowParallel` 调用策略，不启动或销毁它。
+共享 EventInterpreter Resource 时，各 Ability/node 的解释进度仍由 Runtime 节点作用域隔离。
 
 Ability 显式声明可选 Resource aliases、nodes 和 edges。节点可引用 alias，也可用
 `kind/namespace/name` 字符串或 `{kind, namespace, name}` 对象直接引用 Resource；两种格式

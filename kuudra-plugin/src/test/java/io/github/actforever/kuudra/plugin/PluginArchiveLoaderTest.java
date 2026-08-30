@@ -50,10 +50,10 @@ class PluginArchiveLoaderTest {
                                 description = "A recognized parent event", dataExample = "{key: A}"))
                         public final class ParentInterpreter implements io.github.actforever.kuudra.api.component.EventInterpreter,
                                 io.github.actforever.kuudra.plugin.ResourceLifecycle {
-                            public java.util.List<io.github.actforever.kuudra.api.event.KuudraEvent> interpret(
+                            public void interpret(
                                     io.github.actforever.kuudra.api.event.KuudraEvent event,
-                                    io.github.actforever.kuudra.api.context.EventContext context) {
-                                return java.util.List.of(event);
+                                    io.github.actforever.kuudra.api.context.EventInterpreterContext context) {
+                                context.emit(event);
                             }
                         }
                         """,

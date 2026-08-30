@@ -6,8 +6,8 @@
 | --- | --- |
 | `api.action` | EventHandler 的异步执行上下文（`ActionContext`），包含事件派发和当前会话受限控制能力 |
 | `api.app` | App 生命周期状态及传输安全快照 |
-| `api.component` | EventSource、Interpreter、Adapter、Ingress、Handler、Egress 等组件 SPI |
-| `api.context` | 四级上下文、类型转换、占位符编译和 ContextCodec |
+| `api.component` | EventSource、Interpreter、Adapter、Ingress、Handler、Egress 等组件 SPI，以及 Runtime 托管的 Interpreter EventBuffer |
+| `api.context` | 四级上下文、Interpreter 节点上下文/状态、类型转换、占位符编译和 ContextCodec |
 | `api.event` | 业务事件、执行域、Wrapper、lineage 与事件发射端口 |
 | `api.lifecycle` | 标准生命周期及可暂停生命周期 |
 | `api.runtime` | Runtime 检查点、Flow 快照和只读状态视图 |

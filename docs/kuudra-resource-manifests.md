@@ -19,6 +19,10 @@ Resource 与 Ability 省略 `metadata.namespace` 时使用 `default`。AbilityPr
 
 Resource 是 App 拥有并按 Ability claim 按需物化的插件实例。支持 `EventSource`、`EventInterpreter`、`EventAdapter`、`Ingress`、`Controller`、`Egress`。
 
+EventAdapter 是单 Event 的无状态同步转换；EventInterpreter 是 Runtime 托管节点状态、缓冲和
+定时任务的有状态 RAW 解释器。共享同一个 EventInterpreter Resource 不会共享不同 Ability/node
+的解释进度。暂停或禁用 Ability 会清空其未完成窗口。
+
 ```yaml
 apiVersion: kuudra.io/v1alpha2
 kind: Controller

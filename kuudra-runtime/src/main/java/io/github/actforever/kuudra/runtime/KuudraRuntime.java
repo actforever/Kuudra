@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Dual-domain Runtime: RAW routing, Ingress admission, SESSION routing and explicit Egress. */
 public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
@@ -21,6 +22,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final KuudraTaskQueue queue;
     private final ExecutorService workers;
     private final ExecutorService controlWorkers;
+    private final ScheduledExecutorService interpreterScheduler;
     private final Thread dispatcher;
     private final Map<String, RegisteredFlow> flows = new LinkedHashMap<>();
     private final List<ManagedSource> sources = new ArrayList<>();
@@ -66,6 +68,11 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
+        this.interpreterScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "kuudra-interpreter-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
         this.events = Objects.requireNonNull(events, "events");
         if (maxEventHops < 1) throw new KuudraException("maxEventHops must be positive"); this.maxEventHops = maxEventHops;
         if (dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0) throw new KuudraException("Runtime timing settings are invalid");
@@ -100,6 +107,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             }
             signalControlChange();
         }
+        if (!enabled) resetInterpreterScopes(scope -> scope.node.interpreter() == component);
     }
 
     /** Marks a component as cooperatively paused without changing the kernel lifecycle. */
@@ -114,6 +122,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             }
             signalControlChange();
         }
+        if (paused) resetInterpreterScopes(scope -> scope.node.interpreter() == component);
     }
 
     /** Configures whether one App-owned resource instance may execute concurrently across all Flow bindings. */
@@ -138,11 +147,16 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         event("flow.registered", Map.of("flowId", flow.id(), "revision", flow.revision()));
     }
     public RuntimeCheckpoint pause() {
+        boolean reset = false;
         synchronized (monitor) {
             if (closed.get()) throw new KuudraException("Runtime is closed");
             if (paused) return checkpoint();
             paused = true;
+            reset = true;
             signalControlChange();
+        }
+        if (reset) resetInterpreterScopes(scope -> scope.flow.flow.executionClass() == FlowExecutionClass.DATA);
+        synchronized (monitor) {
             while (activeExecutions > 0 && !closed.get()) {
                 try { monitor.wait(); }
                 catch (InterruptedException interrupted) {
@@ -170,6 +184,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             if (!enabled) pausedAbilities.remove(abilityId);
             signalControlChange(); monitor.notifyAll();
         }
+        if (!enabled) resetInterpreterScopes(scope -> scope.flow.flow.id().equals(abilityId));
     }
     public void setAbilityPaused(String abilityId, boolean abilityPaused) {
         synchronized (monitor) {
@@ -178,6 +193,7 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             else pausedAbilities.remove(abilityId);
             signalControlChange(); monitor.notifyAll();
         }
+        if (abilityPaused) resetInterpreterScopes(scope -> scope.flow.flow.id().equals(abilityId));
     }
     public boolean awaitAbilityDrained(String abilityId, Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -191,14 +207,17 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                 && active(snapshot.status())).forEach(snapshot -> cancel(snapshot.id()));
     }
     public void unregisterAbility(String abilityId) {
+        RegisteredFlow removed;
         synchronized (monitor) {
             if (sessionManager.activeCount(abilityId) != 0) {
                 throw new KuudraException("Ability still owns active Sessions: " + abilityId);
             }
-            if (flows.remove(abilityId) == null) return;
+            removed = flows.remove(abilityId);
+            if (removed == null) return;
             disabledAbilities.remove(abilityId); pausedAbilities.remove(abilityId);
             event("ability.unregistered", Map.of("abilityId", abilityId));
         }
+        removed.interpreterScopes.values().forEach(InterpreterScope::close);
     }
     public void resume() {
         synchronized (monitor) { if (closed.get()) throw new KuudraException("Runtime is closed"); }
@@ -325,13 +344,68 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             if(node instanceof FlowNode.JoinIngressNode ingress){ executeJoinIngress(flow,ingress,input,context); return; }
             if(node instanceof FlowNode.HandlerNode handler){ releaseHere=false; asynchronous=true; executeHandler(flow,handler,input,context,session,invocation,componentGate); componentGate=null; return; }
             if(node instanceof FlowNode.ControllerNode controller){ releaseHere=false; asynchronous=true; executeController(flow,controller,input,context,session,invocation,componentGate); componentGate=null; return; }
+            if(node instanceof FlowNode.InterpreterNode interpreter){
+                executeInterpreter(flow, interpreter, input, context);
+                return;
+            }
             List<KuudraEvent> output;
             if(node instanceof FlowNode.AdapterNode adapter)output=adapter.adapter().adapt(input,context);
-            else if(node instanceof FlowNode.InterpreterNode interpreter)output=interpreter.interpreter().interpret(input,context);
             else output=((FlowNode.EgressNode)node).egress().export(input,context);
             route(flow,node,task.wrapper(),normalize(input,output,node instanceof FlowNode.EgressNode,session));
         }catch(Throwable e){failure=e;event("event.execution.failed",Map.of("flowId",flow.flow.id(),"nodeId",task.nodeId(),"error",e.toString()));}
         finally{if(session!=null&&releaseHere)sessionManager.release(session,failure);if(invocation!=null&&!asynchronous){debugEvent("runtime.node.execution.completed",completionData(task,failure));invocation.finish();}if(componentGate!=null)componentGate.release();}
+    }
+
+    private void executeInterpreter(RegisteredFlow flow, FlowNode.InterpreterNode node, KuudraEvent input,
+                                    EventContext eventContext) {
+        InterpreterScope scope = flow.interpreterScopes.get(node.id());
+        if (scope == null) throw new KuudraException("Missing EventInterpreter scope: " + node.id());
+        scope.lock.lock();
+        try {
+            if (!scope.active(scope.epoch)) return;
+            node.interpreter().interpret(input, scope.context(input, eventContext));
+        } finally {
+            scope.lock.unlock();
+        }
+    }
+
+    private void executeScheduled(InterpreterScope scope, long epoch, String key, Runnable callback) {
+        ExecutorService executor = executor(scope.flow);
+        try {
+            executor.execute(() -> {
+                Invocation invocation = null;
+                Semaphore componentGate = null;
+                Throwable failure = null;
+                try {
+                    boolean counted = enterExecution(scope.flow);
+                    componentGate = acquireComponentGate(scope.node.interpreter());
+                    invocation = new Invocation(counted);
+                    scope.lock.lock();
+                    try {
+                        if (!scope.active(epoch)) return;
+                        callback.run();
+                    } finally {
+                        scope.lock.unlock();
+                    }
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    failure = error;
+                } catch (Throwable error) {
+                    failure = error;
+                    event("event-interpreter.callback.failed", Map.of("abilityId", scope.flow.flow.id(),
+                            "nodeId", scope.node.id(), "task", key, "error", error.toString()));
+                } finally {
+                    if (invocation != null) invocation.finish();
+                    if (componentGate != null) componentGate.release();
+                    debugEvent("event-interpreter.callback.completed", Map.of("abilityId", scope.flow.flow.id(),
+                            "nodeId", scope.node.id(), "task", key,
+                            "outcome", failure == null ? "success" : "failed"));
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            debugEvent("event-interpreter.callback.rejected", Map.of("abilityId", scope.flow.flow.id(),
+                    "nodeId", scope.node.id(), "task", key));
+        }
     }
     private void executeHandler(RegisteredFlow flow,FlowNode.HandlerNode node,KuudraEvent input,EventContext context,SessionManager.ManagedSession session,Invocation invocation,Semaphore componentGate){
         AtomicBoolean open=new AtomicBoolean(true);
@@ -479,6 +553,21 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     }
     private List<KuudraEvent> normalize(KuudraEvent input,List<KuudraEvent> output,boolean egress,SessionManager.ManagedSession session){if(output==null)return List.of();return output.stream().map(e->derive(input,e,egress,session)).toList();}
     private KuudraEvent derive(KuudraEvent input,KuudraEvent output,boolean egress,SessionManager.ManagedSession session){if(output==null)throw new KuudraException("Component emitted null");EventLineage lineage=output.lineage().hops()>input.lineage().hops()?output.lineage():(egress&&session!=null?input.lineage().descendFrom(input,session.reference()):input.lineage().descendFrom(input));return output.withLineage(lineage);}
+    private KuudraEvent derive(Collection<KuudraEvent> causes, KuudraEvent output) {
+        Objects.requireNonNull(output, "output");
+        if (causes == null || causes.isEmpty()) throw new KuudraException("EventInterpreter emission needs at least one cause");
+        Set<UUID> parentEvents = new LinkedHashSet<>(output.lineage().parentEventIds());
+        Set<UUID> parentSessions = new LinkedHashSet<>(output.lineage().parentSessionIds());
+        int hops = output.lineage().hops();
+        for (KuudraEvent cause : causes) {
+            Objects.requireNonNull(cause, "cause");
+            parentEvents.addAll(cause.lineage().parentEventIds());
+            parentEvents.add(cause.id());
+            parentSessions.addAll(cause.lineage().parentSessionIds());
+            hops = Math.max(hops, Math.addExact(cause.lineage().hops(), 1));
+        }
+        return output.withLineage(new EventLineage(parentEvents, parentSessions, hops));
+    }
     private EventContext context(RegisteredFlow flow,SessionManager.ManagedSession session,String nodeId,KuudraEvent event,Object component,Invocation invocation){
         Map<String,Object> sessionValues=session==null?Map.of():session.context.snapshot();SessionReference reference=session==null?null:session.reference();
         ExecutionControl control=new RuntimeExecutionControl(component,session,invocation,flow.flow.id(),flow.flow.executionClass());
@@ -536,6 +625,15 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         CompletableFuture<Void> changed = controlChangeSignal;
         controlChangeSignal = new CompletableFuture<>();
         changed.complete(null);
+    }
+
+    private void resetInterpreterScopes(java.util.function.Predicate<InterpreterScope> predicate) {
+        List<InterpreterScope> scopes;
+        synchronized (monitor) {
+            scopes = flows.values().stream().flatMap(flow -> flow.interpreterScopes.values().stream())
+                    .filter(predicate).toList();
+        }
+        scopes.forEach(InterpreterScope::reset);
     }
 
     private final class RuntimeExecutionControl implements ExecutionControl {
@@ -665,7 +763,13 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         else debugEvent("runtime.shutdown.sessions.drain.completed",drainResult);
 
         queue.offer(new RuntimeTask.StopTask());queue.close();dispatcher.interrupt();
+        List<InterpreterScope> interpreterScopes;
+        synchronized (monitor) {
+            interpreterScopes = flows.values().stream().flatMap(flow -> flow.interpreterScopes.values().stream()).toList();
+        }
+        interpreterScopes.forEach(InterpreterScope::close);
         synchronized(monitor){disabledComponents.clear();pausedComponents.clear();threadSafeComponents.clear();componentGates.clear();}
+        interpreterScheduler.shutdownNow();
         workers.shutdownNow();
         controlWorkers.shutdownNow();
         debugEvent("runtime.shutdown.completed",Map.of("elapsedMs",elapsedMillis(started)));
@@ -676,14 +780,256 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private record ManagedSource(EventSource source,List<SourceTarget> targets,boolean lifecycleOwned,AtomicBoolean closed){
         ManagedSource(EventSource source,List<SourceTarget>targets,boolean lifecycleOwned){this(source,targets,lifecycleOwned,new AtomicBoolean());}
     }
-    private static final class RegisteredFlow{
+    private final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;
         final Map<String,PlaceholderResolver.CompiledMap> configuration;
+        final Map<String, InterpreterScope> interpreterScopes;
         RegisteredFlow(KuudraFlow flow,SessionManager.AtomicValueContext context){
             this.flow=flow;this.context=context;
             Map<String,PlaceholderResolver.CompiledMap> compiled=new LinkedHashMap<>();
             flow.nodes().forEach((id,node)->compiled.put(id,PlaceholderResolver.compileMap(node.configuration(),node.inputDomain())));
             this.configuration=Map.copyOf(compiled);
+            Map<String, InterpreterScope> scopes = new LinkedHashMap<>();
+            flow.nodes().forEach((id, node) -> {
+                if (node instanceof FlowNode.InterpreterNode interpreter) {
+                    scopes.put(id, new InterpreterScope(this, interpreter));
+                }
+            });
+            this.interpreterScopes = Map.copyOf(scopes);
         }
+    }
+
+    private final class InterpreterScope {
+        private final RegisteredFlow flow;
+        private final FlowNode.InterpreterNode node;
+        private final ReentrantLock lock = new ReentrantLock(true);
+        private final SessionManager.AtomicValueContext state = new SessionManager.AtomicValueContext(codec, Map.of());
+        private final Map<String, List<KuudraEvent>> buffers = new LinkedHashMap<>();
+        private final Map<String, ScheduledEntry> scheduled = new LinkedHashMap<>();
+        private long epoch;
+        private boolean closed;
+
+        private InterpreterScope(RegisteredFlow flow, FlowNode.InterpreterNode node) {
+            this.flow = flow;
+            this.node = node;
+        }
+
+        private RuntimeEventInterpreterContext context(KuudraEvent input, EventContext eventContext) {
+            return new RuntimeEventInterpreterContext(this, epoch, input, eventContext);
+        }
+
+        private boolean active(long expectedEpoch) {
+            synchronized (monitor) {
+                return !closed && !KuudraRuntime.this.closed.get() && epoch == expectedEpoch
+                        && flows.get(flow.flow.id()) == flow
+                        && !disabledAbilities.contains(flow.flow.id())
+                        && !pausedAbilities.contains(flow.flow.id())
+                        && !(paused && flow.flow.executionClass() == FlowExecutionClass.DATA)
+                        && !disabledComponents.contains(node.interpreter())
+                        && !pausedComponents.contains(node.interpreter());
+            }
+        }
+
+        private void requireActive(long expectedEpoch) {
+            if (!active(expectedEpoch)) throw new KuudraException("EventInterpreter context is no longer active: "
+                    + flow.flow.id() + "/" + node.id());
+        }
+
+        private void schedule(long expectedEpoch, String key, Duration delay, Runnable callback) {
+            String checkedKey = requireName(key, "task key");
+            Objects.requireNonNull(delay, "delay");
+            Objects.requireNonNull(callback, "callback");
+            if (delay.isNegative()) throw new IllegalArgumentException("delay must not be negative");
+            lock.lock();
+            try {
+                requireActive(expectedEpoch);
+                ScheduledEntry previous = scheduled.remove(checkedKey);
+                if (previous != null && previous.future != null) previous.future.cancel(false);
+                ScheduledEntry entry = new ScheduledEntry(expectedEpoch);
+                scheduled.put(checkedKey, entry);
+                entry.future = interpreterScheduler.schedule(() -> fire(checkedKey, entry, callback),
+                        delay.toNanos(), TimeUnit.NANOSECONDS);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private void fire(String key, ScheduledEntry entry, Runnable callback) {
+            lock.lock();
+            try {
+                if (scheduled.get(key) != entry || !active(entry.epoch)) return;
+                scheduled.remove(key);
+            } finally {
+                lock.unlock();
+            }
+            executeScheduled(this, entry.epoch, key, callback);
+        }
+
+        private boolean cancel(long expectedEpoch, String key) {
+            String checkedKey = requireName(key, "task key");
+            lock.lock();
+            try {
+                requireActive(expectedEpoch);
+                ScheduledEntry entry = scheduled.remove(checkedKey);
+                return entry != null && entry.future != null && entry.future.cancel(false);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private boolean emit(long expectedEpoch, KuudraEvent output, Collection<KuudraEvent> causes) {
+            List<KuudraEvent> copiedCauses = List.copyOf(Objects.requireNonNull(causes, "causes"));
+            lock.lock();
+            try {
+                if (!active(expectedEpoch)) {
+                    debugEvent("event-interpreter.emission.rejected", Map.of("abilityId", flow.flow.id(),
+                            "nodeId", node.id(), "reason", "inactive-binding"));
+                    return false;
+                }
+                KuudraEvent derived = derive(copiedCauses, output);
+                return routeOne(flow, node, new RawEventWrapper(copiedCauses.get(0)), derived);
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private void reset() {
+            lock.lock();
+            try {
+                epoch++;
+                scheduled.values().forEach(entry -> {
+                    if (entry.future != null) entry.future.cancel(false);
+                });
+                scheduled.clear();
+                buffers.clear();
+                state.clear();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private void close() {
+            lock.lock();
+            try {
+                closed = true;
+                epoch++;
+                scheduled.values().forEach(entry -> {
+                    if (entry.future != null) entry.future.cancel(false);
+                });
+                scheduled.clear();
+                buffers.clear();
+                state.clear();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    private final class RuntimeEventInterpreterContext implements EventInterpreterContext {
+        private final InterpreterScope scope;
+        private final long epoch;
+        private final KuudraEvent input;
+        private final EventContext eventContext;
+        private final EventInterpreterState state;
+
+        private RuntimeEventInterpreterContext(InterpreterScope scope, long epoch, KuudraEvent input,
+                                               EventContext eventContext) {
+            this.scope = scope;
+            this.epoch = epoch;
+            this.input = input;
+            this.eventContext = eventContext;
+            this.state = new ScopedInterpreterState(scope, epoch);
+        }
+
+        @Override public String abilityId() { return scope.flow.flow.id(); }
+        @Override public long abilityRevision() { return scope.flow.flow.revision(); }
+        @Override public String nodeId() { return scope.node.id(); }
+        @Override public EventContext eventContext() { return eventContext; }
+        @Override public EventInterpreterState state() { return state; }
+        @Override public EventBuffer buffer(String name) {
+            return new ScopedEventBuffer(scope, epoch, requireName(name, "buffer name"));
+        }
+        @Override public void schedule(String key, Duration delay, Runnable callback) {
+            scope.schedule(epoch, key, delay, callback);
+        }
+        @Override public boolean cancelScheduled(String key) { return scope.cancel(epoch, key); }
+        @Override public boolean emit(KuudraEvent event) { return scope.emit(epoch, event, List.of(input)); }
+        @Override public boolean emit(KuudraEvent event, Collection<KuudraEvent> causes) {
+            return scope.emit(epoch, event, causes);
+        }
+    }
+
+    private static final class ScopedInterpreterState implements EventInterpreterState {
+        private final InterpreterScope scope;
+        private final long epoch;
+
+        private ScopedInterpreterState(InterpreterScope scope, long epoch) {
+            this.scope = scope;
+            this.epoch = epoch;
+        }
+
+        @Override public Map<String, Object> snapshot() {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); return scope.state.snapshot(); }
+            finally { scope.lock.unlock(); }
+        }
+        @Override public boolean compareAndSet(Map<String, Object> expected, Map<String, Object> replacement) {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); return scope.state.compareAndSet(expected, replacement); }
+            finally { scope.lock.unlock(); }
+        }
+        @Override public Map<String, Object> update(java.util.function.UnaryOperator<Map<String, Object>> operation) {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); return scope.state.update(operation); }
+            finally { scope.lock.unlock(); }
+        }
+        @Override public ContextCodec codec() { return scope.state.codec(); }
+    }
+
+    private static final class ScopedEventBuffer implements EventBuffer {
+        private final InterpreterScope scope;
+        private final long epoch;
+        private final String name;
+
+        private ScopedEventBuffer(InterpreterScope scope, long epoch, String name) {
+            this.scope = scope;
+            this.epoch = epoch;
+            this.name = name;
+        }
+
+        @Override public void add(KuudraEvent event) {
+            scope.lock.lock();
+            try {
+                scope.requireActive(epoch);
+                scope.buffers.computeIfAbsent(name, ignored -> new ArrayList<>()).add(Objects.requireNonNull(event));
+            } finally { scope.lock.unlock(); }
+        }
+        @Override public List<KuudraEvent> snapshot() {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); return List.copyOf(scope.buffers.getOrDefault(name, List.of())); }
+            finally { scope.lock.unlock(); }
+        }
+        @Override public int size() {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); return scope.buffers.getOrDefault(name, List.of()).size(); }
+            finally { scope.lock.unlock(); }
+        }
+        @Override public void clear() {
+            scope.lock.lock();
+            try { scope.requireActive(epoch); scope.buffers.remove(name); }
+            finally { scope.lock.unlock(); }
+        }
+    }
+
+    private static final class ScheduledEntry {
+        private final long epoch;
+        private ScheduledFuture<?> future;
+
+        private ScheduledEntry(long epoch) { this.epoch = epoch; }
+    }
+
+    private static String requireName(String value, String label) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(label + " must not be blank");
+        return value;
     }
 }

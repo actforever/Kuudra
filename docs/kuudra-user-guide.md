@@ -118,6 +118,34 @@ ResourceTemplate 的 `maxInstances`、`APP/ABILITY` 限额、`exclusivityDomain`
 对 EventSource，App 会在 `start()` 前完成 Ability 注册和 emitter 绑定，并在同批
 Resource 中最后启动 Source。
 
+EventAdapter 用于单个 Event 的无状态过滤/映射；EventInterpreter 用于连击、序列和时间窗。
+Interpreter 可以在窗口到期后主动输出，不要求等待下一次输入。它的状态按 Ability 节点隔离，
+即使多个 Ability claim 同一个 Resource，也不会共享点击计数。暂停、禁用或注销 Ability 会
+清空未完成窗口，恢复后从零开始。
+
+official default plugin 的通用计数窗口可用于单击、双击、三击：
+
+```yaml
+apiVersion: kuudra.io/v1alpha2
+kind: EventInterpreter
+metadata: {namespace: input, name: click-window}
+spec:
+  template: kuudra-official/default/count-window-event
+  options:
+    timeoutMs: 400
+    maxCount: 3
+    debounceMs: 50
+    outputTypes:
+      1: input.click.single
+      2: input.click.double
+      3: input.click.triple
+    includeMatchedEvents: true
+```
+
+达到 `maxCount` 会立即输出并清空；没有达到时在 `timeoutMs` 到期后按照实际数量输出。
+`outputTypes` 必须完整覆盖 `1..maxCount`。输入类型和鼠标按钮等无状态筛选应放在上游
+EventAdapter，不应耦合进计数解释器。
+
 ## 4. Controller 的具名入口
 
 一个 Controller 可以公开多个 `@EventHandler` 方法。Ability 节点必须通过

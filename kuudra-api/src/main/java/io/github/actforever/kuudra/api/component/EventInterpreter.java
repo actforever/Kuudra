@@ -10,10 +10,12 @@ import io.github.actforever.kuudra.api.runtime.*;
 import io.github.actforever.kuudra.api.session.*;
 import io.github.actforever.kuudra.api.system.*;
 
-import java.util.List;
-
-/** Stateful event interpretation such as sequence/window recognition before session admission. */
+/**
+ * Stateful RAW-domain event interpretation such as sequence/window recognition before session admission.
+ * Unlike an EventAdapter, an interpreter actively emits zero or more results and may retain its Runtime-owned
+ * node scope after this method returns.
+ */
 @FunctionalInterface
 public interface EventInterpreter extends Lifecycle {
-    List<KuudraEvent> interpret(KuudraEvent event, EventContext context);
+    void interpret(KuudraEvent event, EventInterpreterContext context);
 }

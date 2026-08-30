@@ -20,6 +20,115 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class KuudraRuntimeTest {
     @Test
+    void interpreterMayEmitAfterInvocationAndMergeEveryBufferedCause() throws Exception {
+        CountDownLatch emitted = new CountDownLatch(1);
+        AtomicReference<KuudraEvent> result = new AtomicReference<>();
+        EventInterpreter interpreter = (event, context) -> {
+            EventBuffer buffer = context.buffer("window");
+            buffer.add(event);
+            if (buffer.size() == 1) context.schedule("expire", Duration.ofMillis(40), () -> {
+                List<KuudraEvent> causes = buffer.snapshot();
+                context.emit(KuudraEvent.of("gesture", EventData.empty()), causes);
+                buffer.clear();
+            });
+        };
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.registerFlow(new KuudraFlow("window", Map.of(
+                    "interpreter", new FlowNode.InterpreterNode("interpreter", interpreter, Map.of()),
+                    "sink", new FlowNode.AdapterNode("sink", (event, context) -> {
+                        result.set(event); emitted.countDown(); return List.of();
+                    }, EventDomain.RAW)), Map.of("interpreter", List.of("sink"))));
+            KuudraEvent first = KuudraEvent.of("click", EventData.empty());
+            KuudraEvent second = KuudraEvent.of("click", EventData.empty());
+            assertTrue(runtime.publish("window", "interpreter", first));
+            assertTrue(runtime.publish("window", "interpreter", second));
+            assertTrue(emitted.await(1, TimeUnit.SECONDS));
+            assertEquals(Set.of(first.id(), second.id()), result.get().lineage().parentEventIds());
+            assertEquals(1, result.get().lineage().hops());
+        }
+    }
+
+    @Test
+    void sharedInterpreterResourceKeepsStateIsolatedPerAbilityNode() throws Exception {
+        EventInterpreter shared = (event, context) -> {
+            int count = (context.state().find("count").isPresent()
+                    ? context.state().get("count", Integer.class) : 0) + 1;
+            context.state().put("count", count);
+            if (count == 2) context.emit(KuudraEvent.of("pair", EventData.empty()));
+        };
+        CountDownLatch flowAEmitted = new CountDownLatch(1);
+        AtomicInteger flowBOutputs = new AtomicInteger();
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.setComponentThreadSafe(shared, true);
+            runtime.registerFlow(interpreterFlow("flow-a", shared, event -> flowAEmitted.countDown()));
+            runtime.registerFlow(interpreterFlow("flow-b", shared, event -> flowBOutputs.incrementAndGet()));
+            assertTrue(runtime.publish("flow-a", "interpreter", KuudraEvent.of("one", EventData.empty())));
+            assertTrue(runtime.publish("flow-b", "interpreter", KuudraEvent.of("one", EventData.empty())));
+            Thread.sleep(75);
+            assertEquals(1, flowAEmitted.getCount());
+            assertEquals(0, flowBOutputs.get());
+            assertTrue(runtime.publish("flow-a", "interpreter", KuudraEvent.of("two", EventData.empty())));
+            assertTrue(flowAEmitted.await(1, TimeUnit.SECONDS));
+            assertEquals(0, flowBOutputs.get());
+        }
+    }
+
+    @Test
+    void pausingAbilityCancelsPendingInterpreterWindowAndClearsState() throws Exception {
+        CountDownLatch emitted = new CountDownLatch(1);
+        EventInterpreter interpreter = (event, context) -> {
+            int count = (context.state().find("count").isPresent()
+                    ? context.state().get("count", Integer.class) : 0) + 1;
+            context.state().put("count", count);
+            context.schedule("expire", Duration.ofMillis(80), () -> context.emit(
+                    KuudraEvent.of("count-" + context.state().get("count", Integer.class), EventData.empty())));
+        };
+        AtomicReference<String> outputType = new AtomicReference<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 2)) {
+            runtime.registerFlow(new KuudraFlow("pausable", Map.of(
+                    "interpreter", new FlowNode.InterpreterNode("interpreter", interpreter, Map.of()),
+                    "sink", new FlowNode.AdapterNode("sink", (event, context) -> {
+                        outputType.set(event.type()); emitted.countDown(); return List.of();
+                    }, EventDomain.RAW)), Map.of("interpreter", List.of("sink"))));
+            assertTrue(runtime.publish("pausable", "interpreter", KuudraEvent.of("one", EventData.empty())));
+            Thread.sleep(20);
+            runtime.setAbilityPaused("pausable", true);
+            Thread.sleep(120);
+            assertEquals(1, emitted.getCount());
+            runtime.setAbilityPaused("pausable", false);
+            assertTrue(runtime.publish("pausable", "interpreter", KuudraEvent.of("new", EventData.empty())));
+            assertTrue(emitted.await(1, TimeUnit.SECONDS));
+            assertEquals("count-1", outputType.get());
+        }
+    }
+
+    @Test
+    void interpreterContextIsRevokedWhenAbilityIsUnregistered() throws Exception {
+        CountDownLatch captured = new CountDownLatch(1);
+        AtomicReference<EventInterpreterContext> retained = new AtomicReference<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(8, 1)) {
+            runtime.registerFlow(new KuudraFlow("temporary", Map.of(
+                    "interpreter", new FlowNode.InterpreterNode("interpreter", (event, context) -> {
+                        retained.set(context); captured.countDown();
+                    }, Map.of())), Map.of()));
+            assertTrue(runtime.publish("temporary", "interpreter", KuudraEvent.of("capture", EventData.empty())));
+            assertTrue(captured.await(1, TimeUnit.SECONDS));
+            runtime.unregisterAbility("temporary");
+            assertFalse(retained.get().emit(KuudraEvent.of("late", EventData.empty())));
+            assertThrows(KuudraException.class, () -> retained.get().state().snapshot());
+        }
+    }
+
+    private KuudraFlow interpreterFlow(String id, EventInterpreter interpreter,
+                                       java.util.function.Consumer<KuudraEvent> sink) {
+        return new KuudraFlow(id, Map.of(
+                "interpreter", new FlowNode.InterpreterNode("interpreter", interpreter, Map.of()),
+                "sink", new FlowNode.AdapterNode("sink", (event, context) -> {
+                    sink.accept(event); return List.of();
+                }, EventDomain.RAW)), Map.of("interpreter", List.of("sink")));
+    }
+
+    @Test
     void handlerMayRequestCancellationOnlyForItsCurrentSession() throws Exception {
         CountDownLatch requested = new CountDownLatch(1);
         AtomicReference<UUID> controlled = new AtomicReference<>();
@@ -278,7 +387,8 @@ class KuudraRuntimeTest {
         IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL, SessionGroupScope.INGRESS, 4, 4);
         try (KuudraRuntime runtime = new KuudraRuntime(32, 2)) {
             runtime.registerFlow(new KuudraFlow("flow", Map.of(
-                    "interpret", new FlowNode.InterpreterNode("interpret", (event, context) -> List.of(event.retype("interpreted")), Map.of()),
+                    "interpret", new FlowNode.InterpreterNode("interpret", (event, context) ->
+                            context.emit(event.retype("interpreted")), Map.of()),
                     "ingress", new FlowNode.IngressNode("ingress", (event, context) -> IngressDecision.accept(event.type(), event), scheduling, Map.of()),
                     "handler", new FlowNode.HandlerNode("handler", (event, context) -> { sessionId.set(context.sessionId()); handled.countDown(); context.emit(event.retype("done")); return CompletableFuture.completedFuture(null); }, Map.of()),
                     "egress", new FlowNode.EgressNode("egress", (event, context) -> List.of(event), Map.of()),

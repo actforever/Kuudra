@@ -132,7 +132,8 @@ public final class SessionManager {
         SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, labels, status, cancelled.get(), leases.get()); }
     }
 
-    static final class AtomicValueContext implements SessionContext, FlowContext, AbilityContext, GlobalContext {
+    static final class AtomicValueContext implements SessionContext, FlowContext, AbilityContext, GlobalContext,
+            EventInterpreterState {
         private final ContextCodec codec; private final AtomicReference<Map<String,Object>> values;
         AtomicValueContext(ContextCodec codec, Map<String,Object> initial) {
             this.codec=codec; Map<String,Object> encoded=new LinkedHashMap<>(); initial.forEach((k,v)->encoded.put(k,codec.encode(v))); values=new AtomicReference<>(Map.copyOf(encoded));
