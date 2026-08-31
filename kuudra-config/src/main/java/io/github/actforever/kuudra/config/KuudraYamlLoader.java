@@ -24,7 +24,7 @@ import io.github.actforever.kuudra.api.session.SessionGroupScope;
 import io.github.actforever.kuudra.api.session.SessionSchedulingPolicy;
 import io.github.actforever.kuudra.api.component.IngressConfiguration;
 
-/** Reads config.yaml plus Resource, Ability and AbilityProfile YAML into the format-neutral model. */
+/** Reads config.yaml plus Resource, Ability and KuudraProfile YAML into the format-neutral model. */
 public final class KuudraYamlLoader {
     private KuudraYamlLoader() { }
 
@@ -62,7 +62,13 @@ public final class KuudraYamlLoader {
         if (root.containsKey("plugins")) throw new IOException("Configuration key 'plugins' has been removed; use <home-directory>/plugins");
         if (root.containsKey("flows-directory")) throw new IOException("Configuration key 'flows-directory' has been removed; use <home-directory>/manifests");
         if (root.containsKey("resource-selection")) throw new IOException(
-                "Configuration key 'resource-selection' has been removed; use ability-profiles");
+                "Configuration key 'resource-selection' has been removed; use active-profile and KuudraProfile");
+        if (root.containsKey("ability-profiles")) throw new IOException(
+                "Configuration key 'ability-profiles' has been removed; use active-profile and KuudraProfile");
+        if (root.containsKey("abilities")) throw new IOException(
+                "Configuration key 'abilities' has been removed; declare them in KuudraProfile.spec.abilities");
+        if (root.containsKey("global-context")) throw new IOException(
+                "Configuration key 'global-context' has been removed; use KuudraProfile.spec.globalContext");
         Map<String, Object> runtime = optionalMapping(root, "runtime");
         int queueCapacity = integer(runtime, "queue-capacity", 1_024);
         int workerThreads = integer(runtime, "worker-threads", Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
@@ -103,8 +109,9 @@ public final class KuudraYamlLoader {
         Path homeDirectory = base.resolve(string(root.getOrDefault("home-directory", ".kuudra"), "home-directory")).normalize();
         boolean bannerEnabled = bool(root.get("banner-enabled"), true);
         KuudraManifest.Deployment deployment = loadDeployment(homeDirectory);
-        List<String> abilityProfiles = strings(root, "ability-profiles");
-        List<String> abilities = abilityReferences(root, "abilities");
+        Object activeValue = root.getOrDefault("active-profile", "");
+        if (!(activeValue instanceof String activeText)) throw new IOException("Expected string at active-profile");
+        String activeProfile = activeText.trim();
         return new KuudraConfig.RuntimeConfig(new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, maxEventHops,
                 dispatcherPollIntervalMs, shutdownSessionDrainTimeoutMs,
                 new KuudraConfig.SessionCoordinatorSettings(defaultPolicy, defaultGroupScope, maxParallelSessions, sessionQueueCapacity),
@@ -114,8 +121,7 @@ public final class KuudraYamlLoader {
                 new KuudraConfig.StateStoreSettings(stateStoreBusyTimeoutMs),
                 new KuudraConfig.LoggingSettings(loggingLevel, consoleEnabled, fileEnabled),
                 new KuudraConfig.I18nSettings(preferredLocale), homeDirectory, bannerEnabled,
-                optionalMapping(root, "global-context"), KuudraManifest.Resources.EMPTY, deployment,
-                abilityProfiles, abilities);
+                activeProfile, KuudraManifest.Resources.EMPTY, deployment);
     }
 
     private static java.util.Set<String> stringSet(Object value, String path) throws IOException {
@@ -157,18 +163,18 @@ public final class KuudraYamlLoader {
     /** Loads the v0.5 authoritative deployment rooted at one Kuudra home directory. */
     public static KuudraManifest.Deployment loadDeployment(Path homeDirectory) throws IOException {
         Path home = Objects.requireNonNull(homeDirectory, "homeDirectory").toAbsolutePath().normalize();
-        rejectLegacyAbilityProfiles(home.resolve("ability-profiles"));
-        return loadDeployment(home.resolve("manifests"), home.resolve("abilities"),
-                home.resolve("abilities/profiles"));
+        rejectLegacyProfiles(home.resolve("ability-profiles"));
+        rejectLegacyProfiles(home.resolve("abilities/profiles"));
+        return loadDeployment(home.resolve("manifests"), home.resolve("abilities"), home.resolve("profiles"));
     }
 
-    /** Loads the v0.5 authoritative Resource, Ability and global AbilityProfile sets. */
+    /** Loads the v0.5 authoritative Resource, Ability and global KuudraProfile sets. */
     public static KuudraManifest.Deployment loadDeployment(Path manifestsDirectory,
                                                            Path abilitiesDirectory,
                                                            Path profilesDirectory) throws IOException {
         Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities = new LinkedHashMap<>();
-        Map<String, KuudraManifest.AbilityProfile> profiles = new LinkedHashMap<>();
+        Map<String, KuudraManifest.KuudraProfile> profiles = new LinkedHashMap<>();
         loadV2Directory(manifestsDirectory, V2Directory.RESOURCES, (document, file, index) ->
                 loadV2Manifest(document, file, index, resources, abilities, profiles));
         loadV2Directory(abilitiesDirectory, V2Directory.ABILITIES, (document, file, index) ->
@@ -176,6 +182,7 @@ public final class KuudraYamlLoader {
         loadV2Directory(profilesDirectory, V2Directory.PROFILES, (document, file, index) ->
                 loadV2Manifest(document, file, index, resources, abilities, profiles));
         validateResourceReferences(resources, abilities);
+        validateProfileReferences(abilities, profiles);
         return new KuudraManifest.Deployment(resources, abilities, profiles);
     }
 
@@ -206,7 +213,7 @@ public final class KuudraYamlLoader {
     private static void loadV2Manifest(ManifestDocument document, Path file, int documentIndex,
                                        Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources,
                                        Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities,
-                                       Map<String, KuudraManifest.AbilityProfile> profiles) throws IOException {
+                                       Map<String, KuudraManifest.KuudraProfile> profiles) throws IOException {
         String source = file + ":" + document.line("") + " (document " + documentIndex + ")";
         Map<String, Object> root = mapping(document.value(), source);
         String apiVersion = string(required(root, "apiVersion", document, "",
@@ -223,15 +230,17 @@ public final class KuudraYamlLoader {
         String name = string(required(metadataMap, "name"), source + ".metadata.name");
         Map<String, Object> spec = mapping(required(root, "spec"), source + ".spec");
         try {
-            if ("AbilityProfile".equals(kind)) {
+            if ("KuudraProfile".equals(kind)) {
                 if (metadataMap.containsKey("namespace")) {
-                    throw new IllegalArgumentException("AbilityProfile is global and metadata.namespace is forbidden");
+                    throw new IllegalArgumentException("KuudraProfile is global and metadata.namespace is forbidden");
                 }
-                KuudraManifest.AbilityProfile profile = new KuudraManifest.AbilityProfile(name,
-                        strings(spec, "abilities"), strings(spec, "namespaces"), strings(spec, "exclude"));
-                if (profiles.putIfAbsent(name, profile) != null) throw new IllegalArgumentException("Duplicate AbilityProfile: " + name);
+                KuudraManifest.KuudraProfile profile = new KuudraManifest.KuudraProfile(name,
+                        abilityReferences(spec, "abilities"), optionalMapping(spec, "globalContext"));
+                if (profiles.putIfAbsent(name, profile) != null) throw new IllegalArgumentException("Duplicate KuudraProfile: " + name);
                 return;
             }
+            if ("AbilityProfile".equals(kind)) throw new IllegalArgumentException(
+                    "AbilityProfile has been removed; migrate to kind KuudraProfile under <home-directory>/profiles");
             String namespace = string(metadataMap.getOrDefault("namespace", "default"), source + ".metadata.namespace");
             KuudraManifest.Metadata metadata = new KuudraManifest.Metadata(namespace, name,
                     stringMapping(metadataMap, "labels"), stringMapping(metadataMap, "annotations"));
@@ -326,6 +335,18 @@ public final class KuudraYamlLoader {
         }
     }
 
+    private static void validateProfileReferences(
+            Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities,
+            Map<String, KuudraManifest.KuudraProfile> profiles) throws IOException {
+        java.util.Set<String> known = abilities.values().stream().map(KuudraManifest.Ability::qualifiedName)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        for (KuudraManifest.KuudraProfile profile : profiles.values()) {
+            for (String ability : profile.abilities()) if (!known.contains(ability)) {
+                throw new IOException("KuudraProfile " + profile.name() + " references unknown Ability " + ability);
+            }
+        }
+    }
+
     private static void requireResource(Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources,
                                         KuudraManifest.Ability ability,
                                         KuudraManifest.ResourceReference reference,
@@ -334,12 +355,12 @@ public final class KuudraYamlLoader {
                 + " " + location + " references unknown Resource " + reference.canonicalName());
     }
 
-    private static void rejectLegacyAbilityProfiles(Path directory) throws IOException {
+    private static void rejectLegacyProfiles(Path directory) throws IOException {
         if (!Files.isDirectory(directory)) return;
         try (Stream<Path> files = Files.walk(directory)) {
             if (files.anyMatch(path -> Files.isRegularFile(path) && isYaml(path))) {
-                throw new IOException("AbilityProfile directory has moved from " + directory
-                        + " to <home-directory>/abilities/profiles");
+                throw new IOException("AbilityProfile has been removed; migrate YAML under " + directory
+                        + " to kind KuudraProfile under <home-directory>/profiles");
             }
         }
     }
@@ -351,7 +372,7 @@ public final class KuudraYamlLoader {
             return switch (this) {
                 case RESOURCES -> KuudraManifest.RESOURCE_KINDS.containsKey(kind);
                 case ABILITIES -> "Ability".equals(kind);
-                case PROFILES -> "AbilityProfile".equals(kind);
+                case PROFILES -> "KuudraProfile".equals(kind);
             };
         }
 
@@ -360,10 +381,10 @@ public final class KuudraYamlLoader {
                 case RESOURCES -> kind.equals("Ability")
                         ? "Ability must be stored under <home-directory>/abilities: " + file
                         : "Only Resource kinds are allowed under " + directory + ": " + file;
-                case ABILITIES -> kind.equals("AbilityProfile")
-                        ? "AbilityProfile must be stored under <home-directory>/abilities/profiles: " + file
+                case ABILITIES -> kind.equals("KuudraProfile") || kind.equals("AbilityProfile")
+                        ? "KuudraProfile must be stored under <home-directory>/profiles: " + file
                         : "Only Ability is allowed under " + directory + ": " + file;
-                case PROFILES -> "Only AbilityProfile is allowed under " + directory + ": " + file;
+                case PROFILES -> "Only KuudraProfile is allowed under " + directory + ": " + file;
             };
         }
     }

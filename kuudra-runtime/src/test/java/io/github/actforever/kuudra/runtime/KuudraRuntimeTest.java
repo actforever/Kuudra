@@ -402,7 +402,7 @@ class KuudraRuntimeTest {
 
     @Test
     void flowRejectsIllegalDomainEdgesAndRawSessionPlaceholders() {
-        FlowNode raw = new FlowNode.AdapterNode("raw", (event, context) -> List.of(event), EventDomain.RAW, Map.of("bad","${session#x}"));
+        FlowNode raw = new FlowNode.AdapterNode("raw", (event, context) -> List.of(event), EventDomain.RAW, Map.of("bad","${session.values.x}"));
         FlowNode handler = new FlowNode.HandlerNode("handler", (event, context) -> CompletableFuture.completedFuture(null), Map.of());
         assertThrows(KuudraException.class, () -> new KuudraFlow("bad",Map.of("raw",raw,"handler",handler),Map.of("raw",List.of("handler"))));
         try (KuudraRuntime runtime = new KuudraRuntime(8,1)) {
@@ -502,6 +502,37 @@ class KuudraRuntimeTest {
             SessionSnapshot snapshot = runtime.session(sessionId.get()).orElseThrow();
             assertEquals(SessionStatus.FAILED, snapshot.status());
             assertEquals(0, snapshot.activeLeases());
+        }
+    }
+
+    @Test
+    void profileTransitionAtomicallyRecompilesGlobalArgumentsAndRejectsInvalidReplacement() throws Exception {
+        BlockingQueue<String> values = new LinkedBlockingQueue<>();
+        try (KuudraRuntime runtime = new KuudraRuntime(16, 1, Map.of("mode", "online"))) {
+            runtime.registerFlow(new KuudraFlow("flow", Map.of(
+                    "raw", new FlowNode.AdapterNode("raw", (event, context) -> {
+                        values.add(context.configuration("mode", String.class));
+                        return List.of();
+                    }, EventDomain.RAW, Map.of("mode", "${global.mode}"))), Map.of()));
+            assertTrue(runtime.publish("flow", "raw", KuudraEvent.of("input", Map.of())));
+            assertEquals("online", values.poll(1, TimeUnit.SECONDS));
+
+            runtime.beginProfileTransition(Duration.ofSeconds(1), Duration.ofSeconds(1));
+            assertFalse(runtime.publish("flow", "raw", KuudraEvent.of("blocked", Map.of())));
+            runtime.replaceGlobalContext(Map.of("mode", "quiet"));
+            runtime.endProfileTransition();
+            assertTrue(runtime.publish("flow", "raw", KuudraEvent.of("input", Map.of())));
+            assertEquals("quiet", values.poll(1, TimeUnit.SECONDS));
+
+            runtime.beginProfileTransition(Duration.ofSeconds(1), Duration.ofSeconds(1));
+            assertThrows(IllegalArgumentException.class, () -> runtime.replaceGlobalContext(
+                    Map.of("mode", "${global.missing}")));
+            runtime.endProfileTransition();
+            assertEquals("quiet", runtime.globalContext().get("mode", String.class));
+            runtime.globalContext().put("mode", "${global.missing}");
+            assertTrue(runtime.publish("flow", "raw", KuudraEvent.of("input", Map.of())));
+            assertEquals("${global.missing}", values.poll(1, TimeUnit.SECONDS),
+                    "Runtime writes are concrete values, not newly parsed templates");
         }
     }
 

@@ -33,7 +33,7 @@ class AbilityRuntimeTest {
                         aliases.add(context.arguments().get("alias", String.class));
                         CompletableFuture<Void> hold = new CompletableFuture<>();
                         holds.add(hold); invoked.countDown(); return hold;
-                    }, Map.of("alias", "${event#processAlias}"));
+                    }, Map.of("alias", "${event.data.core.processAlias}"));
             IngressConfiguration scheduling = new IngressConfiguration(SessionSchedulingPolicy.PARALLEL,
                     SessionGroupScope.INGRESS, 8, 8);
             KuudraAbility ability = new KuudraAbility("demo/network", 1, Map.of(

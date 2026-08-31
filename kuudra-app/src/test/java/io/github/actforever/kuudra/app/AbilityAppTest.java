@@ -59,27 +59,35 @@ class AbilityAppTest {
                     disconnect:
                       resource: Controller/operations/network
                       handler: disconnect
-                      arguments: {alias: '${event#alias}'}
+                      arguments: {alias: '${event.data.core.alias}'}
                   edges: [{from: source, to: admit}, {from: admit, to: disconnect}]
                 """);
-        write(home.resolve("abilities/profiles/default.yaml"), """
+        write(home.resolve("profiles/default.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
-                kind: AbilityProfile
+                kind: KuudraProfile
                 metadata: {name: default}
-                spec: {abilities: [demo/disconnect]}
+                spec:
+                  abilities: [demo/disconnect]
+                  globalContext: {mode: online}
+                ---
+                apiVersion: kuudra.io/v1alpha2
+                kind: KuudraProfile
+                metadata: {name: quiet}
+                spec:
+                  abilities: []
+                  globalContext: {mode: quiet}
                 """);
         Path config = write(directory.resolve("config.yaml"), """
                 home-directory: home
-                ability-profiles: [default]
-                abilities: [demo/disconnect]
+                active-profile: default
                 reconciliation: {enabled: true, interval-ms: 10}
                 logging: {console-enabled: false, file-enabled: false}
                 """);
 
         try (KuudraApp app = KuudraApp.createConfigured(config)) {
             assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
-            assertTrue(app.ability("demo", "disconnect").orElseThrow().configurationClaim());
-            assertEquals(java.util.Set.of("default"), app.ability("demo", "disconnect").orElseThrow().profileClaims());
+            assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().profileDesiredState());
+            assertTrue(app.profile("default").orElseThrow().active());
             assertEquals(4, app.manifestResources().size());
             assertEquals(3, app.manifestResources().stream()
                     .filter(resource -> resource.state().equals("RUNNING")).count());
@@ -106,11 +114,20 @@ class AbilityAppTest {
             app.controlAbility("demo", "disconnect", "inherit").toCompletableFuture().get(3, TimeUnit.SECONDS);
             assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
             app.controlAbility("demo", "disconnect", "disable").toCompletableFuture().get(3, TimeUnit.SECONDS);
+            app.activateProfile("quiet").toCompletableFuture().get(3, TimeUnit.SECONDS);
+            assertTrue(app.profile("quiet").orElseThrow().active());
+            assertEquals(java.util.Set.of("mode"), app.profile("quiet").orElseThrow().globalContextKeys());
+            assertEquals("INHERIT", app.ability("demo", "disconnect").orElseThrow().directOverride());
+            assertEquals("DISABLED", app.ability("demo", "disconnect").orElseThrow().state());
+            assertEquals("quiet", app.globalContext().get("mode"));
 
             var events = new CopyOnWriteArrayList<String>();
             try (AutoCloseable ignored = app.systemEvents().subscribe(event -> events.add(event.type()))) {
                 app.restart();
                 Thread.sleep(100);
+                assertTrue(app.profile("default").orElseThrow().active(),
+                        "restart must return to config.yaml active-profile");
+                assertEquals("ENABLED", app.ability("demo", "disconnect").orElseThrow().state());
                 assertFalse(events.contains("reconciliation.loop.failed"),
                         "v1alpha2 deployments must not enter the legacy v1alpha1 reconciler");
             }

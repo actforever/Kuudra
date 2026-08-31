@@ -13,7 +13,7 @@ import java.util.Optional;
 
 /** Precompiled lookup of a dynamic Event/Session/Ability/Global value. */
 public final class ContextValueReference {
-    private static final java.util.Set<String> SCOPES = java.util.Set.of("event", "session", "ability", "flow", "global");
+    private static final java.util.Set<String> SCOPES = java.util.Set.of("event", "session", "ability", "global");
     private final String source;
     private final String scope;
     private final String[] path;
@@ -28,15 +28,17 @@ public final class ContextValueReference {
         Objects.requireNonNull(domain, "domain");
         String source = Objects.requireNonNull(reference, "reference").trim();
         if (source.startsWith("${") && source.endsWith("}")) source = source.substring(2, source.length() - 1);
-        int separator = source.indexOf('#');
-        String scope = separator < 0 ? null : source.substring(0, separator);
-        String expression = separator < 0 ? source : source.substring(separator + 1);
-        if (scope != null && !SCOPES.contains(scope)) throw new IllegalArgumentException("Unknown context scope: " + scope);
-        if (domain == EventDomain.RAW && "session".equals(scope))
+        if (source.indexOf('#') >= 0) throw new IllegalArgumentException(
+                "Legacy '#' context reference has been removed; use a dot path: " + source.replace('#', '.'));
+        String[] all = source.split("\\.");
+        if (all.length < 2 || java.util.Arrays.stream(all).anyMatch(String::isBlank))
+            throw new IllegalArgumentException("Context reference must use an explicit scope and dot path: " + reference);
+        String scope = all[0];
+        if (!SCOPES.contains(scope)) throw new IllegalArgumentException(
+                "Context reference must begin with event, session, ability, or global: " + reference);
+        if (domain == EventDomain.RAW && scope.equals("session"))
             throw new IllegalArgumentException("RAW-domain reference cannot use Session scope: " + reference);
-        String[] path = expression.split("\\.");
-        if (expression.isBlank() || java.util.Arrays.stream(path).anyMatch(String::isBlank))
-            throw new IllegalArgumentException("Invalid context reference: " + reference);
+        String[] path = java.util.Arrays.copyOfRange(all, 1, all.length);
         return new ContextValueReference(reference, scope, path);
     }
 
@@ -45,13 +47,29 @@ public final class ContextValueReference {
         Map<String, Object> session = context.sessionContext() == null ? Map.of() : context.sessionContext().snapshot();
         Map<String, Object> flow = context.flowContext() == null ? context.flowValues() : context.flowContext().snapshot();
         Map<String, Object> global = context.globalContext() == null ? context.globalValues() : context.globalContext().snapshot();
-        return lookup(event, context.flowId(), session, flow, global, context.sessionContext() != null);
+        if (scope.equals("global") && context.globalContext() instanceof PlaceholderResolver.GlobalTemplatesProvider provider) {
+            EventContext execution = new EventContext(context.flowId(), context.sessionId() == null ? null
+                    : new io.github.actforever.kuudra.api.session.SessionReference(context.sessionId(), context.flowId()),
+                    session, context.sessionContext(), flow, context.flowContext(), context.executionControl(),
+                    global, context.globalContext(), Map.of());
+            return Optional.ofNullable(provider.compiledGlobals().resolve(path, event, execution,
+                    context.sessionContext() == null ? EventDomain.RAW : EventDomain.SESSION));
+        }
+        return lookup(event, context.flowId(), context.sessionId(), session, flow, global,
+                context.sessionContext() != null);
     }
 
     public Optional<Object> find(KuudraEvent event, EventHandlerContext context) {
         Objects.requireNonNull(event, "event"); Objects.requireNonNull(context, "context");
-        return lookup(event, context.abilityId(), context.session().snapshot(), context.ability().snapshot(),
-                context.global().snapshot(), true);
+        if (scope.equals("global") && context.global() instanceof PlaceholderResolver.GlobalTemplatesProvider provider) {
+            EventContext execution = new EventContext(context.abilityId(),
+                    new io.github.actforever.kuudra.api.session.SessionReference(context.sessionId(), context.abilityId()),
+                    context.session().snapshot(), context.session(), context.ability().snapshot(), null,
+                    context.executionControl(), context.global().snapshot(), context.global(), Map.of());
+            return Optional.ofNullable(provider.compiledGlobals().resolve(path, event, execution, EventDomain.SESSION));
+        }
+        return lookup(event, context.abilityId(), context.sessionId(), context.session().snapshot(),
+                context.ability().snapshot(), context.global().snapshot(), true);
     }
 
     public Object get(KuudraEvent event, EventHandlerContext context) {
@@ -75,18 +93,18 @@ public final class ContextValueReference {
         return ContextCodecs.defaultCodec().decode(get(event, context), type);
     }
 
-    private Optional<Object> lookup(KuudraEvent event, String flowId, Map<String, Object> session,
+    private Optional<Object> lookup(KuudraEvent event, String flowId, java.util.UUID sessionId,
+                                    Map<String, Object> session,
                                     Map<String, Object> flow, Map<String, Object> global, boolean hasSession) {
-        if (scope != null) return switch (scope) {
+        return switch (scope) {
             case "event" -> event(event, path);
-            case "session" -> hasSession ? nested(session, path) : Optional.empty();
-            case "ability", "flow" -> path.length == 1 && path[0].equals("id") ? Optional.of(flowId) : nested(flow, path);
+            case "session" -> session(path, session, hasSession, sessionId, flowId);
+            case "ability" -> path.length == 1 && path[0].equals("id") ? Optional.of(flowId)
+                    : path.length > 1 && path[0].equals("values")
+                    ? nested(flow, java.util.Arrays.copyOfRange(path, 1, path.length)) : Optional.empty();
             case "global" -> nested(global, path);
             default -> Optional.empty();
         };
-        for (Optional<Object> value : List.of(event(event, path), hasSession ? nested(session, path) : Optional.empty(),
-                nested(flow, path), nested(global, path))) if (value.isPresent()) return value;
-        return Optional.empty();
     }
 
     private static Optional<Object> event(KuudraEvent event, String[] path) {
@@ -94,20 +112,25 @@ public final class ContextValueReference {
             Optional<Object> metadata = switch (path[0]) {
                 case "id" -> Optional.of(event.id().toString());
                 case "type" -> Optional.of(event.type());
-                case "occurredAt", "occurred-at" -> Optional.of(event.occurredAt().toString());
+                case "occurredAt" -> Optional.of(event.occurredAt().toString());
                 default -> Optional.empty();
             };
             if (metadata.isPresent()) return metadata;
-            Object found = null; boolean matched = false;
-            for (Map<String, Object> namespace : event.data().namespaces().values()) {
-                if (!namespace.containsKey(path[0])) continue;
-                if (matched) throw new IllegalArgumentException("Ambiguous EventData key; include its namespace: " + path[0]);
-                found = namespace.get(path[0]); matched = true;
-            }
-            return matched ? Optional.of(found) : Optional.empty();
+            return Optional.empty();
         }
-        if (path[0].equals("data")) return nested(event.data().namespaces(), java.util.Arrays.copyOfRange(path, 1, path.length));
-        return nested(event.data().namespaces(), path);
+        return path[0].equals("data")
+                ? nested(event.data().namespaces(), java.util.Arrays.copyOfRange(path, 1, path.length))
+                : Optional.empty();
+    }
+
+    private static Optional<Object> session(String[] path, Map<String,Object> values, boolean hasSession,
+                                            java.util.UUID sessionId, String abilityId) {
+        if (!hasSession) return Optional.empty();
+        if (path.length == 1 && path[0].equals("id")) return Optional.of(sessionId.toString());
+        if (path.length == 1 && path[0].equals("abilityId")) return Optional.of(abilityId);
+        if (path.length > 1 && path[0].equals("values"))
+            return nested(values, java.util.Arrays.copyOfRange(path, 1, path.length));
+        return Optional.empty();
     }
 
     private static Optional<Object> nested(Map<String, ?> root, String[] path) {

@@ -132,7 +132,7 @@ public final class SessionManager {
         SessionSnapshot snapshot() { return new SessionSnapshot(id, flowId, revision, ingressId, groupKey, labels, status, cancelled.get(), leases.get()); }
     }
 
-    static final class AtomicValueContext implements SessionContext, FlowContext, AbilityContext, GlobalContext,
+    static class AtomicValueContext implements SessionContext, FlowContext, AbilityContext, GlobalContext,
             EventInterpreterState {
         private final ContextCodec codec; private final AtomicReference<Map<String,Object>> values;
         AtomicValueContext(ContextCodec codec, Map<String,Object> initial) {
@@ -140,6 +140,11 @@ public final class SessionManager {
         }
         @Override public ContextCodec codec() { return codec; }
         public Map<String,Object> snapshot() { return values.get(); }
+        public void replace(Map<String,Object> replacement) {
+            Map<String,Object> encoded=new LinkedHashMap<>();
+            replacement.forEach((key,value)->encoded.put(key,codec.encode(value)));
+            values.set(Map.copyOf(encoded));
+        }
         public boolean compareAndSet(Map<String,Object> expected,Map<String,Object> replacement){return values.compareAndSet(expected,Map.copyOf(replacement));}
         public Map<String,Object> update(java.util.function.UnaryOperator<Map<String,Object>> operation){while(true){Map<String,Object> current=values.get();Map<String,Object> next=Map.copyOf(operation.apply(current));if(values.compareAndSet(current,next))return next;}}
     }

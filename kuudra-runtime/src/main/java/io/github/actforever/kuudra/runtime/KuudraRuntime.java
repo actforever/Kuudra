@@ -36,12 +36,14 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private final ContextCodec codec = ContextCodecs.defaultCodec();
     private final SessionCoordinator coordinator = new SessionCoordinator();
     private final SessionManager sessionManager;
-    private final SessionManager.AtomicValueContext globalContext;
+    private final TemplateGlobalContext globalContext;
+    private volatile PlaceholderResolver.CompiledGlobals globalTemplates;
     private final int maxEventHops;
     private final Duration dispatcherPollInterval;
     private final long shutdownSessionDrainTimeoutMs;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean paused;
+    private volatile boolean profileTransition;
     private volatile CompletableFuture<Void> controlChangeSignal = new CompletableFuture<>();
     private int activeExecutions;
 
@@ -78,7 +80,8 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
         if (dispatcherPollIntervalMs < 1 || shutdownSessionDrainTimeoutMs < 0) throw new KuudraException("Runtime timing settings are invalid");
         this.dispatcherPollInterval = Duration.ofMillis(dispatcherPollIntervalMs);
         this.shutdownSessionDrainTimeoutMs = shutdownSessionDrainTimeoutMs;
-        this.globalContext = new SessionManager.AtomicValueContext(codec, globals);
+        this.globalTemplates = PlaceholderResolver.compileGlobals(globals);
+        this.globalContext = new TemplateGlobalContext(codec, globals);
         this.sessionManager = new SessionManager(workers, codec, this::sessionTerminal, this::controlStateChanged);
         this.dispatcher = new Thread(this::dispatch, "kuudra-runtime-dispatcher"); this.dispatcher.start();
     }
@@ -94,6 +97,66 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     public FlowContext flowContext(String flowId) { synchronized (monitor) { return requireFlow(flowId).context; } }
     public AbilityContext abilityContext(String abilityId) { synchronized (monitor) { return requireFlow(abilityId).context; } }
     public int queuedTasks() { return queue.size(); }
+
+    /** Replaces one Profile's complete Global Context while event admission is at a safe point. */
+    public void replaceGlobalContext(Map<String, Object> values) {
+        PlaceholderResolver.CompiledGlobals compiled = PlaceholderResolver.compileGlobals(values);
+        synchronized (monitor) {
+            if (activeExecutions != 0 || activeSessionCount() != 0) throw new KuudraException(
+                    "Global Context replacement requires an execution and Session safe point");
+            Map<RegisteredFlow, Map<String, PlaceholderResolver.CompiledMap>> configurations = new LinkedHashMap<>();
+            flows.values().forEach(flow -> configurations.put(flow, flow.compileConfiguration(compiled)));
+            globalContext.replace(values);
+            globalTemplates = compiled;
+            configurations.forEach((flow, configuration) -> flow.configuration = configuration);
+        }
+    }
+
+    /**
+     * Stops new DATA-domain admission while allowing already-created Sessions to finish. If the drain timeout
+     * expires, the remaining Sessions are cancelled and given the cancellation grace period to terminate.
+     */
+    public void beginProfileTransition(Duration drainTimeout, Duration cancellationGrace) {
+        Objects.requireNonNull(drainTimeout, "drainTimeout");
+        Objects.requireNonNull(cancellationGrace, "cancellationGrace");
+        if (drainTimeout.isNegative() || cancellationGrace.isNegative()) {
+            throw new KuudraException("Profile transition timeouts must not be negative");
+        }
+        synchronized (monitor) {
+            if (closed.get()) throw new KuudraException("Runtime is closed");
+            if (profileTransition) throw new KuudraException("A Profile transition is already active");
+            profileTransition = true;
+            signalControlChange();
+        }
+        resetInterpreterScopes(scope -> scope.flow.flow.executionClass() == FlowExecutionClass.DATA);
+        try {
+            if (!awaitNoActiveSessions(drainTimeout)) {
+                sessionManager.cancelAll();
+                if (!awaitNoActiveSessions(cancellationGrace)) {
+                    throw new KuudraException("Sessions did not terminate during Profile transition");
+                }
+            }
+            synchronized (monitor) {
+                while (activeExecutions > 0 && !closed.get()) monitor.wait();
+                if (closed.get()) throw new KuudraException("Runtime was closed during Profile transition");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            endProfileTransition();
+            throw new KuudraException("Interrupted during Profile transition", interrupted);
+        } catch (RuntimeException failure) {
+            endProfileTransition();
+            throw failure;
+        }
+    }
+
+    public void endProfileTransition() {
+        synchronized (monitor) {
+            profileTransition = false;
+            signalControlChange();
+            monitor.notifyAll();
+        }
+    }
 
     /** App reconciliation gate for a component instance already bound into one or more Flows. */
     public void setComponentEnabled(Object component, boolean enabled) {
@@ -312,7 +375,8 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     private boolean enqueue(RegisteredFlow flow,String nodeId,KuudraEventWrapper wrapper){
         if(closed.get()||disabledAbilities.contains(flow.flow.id())
                 ||(pausedAbilities.contains(flow.flow.id())&&wrapper instanceof RawEventWrapper)
-                ||(paused&&flow.flow.executionClass()==FlowExecutionClass.DATA&&wrapper instanceof RawEventWrapper))return false;
+                ||((paused||profileTransition)&&flow.flow.executionClass()==FlowExecutionClass.DATA
+                && wrapper instanceof RawEventWrapper))return false;
         FlowNode node=flow.flow.node(nodeId); if(node.inputDomain()!=wrapper.domain()) throw new KuudraException("Event domain mismatch at "+nodeId);
         if(wrapper.event().lineage().hops()>=maxEventHops){event("event.rejected.max-hops",Map.of("flowId",flow.flow.id(),"nodeId",nodeId,"maxEventHops",maxEventHops));return false;}
         SessionManager.ManagedSession owner=null;
@@ -335,6 +399,8 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
             componentGate = acquireComponentGate(component);
             invocation=new Invocation(counted);
             debugEvent("runtime.node.execution.started", taskData(task));
+            if (profileTransition && flow.flow.executionClass() == FlowExecutionClass.DATA
+                    && task.wrapper() instanceof RawEventWrapper) return;
             if(flow.flow.revision()!=task.flowRevision()||(session!=null&&(!session.active()||session.cancelled.get()||session.failure.get()!=null)))return;
             KuudraEvent input=task.wrapper().event();
             synchronized (monitor) { if (component != null && disabledComponents.contains(component)) return; }
@@ -776,19 +842,55 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
     }
 
     private int activeSessionCount(){return (int)sessionManager.snapshots().stream().filter(snapshot->active(snapshot.status())).count();}
+    private final class TemplateGlobalContext extends SessionManager.AtomicValueContext
+            implements PlaceholderResolver.GlobalTemplatesProvider {
+        private final Set<String> concreteOverrides = new HashSet<>();
+        private TemplateGlobalContext(ContextCodec codec, Map<String,Object> initial) { super(codec, initial); }
+        @Override public PlaceholderResolver.CompiledGlobals compiledGlobals() { return globalTemplates; }
+        @Override public synchronized boolean templateActive(String key) { return !concreteOverrides.contains(key); }
+        @Override public synchronized Map<String, Object> put(String key, Object value) {
+            concreteOverrides.add(key);
+            return super.put(key, value);
+        }
+        @Override public synchronized Map<String, Object> remove(String key) {
+            concreteOverrides.add(key);
+            return super.remove(key);
+        }
+        @Override public synchronized Map<String, Object> update(
+                java.util.function.UnaryOperator<Map<String, Object>> operation) {
+            Map<String, Object> before = snapshot();
+            Map<String, Object> after = super.update(operation);
+            Set<String> keys = new HashSet<>(before.keySet()); keys.addAll(after.keySet());
+            keys.stream().filter(key -> !Objects.equals(before.get(key), after.get(key)))
+                    .forEach(concreteOverrides::add);
+            return after;
+        }
+        @Override public synchronized boolean compareAndSet(Map<String, Object> expected,
+                                                            Map<String, Object> replacement) {
+            boolean changed = super.compareAndSet(expected, replacement);
+            if (changed) {
+                Set<String> keys = new HashSet<>(expected.keySet()); keys.addAll(replacement.keySet());
+                keys.stream().filter(key -> !Objects.equals(expected.get(key), replacement.get(key)))
+                        .forEach(concreteOverrides::add);
+            }
+            return changed;
+        }
+        @Override public synchronized void replace(Map<String, Object> replacement) {
+            super.replace(replacement);
+            concreteOverrides.clear();
+        }
+    }
     private static long elapsedMillis(long started){return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);}
     private record ManagedSource(EventSource source,List<SourceTarget> targets,boolean lifecycleOwned,AtomicBoolean closed){
         ManagedSource(EventSource source,List<SourceTarget>targets,boolean lifecycleOwned){this(source,targets,lifecycleOwned,new AtomicBoolean());}
     }
     private final class RegisteredFlow{
         final KuudraFlow flow; final SessionManager.AtomicValueContext context;
-        final Map<String,PlaceholderResolver.CompiledMap> configuration;
+        volatile Map<String,PlaceholderResolver.CompiledMap> configuration;
         final Map<String, InterpreterScope> interpreterScopes;
         RegisteredFlow(KuudraFlow flow,SessionManager.AtomicValueContext context){
             this.flow=flow;this.context=context;
-            Map<String,PlaceholderResolver.CompiledMap> compiled=new LinkedHashMap<>();
-            flow.nodes().forEach((id,node)->compiled.put(id,PlaceholderResolver.compileMap(node.configuration(),node.inputDomain())));
-            this.configuration=Map.copyOf(compiled);
+            this.configuration=compileConfiguration(globalTemplates);
             Map<String, InterpreterScope> scopes = new LinkedHashMap<>();
             flow.nodes().forEach((id, node) -> {
                 if (node instanceof FlowNode.InterpreterNode interpreter) {
@@ -796,6 +898,13 @@ public final class KuudraRuntime implements RuntimeStateView, AutoCloseable {
                 }
             });
             this.interpreterScopes = Map.copyOf(scopes);
+        }
+        private Map<String, PlaceholderResolver.CompiledMap> compileConfiguration(
+                PlaceholderResolver.CompiledGlobals globals) {
+            Map<String,PlaceholderResolver.CompiledMap> compiled=new LinkedHashMap<>();
+            flow.nodes().forEach((id,node)->compiled.put(id,
+                    PlaceholderResolver.compileMap(node.configuration(),node.inputDomain(),globals)));
+            return Map.copyOf(compiled);
         }
     }
 

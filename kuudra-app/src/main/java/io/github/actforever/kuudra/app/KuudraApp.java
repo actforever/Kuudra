@@ -93,19 +93,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                                     "source", Map.of("resource", "source"),
                                     "disconnect", Map.of("resource", "controller", "handler", "disconnect")),
                             "edges", List.of(Map.of("from", "source", "to", "disconnect"))))));
-    private static final ResourceDocumentation ABILITY_PROFILE_DOCUMENTATION = new ResourceDocumentation(
-            "kuudra.io/v1alpha2", "kuudra-official", "AbilityProfile",
-            "Globally selects Abilities by qualified name or namespace, with explicit exclusions.",
+    private static final ResourceDocumentation KUUDRA_PROFILE_DOCUMENTATION = new ResourceDocumentation(
+            "kuudra.io/v1alpha2", "kuudra-official", "KuudraProfile",
+            "Defines one complete Runtime plan: selected Abilities plus the initial Global Context.",
             List.of(
                     new ResourceFieldDocumentation("metadata.name", "String", true,
-                            "Global profile name; AbilityProfile has no namespace.", List.of("default")),
+                            "Global profile name; KuudraProfile has no namespace.", List.of("default")),
                     new ResourceFieldDocumentation("spec.abilities", "List<String>", false,
                             "Qualified namespace/name Ability identities.", List.of(List.of("dev/disconnect"))),
-                    new ResourceFieldDocumentation("spec.namespaces", "List<String>", false,
-                            "Namespaces whose Abilities are selected.", List.of(List.of("dev"))),
-                    new ResourceFieldDocumentation("spec.exclude", "List<String>", false,
-                            "Qualified Ability identities removed from the selection.", List.of(List.of("dev/diagnostics")))),
-            List.of(Map.of("apiVersion", "kuudra.io/v1alpha2", "kind", "AbilityProfile",
+                    new ResourceFieldDocumentation("spec.globalContext", "Map<String, Object>", false,
+                            "Profile-scoped Global Context values and precompiled templates.", List.of(Map.of("mode", "safe")))),
+            List.of(Map.of("apiVersion", "kuudra.io/v1alpha2", "kind", "KuudraProfile",
                     "metadata", Map.of("name", "default"),
                     "spec", Map.of("abilities", List.of("dev/disconnect")))));
     private final int queueCapacity;
@@ -114,6 +112,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private final List<HomeInitialization> homeInitializations;
     private boolean homeInitializationReported;
     private Map<String, Object> globalContext = Map.of();
+    private String activeProfile = "";
+    private KuudraManifest.Deployment activeDeployment = KuudraManifest.Deployment.EMPTY;
     private final SystemEventBus events = new AppSystemEventBus();
     private volatile MessageResolver externalMessageResolver = MessageResolver.none();
     private volatile MessageResolver configuredMessageResolver = MessageResolvers.english();
@@ -137,6 +137,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     private KuudraLogSession logSession;
     private ResourceStateStore stateStore;
     private java.util.concurrent.ScheduledExecutorService reconciliationExecutor;
+    private final java.util.concurrent.ExecutorService profileExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "kuudra-profile-transition");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private java.util.concurrent.CompletableFuture<Void> profileTransition = java.util.concurrent.CompletableFuture.completedFuture(null);
     private KernelCheckpoint checkpoint;
     private AppStatus status = AppStatus.CREATED;
     private String detail = "not started";
@@ -223,7 +229,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         ensureDirectory(homeDirectory.resolve("plugins"), "plugins", created);
         ensureDirectory(homeDirectory.resolve("manifests"), "manifests", created);
         ensureDirectory(homeDirectory.resolve("abilities"), "abilities", created);
-        ensureDirectory(homeDirectory.resolve("abilities/profiles"), "ability-profiles", created);
+        ensureDirectory(homeDirectory.resolve("profiles"), "profiles", created);
         ensureDirectory(homeDirectory.resolve("logs"), "logs", created);
         ensureDirectory(homeDirectory.resolve("state"), "state", created);
         ensureDirectory(homeDirectory.resolve("locale"), "locale", created);
@@ -280,7 +286,17 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             }
             homeInitializationReported = true;
             if (bootstrapConfig == null || bootstrapConfig.bannerEnabled()) KuudraBanner.print();
-            globalContext = bootstrapConfig == null ? Map.of() : bootstrapConfig.globalContext();
+            KuudraConfig.RuntimeConfig runConfig = bootstrapConfig;
+            if (bootstrapConfig != null) {
+                KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(home);
+                runConfig = new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(),
+                        bootstrapConfig.reconciliation(), bootstrapConfig.stateStore(), bootstrapConfig.logging(),
+                        bootstrapConfig.i18n(), bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(),
+                        bootstrapConfig.activeProfile(), KuudraManifest.Resources.EMPTY, deployment);
+            }
+            activeDeployment = runConfig == null ? KuudraManifest.Deployment.EMPTY : runConfig.deployment();
+            activeProfile = runConfig == null ? "" : runConfig.activeProfile();
+            globalContext = profileGlobals(activeDeployment, activeProfile);
             int maxEventHops = bootstrapConfig == null ? 256 : bootstrapConfig.runtime().maxEventHops();
             int dispatcherPollIntervalMs = bootstrapConfig == null ? 200 : bootstrapConfig.runtime().dispatcherPollIntervalMs();
             int shutdownDrainTimeoutMs = bootstrapConfig == null ? 5_000 : bootstrapConfig.runtime().shutdownSessionDrainTimeoutMs();
@@ -290,15 +306,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             Path homes = bootstrapConfig == null ? Path.of(".kuudra", "plugins") : bootstrapConfig.homeDirectory().resolve("plugins");
             plugins = new DefaultPluginManager(homes, pluginRuntimeServices(), events);
             plugins.startAll().toCompletableFuture().join();
-            if (bootstrapConfig != null) {
-                KuudraManifest.Deployment deployment = KuudraYamlLoader.loadDeployment(
-                        bootstrapConfig.homeDirectory());
-                applyConfiguration(new KuudraConfig.RuntimeConfig(bootstrapConfig.runtime(), bootstrapConfig.resourceSelection(), bootstrapConfig.reconciliation(),
-                        bootstrapConfig.stateStore(), bootstrapConfig.logging(), bootstrapConfig.i18n(),
-                        bootstrapConfig.homeDirectory(), bootstrapConfig.bannerEnabled(), bootstrapConfig.globalContext(),
-                        KuudraManifest.Resources.EMPTY, deployment, bootstrapConfig.abilityProfiles(),
-                        bootstrapConfig.abilities()));
-            }
+            if (runConfig != null) applyConfiguration(runConfig);
             status = AppStatus.RUNNING;
             if (bootstrapConfig != null) startReconciliationLoop(bootstrapConfig.reconciliation());
             detail = ""; publish("app.running");
@@ -311,15 +319,28 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         }
     }
 
-    @Override public synchronized void stop() {
-        if (status == AppStatus.STOPPED || status == AppStatus.CREATED || status == AppStatus.STOPPING) return;
-        status = AppStatus.STOPPING; publish("app.stopping"); stopReconciliationLoop();
+    @Override public void stop() {
+        java.util.concurrent.CompletableFuture<Void> transition;
+        synchronized (this) {
+            if (status == AppStatus.STOPPED || status == AppStatus.CREATED || status == AppStatus.STOPPING) return;
+            status = AppStatus.STOPPING; publish("app.stopping"); stopReconciliationLoop();
+            transition = profileTransition;
+        }
         try {
-            releaseResources();
-            status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
-            closeLogSession();
+            try { transition.join(); }
+            catch (java.util.concurrent.CompletionException ignored) {
+                // A failed activation has already rolled back (or marked App FAILED); shutdown must still release it.
+            }
+            synchronized (this) {
+                releaseResources();
+                status = AppStatus.STOPPED; detail = ""; publish("app.stopped");
+                closeLogSession();
+            }
         } catch (RuntimeException failure) {
-            status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed"); throw failure;
+            synchronized (this) {
+                status = AppStatus.FAILED; detail = failure.toString(); publish("app.failed");
+            }
+            throw failure;
         }
     }
 
@@ -362,12 +383,93 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     public synchronized List<Ability> abilities() {
         if (abilityManager == null) return List.of();
         return abilityManager.abilities().stream().map(view -> new Ability(view.id(), view.state().name(),
-                view.directOverride().name(), view.configurationClaim(), view.profileClaims(),
+                view.directOverride().name(), view.profileDesiredState().name(),
                 view.dependsOn(), view.mutexWith(), view.detail())).toList();
     }
     public synchronized Optional<Ability> ability(String namespace, String name) {
         String id = namespace + "/" + name;
         return abilities().stream().filter(ability -> ability.id().equals(id)).findFirst();
+    }
+    public synchronized List<Profile> profiles() {
+        return activeDeployment.profiles().values().stream().map(profile -> new Profile(profile.name(),
+                profile.name().equals(activeProfile), profile.abilities(), profile.globalContext().keySet())).toList();
+    }
+    public synchronized Optional<Profile> profile(String name) {
+        return profiles().stream().filter(profile -> profile.name().equals(name)).findFirst();
+    }
+    /** Atomically activates one disk-loaded KuudraProfile for the current App run. */
+    public java.util.concurrent.CompletionStage<Void> activateProfile(String name) {
+        final String targetName = name == null ? "" : name.trim();
+        final String previousName;
+        final Map<String, Object> previousGlobals;
+        final Map<String, Object> targetGlobals;
+        final KuudraRuntime targetRuntime;
+        final AbilityManager targetManager;
+        final Duration drainTimeout;
+        final Duration cancelGrace;
+        synchronized (this) {
+            if (status != AppStatus.RUNNING || runtime == null || abilityManager == null) {
+                throw new KuudraException("Profile activation is unavailable while App is " + status);
+            }
+            if (!profileTransition.isDone()) throw new KuudraException("A Profile activation is already in progress");
+            if (!targetName.isEmpty() && !activeDeployment.profiles().containsKey(targetName)) {
+                throw new IllegalArgumentException("Unknown KuudraProfile: " + targetName);
+            }
+            previousName = activeProfile;
+            previousGlobals = globalContext;
+            targetGlobals = profileGlobals(activeDeployment, targetName);
+            targetRuntime = runtime;
+            targetManager = abilityManager;
+            KuudraConfig.RuntimeSettings settings = bootstrapConfig == null
+                    ? new KuudraConfig.RuntimeSettings(queueCapacity, workerThreads, 256, 200, 5_000,
+                    new KuudraConfig.SessionCoordinatorSettings(SessionSchedulingPolicy.PARALLEL,
+                            SessionGroupScope.INGRESS, 1, 0))
+                    : bootstrapConfig.runtime();
+            drainTimeout = Duration.ofMillis(settings.abilityDrainTimeoutMs());
+            cancelGrace = Duration.ofMillis(settings.cancelGraceTimeoutMs());
+            profileTransition = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                boolean safePoint = false;
+                boolean globalsReplaced = false;
+                try {
+                    targetRuntime.beginProfileTransition(drainTimeout, cancelGrace);
+                    safePoint = true;
+                    targetRuntime.replaceGlobalContext(targetGlobals);
+                    globalsReplaced = true;
+                    targetManager.activateProfile(targetName);
+                    synchronized (KuudraApp.this) {
+                        activeProfile = targetName;
+                        globalContext = targetGlobals;
+                    }
+                    events.publish(SystemEvent.of("profile.activated", Map.of(
+                            "profile", targetName, "previousProfile", previousName)));
+                } catch (RuntimeException failure) {
+                    if (globalsReplaced) {
+                        try { targetRuntime.replaceGlobalContext(previousGlobals); }
+                        catch (RuntimeException rollback) {
+                            failure.addSuppressed(rollback);
+                            synchronized (KuudraApp.this) {
+                                status = AppStatus.FAILED;
+                                detail = "Profile rollback failed: " + rollback;
+                                publish("app.failed");
+                            }
+                        }
+                    }
+                    if (failure.getSuppressed().length > 0) {
+                        synchronized (KuudraApp.this) {
+                            status = AppStatus.FAILED;
+                            detail = "Profile rollback failed: " + failure.getSuppressed()[0];
+                            publish("app.failed");
+                        }
+                    }
+                    events.publish(SystemEvent.error("profile.activation.failed", Map.of(
+                            "profile", targetName, "error", failure.toString())));
+                    throw failure;
+                } finally {
+                    if (safePoint) targetRuntime.endProfileTransition();
+                }
+            }, profileExecutor);
+            return profileTransition;
+        }
     }
     public synchronized List<ManifestResource> manifestResources() {
         if (abilityManager == null) return List.of();
@@ -378,6 +480,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         AbilityManager target;
         synchronized (this) {
             if (abilityManager == null) throw new KuudraException("Ability control is unavailable");
+            if (!profileTransition.isDone()) throw new KuudraException(
+                    "Ability control is unavailable during Profile activation");
             target = abilityManager;
         }
         AbilityManager.ControlOverride override = switch (action.toLowerCase(java.util.Locale.ROOT)) {
@@ -406,6 +510,8 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         synchronized (this) {
             if (status == AppStatus.PAUSED || status == AppStatus.PAUSING) return;
             if (status != AppStatus.RUNNING || runtime == null) throw new KuudraException("App is not running: " + status);
+            if (!profileTransition.isDone()) throw new KuudraException(
+                    "App pause is unavailable during Profile activation");
             target = runtime;
             status = AppStatus.PAUSING; detail = "waiting for Runtime safe point"; publish("app.pausing");
         }
@@ -488,7 +594,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
     }
     /** Core resource schemas use a documentation-provider namespace, independent from resource instance namespaces. */
     public List<ResourceDocumentation> resourceDocumentations() {
-        return List.of(ABILITY_DOCUMENTATION, ABILITY_PROFILE_DOCUMENTATION);
+        return List.of(ABILITY_DOCUMENTATION, KUUDRA_PROFILE_DOCUMENTATION);
     }
     public Optional<ResourceDocumentation> resourceDocumentation(String namespace, String kind) {
         return resourceDocumentations().stream().filter(documentation -> documentation.namespace().equals(namespace)
@@ -615,9 +721,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
             "status", status.name(), "detail", detail, "version", KuudraVersion.current()))); }
     private void debug(String type, Map<String,Object> data) { events.publish(SystemEvent.debug(type, data)); }
     private void trace(String type, Map<String,Object> data) { events.publish(SystemEvent.trace(type, data)); }
-    @Override public synchronized void close() {
+    @Override public void close() {
         stop();
-        if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
+        synchronized (this) {
+            if (stateStore != null) try { stateStore.close(); } finally { stateStore = null; }
+        }
+        profileExecutor.shutdownNow();
     }
     private static Flow flow(FlowSnapshot snapshot) { return new Flow(snapshot.flowId(), snapshot.executionClass().name(), snapshot.activeSessions(), snapshot.deferredTasks(), true); }
     private static Session session(SessionSnapshot snapshot) { return new Session(snapshot.id(), snapshot.flowId(), snapshot.flowRevision(), snapshot.ingressId(), snapshot.groupKey(), snapshot.labels(), snapshot.status().name(), snapshot.cancellationRequested(), snapshot.activeLeases()); }
@@ -688,7 +797,7 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
                         config.homeDirectory().resolve("state").resolve("kuudra.db"), config.stateStore().busyTimeoutMs());
                 stateStore.replaceDesired(config.deployment());
                 KuudraManifest.Deployment desired = stateStore.desiredDeployment();
-                abilityManager = new AbilityManager(desired, config.abilityProfiles(), config.abilities(), requirePlugins(),
+                abilityManager = new AbilityManager(desired, config.activeProfile(), requirePlugins(),
                         requireRuntime(), config.runtime(), events);
                 abilityManager.start();
                 stateStore.markAllObserved("READY", "v1alpha2 deployment reconciled");
@@ -751,7 +860,16 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         checkpoint = null;
         runtime = null;
         plugins = null;
-        globalContext = Map.of();
+        globalContext = Map.of(); activeProfile = ""; activeDeployment = KuudraManifest.Deployment.EMPTY;
+    }
+
+    private static Map<String, Object> profileGlobals(KuudraManifest.Deployment deployment, String profileName) {
+        if (profileName == null || profileName.isBlank()) return Map.of();
+        KuudraManifest.KuudraProfile profile = deployment.profiles().get(profileName);
+        if (profile == null) throw new KuudraException("Unknown KuudraProfile selected by config: " + profileName);
+        // Compilation validates nested references and cycles before Runtime starts accepting Events.
+        PlaceholderResolver.compileGlobals(profile.globalContext());
+        return profile.globalContext();
     }
 
     private void registerPluginMessages(PluginArchiveLoader.LoadedArchive loaded) throws IOException {
@@ -1210,10 +1328,12 @@ public final class KuudraApp implements AutoCloseable, AppLifecycle {
         return type + "/" + component;
     }
     public record Flow(String id, String executionClass, int activeSessions, int deferredTasks, boolean selected) { }
-    public record Ability(String id, String state, String directOverride, boolean configurationClaim,
-                          Set<String> profileClaims,
+    public record Ability(String id, String state, String directOverride, String profileDesiredState,
                           List<String> dependsOn, List<String> mutexWith, String detail) {
-        public Ability { profileClaims = Set.copyOf(profileClaims); dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
+        public Ability { dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
+    }
+    public record Profile(String name, boolean active, List<String> abilities, Set<String> globalContextKeys) {
+        public Profile { abilities = List.copyOf(abilities); globalContextKeys = Set.copyOf(globalContextKeys); }
     }
     public record ManifestResource(String id, String template, String state, Set<String> claimedBy, String detail) {
         public ManifestResource { claimedBy = Set.copyOf(claimedBy); }

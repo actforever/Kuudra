@@ -218,19 +218,17 @@ public final class KuudraManifest {
         }
     }
 
-    /** Global profile; profile names have no namespace. */
-    public record AbilityProfile(String name, List<String> abilities, List<String> namespaces,
-                                 List<String> exclude) {
-        public AbilityProfile {
+    /** Complete global Runtime plan; profile names have no namespace. */
+    public record KuudraProfile(String name, List<String> abilities, Map<String, Object> globalContext) {
+        public KuudraProfile {
             requireDnsLabel(name, "profile name");
             abilities = uniqueNames(abilities, "abilities");
-            namespaces = uniqueNames(namespaces, "namespaces");
-            exclude = uniqueNames(exclude, "exclude");
+            globalContext = Map.copyOf(globalContext);
         }
     }
 
     public record Deployment(Map<ResourceId, Resource> resources, Map<ResourceId, Ability> abilities,
-                             Map<String, AbilityProfile> profiles) {
+                             Map<String, KuudraProfile> profiles) {
         public static final Deployment EMPTY = new Deployment(Map.of(), Map.of(), Map.of());
         public Deployment {
             resources = Map.copyOf(resources); abilities = Map.copyOf(abilities); profiles = Map.copyOf(profiles);

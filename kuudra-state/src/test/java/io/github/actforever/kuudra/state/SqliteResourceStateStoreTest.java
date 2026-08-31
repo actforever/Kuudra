@@ -18,7 +18,7 @@ class SqliteResourceStateStoreTest {
     void persistsV1Alpha2DeploymentAndObservedGenerations() throws Exception {
         Path manifests = directory.resolve("manifests");
         Path abilities = directory.resolve("abilities");
-        Path profiles = abilities.resolve("profiles");
+        Path profiles = directory.resolve("profiles");
         Files.createDirectories(manifests);
         Files.createDirectories(abilities);
         Files.createDirectories(profiles);
@@ -41,7 +41,7 @@ class SqliteResourceStateStoreTest {
                 """);
         Files.writeString(profiles.resolve("default.yaml"), """
                 apiVersion: kuudra.io/v1alpha2
-                kind: AbilityProfile
+                kind: KuudraProfile
                 metadata: {name: default}
                 spec: {abilities: [demo/disconnect]}
                 """);

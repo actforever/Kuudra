@@ -18,26 +18,22 @@ public final class KuudraConfig {
     public record RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
                                 ReconciliationSettings reconciliation,
                                 StateStoreSettings stateStore, LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
-                                boolean bannerEnabled, Map<String, Object> globalContext, KuudraManifest.Resources manifests,
-                                KuudraManifest.Deployment deployment, java.util.List<String> abilityProfiles,
-                                java.util.List<String> abilities) {
+                                boolean bannerEnabled, String activeProfile, KuudraManifest.Resources manifests,
+                                KuudraManifest.Deployment deployment) {
         public RuntimeConfig(RuntimeSettings runtime, ResourceSelectionSettings resourceSelection,
                              ReconciliationSettings reconciliation, StateStoreSettings stateStore,
                              LoggingSettings logging, I18nSettings i18n, Path homeDirectory,
-                             boolean bannerEnabled, Map<String, Object> globalContext,
+                             boolean bannerEnabled,
                              KuudraManifest.Resources manifests) {
             this(runtime, resourceSelection, reconciliation, stateStore, logging, i18n, homeDirectory,
-                    bannerEnabled, globalContext, manifests, KuudraManifest.Deployment.EMPTY,
-                    java.util.List.of(), java.util.List.of());
+                    bannerEnabled, "", manifests, KuudraManifest.Deployment.EMPTY);
         }
         public RuntimeConfig {
             if (runtime == null || resourceSelection == null || reconciliation == null || stateStore == null || logging == null || i18n == null || manifests == null || deployment == null) {
                 throw new IllegalArgumentException("runtime, reconciliation, stateStore, logging, i18n, and deployment must not be null");
             }
             homeDirectory = homeDirectory.toAbsolutePath().normalize();
-            globalContext = Map.copyOf(globalContext);
-            abilityProfiles = java.util.List.copyOf(abilityProfiles);
-            abilities = java.util.List.copyOf(abilities);
+            activeProfile = activeProfile == null ? "" : activeProfile.trim();
         }
     }
     public record RuntimeSettings(int queueCapacity, int workerThreads, int maxEventHops,

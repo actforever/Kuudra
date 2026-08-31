@@ -22,18 +22,17 @@ final class AbilityManager implements AutoCloseable {
     enum State { ENABLED, PAUSED, DISABLED, FAILED }
     enum ControlOverride { INHERIT, ENABLED, PAUSED, DISABLED }
 
-    record AbilityView(String id, State state, ControlOverride directOverride, boolean configurationClaim,
-                       Set<String> profileClaims,
+    record AbilityView(String id, State state, ControlOverride directOverride, State profileDesiredState,
                        List<String> dependsOn, List<String> mutexWith, String detail) {
-        AbilityView { profileClaims = Set.copyOf(profileClaims); dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
+        AbilityView { dependsOn = List.copyOf(dependsOn); mutexWith = List.copyOf(mutexWith); }
     }
     record ResourceView(String id, String template, String state, Set<String> claimedBy, String detail) {
         ResourceView { claimedBy = Set.copyOf(claimedBy); }
     }
 
     private final KuudraManifest.Deployment deployment;
-    private final List<String> selectedProfiles;
-    private final Set<String> selectedAbilities;
+    private String activeProfile;
+    private Set<String> selectedAbilities;
     private final DefaultPluginManager plugins;
     private final KuudraRuntime runtime;
     private final SystemEventPublisher events;
@@ -47,12 +46,12 @@ final class AbilityManager implements AutoCloseable {
     private final Set<String> registeredAbilities = new LinkedHashSet<>();
     private final List<SourceRegistration> sourceBindings = new ArrayList<>();
 
-    AbilityManager(KuudraManifest.Deployment deployment, List<String> selectedProfiles,
-                   List<String> selectedAbilities,
+    AbilityManager(KuudraManifest.Deployment deployment, String activeProfile,
                    DefaultPluginManager plugins, KuudraRuntime runtime,
                    KuudraConfig.RuntimeSettings settings, SystemEventPublisher events) {
-        this.deployment = Objects.requireNonNull(deployment); this.selectedProfiles = List.copyOf(selectedProfiles);
-        this.selectedAbilities = Set.copyOf(selectedAbilities);
+        this.deployment = Objects.requireNonNull(deployment);
+        this.activeProfile = activeProfile == null ? "" : activeProfile;
+        this.selectedAbilities = selectedAbilities(this.activeProfile);
         this.plugins = Objects.requireNonNull(plugins); this.runtime = Objects.requireNonNull(runtime);
         this.events = Objects.requireNonNull(events);
         this.drainTimeout = Duration.ofMillis(settings.abilityDrainTimeoutMs());
@@ -63,7 +62,7 @@ final class AbilityManager implements AutoCloseable {
             states.put(ability.qualifiedName(), State.DISABLED);
             details.put(ability.qualifiedName(), "no claim");
         });
-        validateProfiles();
+        validateDeployment();
     }
 
     synchronized void start() { reconcile(); }
@@ -78,10 +77,29 @@ final class AbilityManager implements AutoCloseable {
         });
     }
 
+    synchronized void activateProfile(String profile) {
+        String target = profile == null ? "" : profile;
+        Set<String> selected = selectedAbilities(target);
+        String previousProfile = activeProfile; Set<String> previousSelected = selectedAbilities;
+        Map<String, ControlOverride> previousOverrides = new LinkedHashMap<>(overrides);
+        activeProfile = target; selectedAbilities = selected;
+        overrides.replaceAll((id, ignored) -> ControlOverride.INHERIT);
+        try { reconcile(); }
+        catch (RuntimeException failure) {
+            activeProfile = previousProfile; selectedAbilities = previousSelected;
+            overrides.clear(); overrides.putAll(previousOverrides);
+            try { reconcile(); } catch (RuntimeException rollback) { failure.addSuppressed(rollback); }
+            throw failure;
+        }
+    }
+
+    synchronized String activeProfile() { return activeProfile; }
+
     synchronized List<AbilityView> abilities() {
         return deployment.abilities().values().stream().map(ability -> {
             String id = ability.qualifiedName();
-            return new AbilityView(id, states.get(id), overrides.get(id), selectedAbilities.contains(id), profileClaims(id),
+            return new AbilityView(id, states.get(id), overrides.get(id),
+                    selectedAbilities.contains(id) ? State.ENABLED : State.DISABLED,
                     normalized(ability, ability.dependsOn()), normalized(ability, ability.mutexWith()), details.get(id));
         }).toList();
     }
@@ -142,8 +160,7 @@ final class AbilityManager implements AutoCloseable {
             String id = ability.qualifiedName(); ControlOverride direct = overrides.get(id);
             desired.put(id, switch (direct) {
                 case ENABLED -> State.ENABLED; case PAUSED -> State.PAUSED; case DISABLED -> State.DISABLED;
-                case INHERIT -> profileClaims(id).isEmpty() && !selectedAbilities.contains(id)
-                        ? State.DISABLED : State.ENABLED;
+                case INHERIT -> selectedAbilities.contains(id) ? State.ENABLED : State.DISABLED;
             });
         }
         boolean changed;
@@ -162,26 +179,17 @@ final class AbilityManager implements AutoCloseable {
         return desired;
     }
 
-    private Set<String> profileClaims(String abilityId) {
-        Set<String> claims = new LinkedHashSet<>();
-        for (String profileName : selectedProfiles) {
-            KuudraManifest.AbilityProfile profile = deployment.profiles().get(profileName);
-            if (profile == null) continue;
-            boolean included = profile.abilities().contains(abilityId)
-                    || profile.namespaces().contains(abilityId.substring(0, abilityId.indexOf('/')));
-            if (included && !profile.exclude().contains(abilityId)) claims.add(profileName);
-        }
-        return Set.copyOf(claims);
+    private Set<String> selectedAbilities(String profileName) {
+        if (profileName == null || profileName.isBlank()) return Set.of();
+        KuudraManifest.KuudraProfile profile = deployment.profiles().get(profileName);
+        if (profile == null) throw new KuudraException("Unknown KuudraProfile: " + profileName);
+        return Set.copyOf(profile.abilities());
     }
 
-    private void validateProfiles() {
+    private void validateDeployment() {
         selectedAbilities.forEach(this::requireAbility);
-        for (String profile : selectedProfiles) if (!deployment.profiles().containsKey(profile)) {
-            throw new KuudraException("Unknown AbilityProfile selected by config: " + profile);
-        }
-        for (KuudraManifest.AbilityProfile profile : deployment.profiles().values()) {
+        for (KuudraManifest.KuudraProfile profile : deployment.profiles().values()) {
             for (String id : profile.abilities()) requireAbility(id);
-            for (String id : profile.exclude()) requireAbility(id);
         }
         for (KuudraManifest.Ability ability : deployment.abilities().values()) {
             normalized(ability, ability.dependsOn()).forEach(this::requireAbility);

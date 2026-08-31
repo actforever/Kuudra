@@ -23,6 +23,7 @@ class KuudraWebApplicationTest {
     @Test
     void registersAbilityResourceAndPluginAdapters() {
         assertEquals(1, context.getBeansOfType(AbilityController.class).size());
+        assertEquals(1, context.getBeansOfType(ProfileController.class).size());
         assertEquals(1, context.getBeansOfType(ResourceController.class).size());
         assertEquals(1, context.getBeansOfType(PluginController.class).size());
         assertTrue(context.getBeansOfType(FlowControllerMarker.class).isEmpty());
@@ -36,6 +37,8 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/runtime/resources"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
+        mvc.perform(get("/api/v1/runtime/profiles"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/plugin/resource-templates"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$").isArray());
         mvc.perform(get("/api/v1/runtime/flows")).andExpect(status().isNotFound());
@@ -45,7 +48,7 @@ class KuudraWebApplicationTest {
                 .andExpect(jsonPath("$[*].apiVersion").value(org.hamcrest.Matchers.everyItem(
                         org.hamcrest.Matchers.is("kuudra.io/v1alpha2"))))
                 .andExpect(jsonPath("$[*].kind", org.hamcrest.Matchers.containsInAnyOrder(
-                        "Ability", "AbilityProfile")));
+                        "Ability", "KuudraProfile")));
     }
 
     @Test
@@ -63,6 +66,8 @@ class KuudraWebApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/abilities']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/abilities/{namespace}/{name}/{action}'].post.responses['202']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/profiles']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/runtime/profiles/{name}/activate'].post.responses['202']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/resources']").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/runtime/flows']").doesNotExist());
         mvc.perform(get("/v3/api-docs/plugin"))

@@ -25,7 +25,7 @@ import java.util.Set;
 
 /** SQLite StateStore whose SQL mapping is isolated behind MyBatis. */
 public final class SqliteResourceStateStore implements ResourceStateStore {
-    private static final int CONTROL_PLANE_SCHEMA_VERSION = 2;
+    private static final int CONTROL_PLANE_SCHEMA_VERSION = 3;
     private static final String PROFILE_NAMESPACE = "kuudra-system";
     private final SqlSessionFactory sessions;
     private final ObjectMapper json = JsonMapper.builder()
@@ -72,8 +72,8 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
             deployment.resources().values().forEach(value -> persist(mapper, value.id(), "resource", value, retained));
             deployment.abilities().values().forEach(value -> persist(mapper, value.id(), "ability", value, retained));
             deployment.profiles().values().forEach(value -> persist(mapper,
-                    new KuudraManifest.ResourceId("AbilityProfile", PROFILE_NAMESPACE, value.name()),
-                    "ability-profile", value, retained));
+                    new KuudraManifest.ResourceId("KuudraProfile", PROFILE_NAMESPACE, value.name()),
+                    "kuudra-profile", value, retained));
             mapper.findAll().stream().map(SqliteResourceStateStore::id).filter(id -> !retained.contains(id))
                     .forEach(id -> mapper.delete(id.kind(), id.namespace(), id.name()));
             session.commit();
@@ -86,7 +86,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         requireOpen();
         Map<KuudraManifest.ResourceId, KuudraManifest.Resource> resources = new LinkedHashMap<>();
         Map<KuudraManifest.ResourceId, KuudraManifest.Ability> abilities = new LinkedHashMap<>();
-        Map<String, KuudraManifest.AbilityProfile> profiles = new LinkedHashMap<>();
+        Map<String, KuudraManifest.KuudraProfile> profiles = new LinkedHashMap<>();
         try (SqlSession session = sessions.openSession()) {
             for (ResourceStateRow row : session.getMapper(ResourceStateMapper.class).findAll()) {
                 switch (row.getResourceType()) {
@@ -98,8 +98,8 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
                         KuudraManifest.Ability value = json.readValue(row.getDesiredJson(), KuudraManifest.Ability.class);
                         abilities.put(value.id(), value);
                     }
-                    case "ability-profile" -> {
-                        KuudraManifest.AbilityProfile value = json.readValue(row.getDesiredJson(), KuudraManifest.AbilityProfile.class);
+                    case "kuudra-profile" -> {
+                        KuudraManifest.KuudraProfile value = json.readValue(row.getDesiredJson(), KuudraManifest.KuudraProfile.class);
                         profiles.put(value.name(), value);
                     }
                     default -> throw new KuudraException("Unknown v0.5 persisted resource type: " + row.getResourceType());
@@ -170,7 +170,7 @@ public final class SqliteResourceStateStore implements ResourceStateStore {
         try (SqlSession session = sessions.openSession()) {
             ResourceStateMapper mapper = session.getMapper(ResourceStateMapper.class);
             return mapper.findAll().stream()
-                    .filter(row -> !"ability-profile".equals(row.getResourceType()))
+                    .filter(row -> !"kuudra-profile".equals(row.getResourceType()))
                     .map(row -> new ResourceState(id(row), row.getGeneration(), row.getObservedGeneration(),
                             row.getPhase(), row.getMessage())).toList();
         } catch (RuntimeException error) {

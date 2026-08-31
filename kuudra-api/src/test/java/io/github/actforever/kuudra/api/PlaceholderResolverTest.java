@@ -30,7 +30,7 @@ class PlaceholderResolverTest {
         EventContext context = new EventContext("demo", new SessionReference(UUID.randomUUID(), "demo"), Map.of("mode", "hold"), null, () -> ExecutionDecision.CONTINUE,
                 Map.of("profile", "test"), Map.of());
         Map<String, Object> values = PlaceholderResolver.resolveMap(Map.of(
-                "key", "${event.data.input.key}", "mode", "${session.values.mode}", "profile", "${global.profile}", "text", "${flow.id}:${event.type}"), event, context);
+                "key", "${event.data.input.key}", "mode", "${session.values.mode}", "profile", "${global.profile}", "text", "${ability.id}:${event.type}"), event, context);
         assertEquals("A", values.get("key"));
         assertEquals("hold", values.get("mode"));
         assertEquals("test", values.get("profile"));
@@ -49,7 +49,7 @@ class PlaceholderResolverTest {
     void compiledTemplateCanBeReusedAcrossEventsAndPreservesNestedValueTypes() {
         PlaceholderResolver.CompiledMap compiled = PlaceholderResolver.compileMap(Map.of(
                 "value", "${event.data.input.value}",
-                "nested", List.of(Map.of("label", "${flow.id}:${event.type}"))));
+                "nested", List.of(Map.of("label", "${ability.id}:${event.type}"))));
         EventContext context = new EventContext("demo", null, Map.of(), null, () -> ExecutionDecision.CONTINUE);
 
         Map<String, Object> first = compiled.resolve(KuudraEvent.of("first", EventData.of("input", Map.of("value", 7))), context);
@@ -81,7 +81,7 @@ class PlaceholderResolverTest {
                 "boolean-text", "true",
                 "object", "{\"key\":\"A\",\"count\":2}",
                 "array", "[1,true,{\"key\":\"B\"}]",
-                "dynamic", "{\"key\":\"${event#input.key}\"}"), event, context);
+                "dynamic", "{\"key\":\"${event.data.input.key}\"}"), event, context);
 
         assertEquals(42, values.get("number"));
         assertEquals(true, values.get("flag"));
@@ -102,8 +102,8 @@ class PlaceholderResolverTest {
     @Test
     void rawCompilationRejectsSessionScopeBeforeExecution() {
         assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
-                Map.of("illegal", "${session#mode}"), EventDomain.RAW));
-        PlaceholderResolver.compileMap(Map.of("legal", "${event#type}"), EventDomain.RAW);
+                Map.of("illegal", "${session.values.mode}"), EventDomain.RAW));
+        PlaceholderResolver.compileMap(Map.of("legal", "${event.type}"), EventDomain.RAW);
     }
 
     @Test
@@ -121,13 +121,40 @@ class PlaceholderResolverTest {
         UUID sessionId = UUID.randomUUID();
         ActionContext context = new ActionContext(sessionId, "flow", session.snapshot(), session,
                 () -> ExecutionDecision.CONTINUE, event -> true);
-        ContextValueReference reference = ContextValueReference.compile("session#key", EventDomain.SESSION);
+        ContextValueReference reference = ContextValueReference.compile("session.values.key", EventDomain.SESSION);
         KuudraEvent event = KuudraEvent.of("input", Map.of());
 
         assertEquals(new KeyStroke("A", true), reference.get(event, context, KeyStroke.class));
         session.put("key", new KeyStroke("B", false));
         assertEquals(new KeyStroke("B", false), reference.get(event, context, KeyStroke.class));
+        assertEquals(sessionId.toString(), ContextValueReference.compile("session.id", EventDomain.SESSION)
+                .get(event, context, String.class));
+        assertEquals("flow", ContextValueReference.compile("session.abilityId", EventDomain.SESSION)
+                .get(event, context, String.class));
+        assertEquals("flow", ContextValueReference.compile("ability.id", EventDomain.SESSION)
+                .get(event, context, String.class));
         assertThrows(IllegalArgumentException.class,
-                () -> ContextValueReference.compile("session#key", EventDomain.RAW));
+                () -> ContextValueReference.compile("session.values.key", EventDomain.RAW));
+    }
+
+    @Test
+    void precompilesNestedGlobalTemplatesAndRejectsCyclesAndLegacySyntax() {
+        PlaceholderResolver.CompiledGlobals globals = PlaceholderResolver.compileGlobals(Map.of(
+                "target", "${session.values.target}",
+                "alias", "${global.target}"));
+        PlaceholderResolver.CompiledMap arguments = PlaceholderResolver.compileMap(
+                Map.of("value", "${global.alias}"), EventDomain.SESSION, globals);
+        EventContext context = new EventContext("demo", new SessionReference(UUID.randomUUID(), "demo"),
+                Map.of("target", 42), null, () -> ExecutionDecision.CONTINUE,
+                Map.of("target", "${session.values.target}", "alias", "${global.target}"), Map.of());
+        assertEquals(42, arguments.resolve(KuudraEvent.of("input", Map.of()), context).get("value"));
+        assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
+                Map.of("value", "${global.alias}"), EventDomain.RAW, globals));
+        assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileGlobals(Map.of(
+                "first", "${global.second}", "second", "${global.first}")));
+        assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
+                Map.of("legacy", "${global#value}"), EventDomain.RAW));
+        assertThrows(IllegalArgumentException.class, () -> PlaceholderResolver.compileMap(
+                Map.of("implicit", "${value}"), EventDomain.RAW));
     }
 }
