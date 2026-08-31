@@ -300,8 +300,31 @@ Resource 初始化且 `allowElevation: true` 时才启动提权 broker。可执�
 静态绝对路径 allowlist，Event/arguments 只能选择别名、PID、类型化动作和有界时长。
 
 `actforever/process-control` 在 v0.5 中是包含 `suspend`、`resume` 两个具名入口的
-Controller。未来软断网、硬断网与恢复网络也应作为宿主提供的类型化能力，由下游
-Controller 二次封装；不得通过配置植入任意 PowerShell 命令。
+Controller。`actforever/network-control` 则使用同一宿主的独立 `NETWORK_CONTROL`
+能力，提供 `block-outbound`、`disable-adapters`、`restore-outbound`、
+`restore-adapters` 和 `restore-all` 五个入口。程序绝对路径与网卡接口 GUID/名称必须
+在 Resource `options` 中静态授权；Event 只能在 Handler `arguments` 中选择别名。
+网络 Resource stop/destroy、App 关闭或 JVM 管道断开会恢复 owner 状态，broker 下次
+启动还会读取原子恢复日志。不得通过配置植入任意 PowerShell 命令。
+
+```yaml
+apiVersion: kuudra.io/v1alpha2
+kind: Controller
+metadata: {namespace: automation, name: network}
+spec:
+  template: actforever/network-control/network-controller
+  options:
+    allowElevation: true
+    programs:
+      ping: {executablePath: 'C:\Windows\System32\PING.EXE'}
+    adapters:
+      primary: {interfaceName: Ethernet}
+```
+
+Controller node 以 `handler: block-outbound` 配合 `arguments: {programs: [ping]}` 完成
+软断网；以 `handler: disable-adapters` 配合 `arguments: {adapters: [primary]}` 完成硬断网。
+恢复必须路由到相应 restore Handler，停止 Resource 时的恢复是额外故障保护。可运行配置与
+硬断网看门狗要求见官方插件仓库 `examples/network-control-safe`。
 
 ## 9. 音频提示能力
 

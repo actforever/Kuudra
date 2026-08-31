@@ -111,6 +111,22 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 5. 缺少 host JAR 时依赖校验失败，未知 track 或越界目录仅使对应调用/Ability 明确失败；
 6. audio-host fat JAR 保留 MP3/Vorbis `AudioFileReader` SPI 和第三方许可文件。
 
+## 场景五：Windows network-control 与跨插件恢复
+
+装入 `default`、`logging`、`session-probe`、`windows-native-host`、`network-control`，
+使用官方插件仓库 `examples/network-control-safe`。默认仅激活 `network-soft-safe`：
+
+1. host 单独加载或 network Ability 未 claim 时不启动 broker、不触发 UAC；
+2. network Controller 模板发布五个具名 Handler，Ability 与所有已 claim Resource 为 RUNNING；
+3. `PING.EXE` 的出站流量在 `block-outbound` 后被阻止，`restore-outbound` 后恢复，临时防火墙规则消失；
+4. 同时装入并 claim process-control 与 network-control 时只共享一个 broker，但 owner 状态互不覆盖；
+5. `event-logger` 同时收到 probe Event，证明默认边界、日志和原生 Controller 组合路由正常；
+6. Resource disable、App stop 和 JVM 管道断开均清理网络 owner，下一次 broker 启动可补偿遗留日志。
+
+硬断网测试必须先通过 `Get-NetAdapter` 固定活动接口 GUID/精确名称，并在独立管理员进程中
+建立至少 15 秒的恢复看门狗。验证同一次调用可禁用任意多张白名单网卡、5 秒示例窗口后恢复，
+且原本禁用的网卡不会被启用。不要在仅能远程访问的机器上无人值守执行。
+
 ## 组合与失败矩阵
 
 | 组合/操作 | 期望 |
@@ -119,6 +135,10 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 | windows-native-host 单独加载 | 插件 ACTIVE，不启动 broker、不触发 UAC |
 | process-control 缺 host | 插件依赖校验失败 |
 | host + process-control，Ability 未 claim | 不物化 Controller，不启动 broker |
+| network-control 缺 host | 插件依赖校验失败 |
+| host + network-control，Ability 未 claim | 不物化 Controller，不启动 broker |
+| host + process-control + network-control | 共享一个 broker，进程与网络 owner 独立恢复 |
+| default + session-probe + logging + network-control | probe 分支同时完成具名网络操作与 Event 日志 |
 | audio-host 单独加载 | 插件 ACTIVE，不打开音频设备、不发布 ResourceTemplate |
 | audio-player 缺 audio-host | 插件依赖校验失败 |
 | audio-host + audio-player + 直接 Ability claim | WAV 提示音执行，configurationClaim 可观测 |
@@ -127,6 +147,7 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 | 同一 Controller 的 `suspend`/`resume` 节点 | 分别路由到对应方法，不使用动态 action 分派 |
 | App restart | 重新读取磁盘 manifests/abilities/profiles，正常 stop 后再 start |
 | App stop during suspension | 恢复目标、清空 owner 操作、关闭 broker |
+| App stop during network block/adapter disable | 等待在途操作后恢复防火墙与网卡，再关闭 broker |
 
 ## 2026-08-30 实测记录
 
@@ -137,3 +158,17 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 - Ability 的 pause/resume/disable/enable/inherit 均返回 HTTP 202，并依次收敛到 PAUSED/ENABLED/DISABLED/ENABLED/ENABLED；restart 返回 200，重新读取三类目录后恢复 ENABLED + INHERIT；
 - App stop 后 HTTP 仍可查询到 STOPPED，验证 Web 与 App 生命周期边界；
 - conditional-boundary + session-probe 组合物化 6 个 RUNNING Resource，建立 Session dependency，并在 required Session 完成后按 `CANCEL_DEPENDENT` 取消 dependent Session，日志 0 ERROR。
+
+## 2026-08-31 network-control 实测记录
+
+本轮在本地管理员 Windows 会话中使用打包后的 Web JAR 与 `default`、`logging`、
+`session-probe`、`windows-native-host`、`process-control`、`network-control` 六个插件交叉验证：
+
+- 官方插件 16 模块 `mvn clean package -DskipTests=false` 全部成功，包含 self-contained `win-x64` publish；最终 native host 11 个 C# 测试、network-control 6 个 Java 测试通过；
+- HTTP 同时显示 soft、hard、process 三个 Ability 为 RUNNING，原始 `/runtime/resources` 响应包含 10 个 Resource 且全部 `state=RUNNING`；Controller 模板返回五个预期 Handler；
+- process-control 与两个 network-control Resource 共享唯一 broker，broker 的 ParentProcessId 与 Web JVM PID 完全相同，owner 操作互不覆盖；
+- 软断网窗口内实际观测到一条 `Kuudra Network Control ...` 出站阻止规则，恢复后规则数为 0；
+- 一次 `disable-adapters` 同时使两张原本为 Up 的非主链路 VMware 虚拟网卡进入 Disabled，`restore-adapters` 后两张均回到 Up；独立 30 秒管理员看门狗作为额外兜底；
+- event-logger 分别记录 soft/hard sequence 1/2，process `suspend`、网络四个操作均完成，未出现 operation/session failure；
+- `POST /api/v1/kuudra/stop` 返回 STOPPED，随后 broker 数为 0、防火墙规则为 0、两张网卡为 Up，`active-network-operations.json` 不存在；
+- 强杀首次 JVM 时发现旧 broker 可能停在“command Pipe 已连接、event Pipe 未连接”的启动窗口。修复后两条 Pipe 并行等待并监控 JVM/两分钟上限；专项测试模拟半连接后客户端退出，返回 `CLIENT_EXITED` 且不再遗留等待进程。
