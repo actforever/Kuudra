@@ -8,12 +8,13 @@
 <home-directory>/
   manifests/               # 只允许 Resource
   abilities/               # 只允许 Ability
-    profiles/              # 只允许全局 AbilityProfile
+  profiles/                # 只允许全局 KuudraProfile
 ```
 
-三个目录均递归读取 `.yaml`/`.yml` 并支持 `---` 多文档，但不能混放 kind。旧顶层 `ability-profiles/` 不再兼容；其中存在 YAML 时加载失败并给出迁移提示。
+三个目录均递归读取 `.yaml`/`.yml` 并支持 `---` 多文档，但不能混放 kind。旧
+`ability-profiles/` 与 `abilities/profiles/` 不再兼容；其中存在 YAML 时加载失败并给出迁移提示。
 
-Resource 与 Ability 省略 `metadata.namespace` 时使用 `default`。AbilityProfile 是全局对象，禁止声明 namespace。
+Resource 与 Ability 省略 `metadata.namespace` 时使用 `default`。KuudraProfile 是全局对象，禁止声明 namespace。
 
 ## Resource
 
@@ -68,7 +69,7 @@ spec:
       resource: Controller/shared-services/logger
       handler: log
       arguments:
-        message: "${event#hello-world.message}"
+        message: "${event.data.hello-world.message}"
   edges:
     - { from: source, to: ingress }
     - { from: ingress, to: logger }
@@ -93,23 +94,31 @@ resource:
 
 Controller 节点必须选择 `handler`。Ingress 节点必须声明 CREATE 或 JOIN；CREATE 拥有调度与依赖，JOIN 只能指向同一 Ability 中的 CREATE Ingress。一个 EventSource Resource 在同一 Ability 只能出现于一个节点，需要扇出时从该节点声明多条边。
 
-节点 `arguments` 支持原生 YAML 数值、布尔、映射与列表，并可包含 `${event#...}`、`${session#...}`、`${ability#...}`、`${global#...}`。占位符在注册 Ability 时预编译，执行时只进行作用域查找。
+节点 `arguments` 支持原生 YAML 数值、布尔、映射与列表。占位符只接受显式点号路径：
+`${event.id|type|occurredAt}`、`${event.data.<namespace>.<path>}`、`${session.id}`、
+`${session.abilityId}`、`${session.values.<path>}`、`${ability.id}`、
+`${ability.values.<path>}`、`${global.<path>}`。占位符在注册 Ability 时预编译，执行时只进行作用域查找。
 
-## AbilityProfile
+## KuudraProfile
 
 ```yaml
 apiVersion: kuudra.io/v1alpha2
-kind: AbilityProfile
+kind: KuudraProfile
 metadata:
   name: default
 spec:
   abilities:
     - demo/hello
+  globalContext:
+    mode: safe
+    target: '${session.values.target}'
 ```
 
-Profile 固定放在 `abilities/profiles/`。根配置的 `ability-profiles` 选择全局 Profile，根配置的
-`abilities` 以 `namespace/name` 直接选择 Ability；二者的启动 claims 取并集。运行时直接控制优先，
-`inherit` 恢复配置合并状态。Resource 生命周期是所有活动 Ability 节点 claims 的合并结果。
+Profile 固定放在 `profiles/`。根配置只通过 `active-profile: default` 选择一份 Profile；空字符串
+表示 Ability 集合和 Global Context 都为空。运行时直接控制优先，`inherit` 恢复当前 Profile
+状态。热切换成功会清除全部直接覆盖；重启回到磁盘配置。Global 模板允许嵌套引用，但缺失键、
+循环和 RAW→Global→Session 引用在激活阶段失败。Resource 生命周期是所有活动 Ability 节点
+claims 的合并结果。
 
 ## 加载与失败边界
 
@@ -119,6 +128,7 @@ App 每次 start/restart 都重新读取完整的 Resource、Ability 与 Profile
 2. 重复身份、节点和 edge 校验；
 3. alias 与直接 Resource 引用存在性校验；
 4. 插件 ResourceTemplate 与实例策略校验；
-5. Ability 编译、claim 合并与生命周期调谐。
+5. Global 模板依赖、作用域与循环校验；
+6. Ability 编译、claim 合并与生命周期调谐。
 
 未知 kind、错误目录、重复身份、不完整引用、缺失目标或不兼容静态 options 都会使本次导入失败。StateStore 持久化声明与 observed generation，但不保存 Session、Event payload 或运行时上下文。

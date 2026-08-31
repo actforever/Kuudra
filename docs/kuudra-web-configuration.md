@@ -27,27 +27,27 @@ Web 将可执行 JAR 所在目录作为 App 配置基目录；从 classes 目录
   plugins/                 # Plugin JAR
   manifests/               # Resource
   abilities/               # Ability
-    profiles/              # 全局 AbilityProfile
+  profiles/                # 全局 KuudraProfile
   logs/
   state/
   locale/
 ```
 
-`manifests/`、`abilities/` 与 `abilities/profiles/` 严格区分 kind；放错目录会使加载失败。旧顶层 `ability-profiles/` 中存在 YAML 时也会明确失败，不会静默忽略。首次启动会创建固定目录，并在缺少 `.kuudra/config.yaml` 时复制默认配置；已有配置不会被覆盖。
+`manifests/`、`abilities/` 与 `profiles/` 严格区分 kind；放错目录会使加载失败。旧
+`ability-profiles/` 或 `abilities/profiles/` 中存在 YAML 时也会明确失败，不会静默忽略。
+首次启动会创建固定目录，并在缺少 `.kuudra/config.yaml` 时复制默认配置；已有配置不会被覆盖。
 
 `application.yaml` 仍可覆盖 Spring Web 设置，但其中的 `kuudra.*` 不会被读取。Kuudra 设置必须写入 `.kuudra/config.yaml`，例如：
 
 ```yaml
 runtime:
   worker-threads: 4
-ability-profiles: [desktop]
-abilities: [notification/startup-sound]
-global-context:
-  profile: production
+active-profile: desktop
 ```
 
-`ability-profiles` 与完整 `namespace/name` 形式的 `abilities` 产生的启动 claim 取并集；
-运行时 direct override 优先，`inherit` 恢复到该合并状态。配置深度合并时列表整体替换。
+`active-profile` 指向一份在 `profiles/` 中声明的 KuudraProfile；Ability 列表和 Global Context
+由该资源共同定义。运行时 direct override 优先，`inherit` 恢复当前 Profile 状态。Profile
+热切换 API 位于 `/api/v1/runtime/profiles`，响应只公开 Global Context 键名，不公开值。
 
 代码宿主可通过 `KuudraApp.createConfigured(KuudraConfigResource)` 传入最高优先级配置。App 配置使用 kebab-case；v1alpha2 清单字段使用 camelCase。
 
@@ -59,7 +59,7 @@ global-context:
 | --- | --- |
 | `all` | 所有 HTTP API。 |
 | `kuudra` | 内核快照、详细状态、生命周期控制和资源规约文档。 |
-| `runtime` | Ability、Resource 和 Session 的查询与控制。 |
+| `runtime` | Ability、KuudraProfile、Resource 和 Session 的查询与控制。 |
 | `plugin` | 已加载 Plugin、ResourceTemplate 与结构化文档。 |
 | `system-events` | SystemEvent SSE 订阅。 |
 

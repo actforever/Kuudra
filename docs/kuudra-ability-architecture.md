@@ -11,8 +11,8 @@ Plugin archive
                   -> edge（Event 路由）
 ```
 
-Resource 清单固定放在 `manifests/`，Ability 放在 `abilities/`，全局 AbilityProfile
-放在 `abilities/profiles/`。Ability namespace 只属于 Ability 身份和选择域，不参与
+Resource 清单固定放在 `manifests/`，Ability 放在 `abilities/`，全局 KuudraProfile
+放在 `profiles/`。Ability namespace 只属于 Ability 身份和选择域，不参与
 Resource 引用解析。
 
 Ability 节点可以通过 `spec.resources` 中的 alias 引用 Resource，也可以直接使用
@@ -72,16 +72,15 @@ Ability 暂停、Resource 暂停、DATA 内核暂停、禁用、注销和关闭�
 
 ## Ability claim 与状态
 
-Ability 是运行时的控制和排空边界。Profile claim、`config.yaml abilities` configuration
-claim 与运行时直接覆盖共同计算有效状态：
+Ability 是运行时的控制和排空边界。当前 KuudraProfile 的成员集合与运行时直接覆盖共同
+计算有效状态：
 
 - 没有 claim：DISABLED；
 - 至少一个 ENABLED claim：ENABLED；
 - 只有 PAUSED claim：PAUSED；
 - 初始化或调谐失败：FAILED，并保留可观测 detail。
 
-configuration claim 与 Profile claim 取并集；直接控制优先于二者，`inherit` 删除直接覆盖并
-恢复到配置合并状态。`dependsOn` 在同 namespace 内级联
+直接控制优先于 Profile，`inherit` 删除直接覆盖并恢复到 Profile 状态。`dependsOn` 在同 namespace 内级联
 暂停/禁用，`mutexWith` 阻止互斥 Ability 同时有效。一个 Profile 成员失败不应阻止其他
 独立成员收敛。
 
@@ -93,6 +92,12 @@ EventSource 的 emitter 是启动前置条件。App 先物化所需 Resource、�
 Source，再启动生命周期；同一批 Resource 中先启动下游消费者，最后启动 EventSource，
 避免首个 Event 早于 Controller 或边界就绪。v1alpha2 claim 变化由 AbilityManager 同步
 调谐，不进入只理解 v1alpha1 行的旧周期调谐器。
+
+KuudraProfile 同时定义 Ability 集合和 Global Context。Profile 热切换在 Runtime 全局安全点
+完成：阻止新的 DATA RAW Event，允许既有 Session 排空，超时后统一取消；随后原子替换
+Global Context 与全部节点的预编译 arguments，再调谐 Ability/Resource。成功时清除所有
+direct override，失败时恢复旧 Global/Profile；恢复失败才使 App 进入 FAILED。切换只影响
+当前生命周期，restart 总是重新读取磁盘并使用根 `active-profile`。
 
 ## Session 边界
 
@@ -112,7 +117,8 @@ Ability 暂停是独立的 ExecutionControl 原因，不会改写 Session 自身
 
 StateStore 记录 v1alpha2 Deployment 和 observed generation。Web 只通过 App 暴露：
 
-- `/api/v1/runtime/abilities`：有效状态、直接覆盖、configuration claim、Profile claim、依赖和互斥；
+- `/api/v1/runtime/abilities`：有效状态、直接覆盖、`profileDesiredState`、依赖和互斥；
+- `/api/v1/runtime/profiles`：Profile 名称、活动标志、Ability 列表和 Global Context 键名；
 - `/api/v1/runtime/resources`：实际生命周期状态和 claimedBy；
 - `/api/v1/plugin/resource-templates`：插件发布的构造策略、handler 文档与事件说明。
 

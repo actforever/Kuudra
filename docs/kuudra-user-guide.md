@@ -1,6 +1,6 @@
 # Kuudra v0.5 配置与使用指南
 
-本文是 `v0.5.1-alpha-1` 的用户入口。v0.5 只接受 `kuudra.io/v1alpha2` 清单；
+本文是 `v0.5.2-alpha-1` 的用户入口。v0.5 只接受 `kuudra.io/v1alpha2` 清单；
 旧的 `v1alpha1`、`Flow`、`EventHandler` 资源、`spec.component` 与 `desiredState`
 不会被静默兼容，加载器会给出迁移提示。
 
@@ -14,7 +14,7 @@
   plugins/                  # 所有 JAR 都会被严格加载
   manifests/                # 仅允许 Resource
   abilities/                # 仅允许 Ability
-    profiles/               # 仅允许 AbilityProfile
+  profiles/                 # 仅允许全局 KuudraProfile
   locale/
   logs/latest.log
   state/kuudra.db
@@ -23,7 +23,7 @@
 启动命令：
 
 ```powershell
-java -jar kuudra-web-v0.5.1-alpha-1.jar
+java -jar kuudra-web-v0.5.2-alpha-1.jar
 ```
 
 首次启动会补齐以上目录和缺失的 `config.yaml`，不会覆盖已有配置。插件 home
@@ -48,11 +48,7 @@ runtime:
   cancel-grace-timeout-ms: 5000
   resource-lifecycle-timeout-ms: 120000
 
-ability-profiles:
-  - default
-
-abilities:
-  - automation/suspend-ping
+active-profile: default
 
 reconciliation:
   enabled: true
@@ -68,18 +64,13 @@ logging:
 
 i18n:
   preferred-locale: en_US
-
-global-context: {}
 ```
 
-`ability-profiles` 决定本次启动选择哪些全局 Profile；`abilities` 可以使用完整的
-`namespace/name` 直接选择少量 Ability。两者产生的启动 claim 取并集。列表中的重复值、
-格式错误或不存在的 Ability 会使启动失败；高优先级配置中的列表整体替换低优先级列表。
-v0.5 已移除 `resource-selection` 和根级 `runtime.session-coordinator`：部署选择由这两类 claim 完成，
-Session 调度由每个 CREATE Ingress 节点声明。
-Profile 文件存在并不等于被启用；示例 Ability 要自动运行时必须显式写入对应名称，例如
-`ability-profiles: [default]`，也可以直接写 `abilities: [automation/suspend-ping]`。两个列表均为空时，
-没有运行时 direct override 的 Ability 保持 DISABLED；`inherit` 恢复配置与 Profile 合并后的状态。
+`active-profile` 选择 `.kuudra/profiles/` 中的一份 KuudraProfile。该资源同时携带本次运行要
+激活的 Ability 集合和 Global Context；空字符串表示两者都为空。Profile 文件存在并不等于
+被启用。v0.5 已移除 `resource-selection`、根级 `runtime.session-coordinator` 以及旧根字段
+`ability-profiles`、`abilities`、`global-context`，检测到后会直接给出迁移错误。Session 调度由
+每个 CREATE Ingress 节点声明。
 
 三个新超时分别约束 Ability 排空、取消后的宽限期和单次 Resource 生命周期调用。
 所有值以毫秒计，必须为非负数。
@@ -160,6 +151,19 @@ CompletionStage<Void> handle(KuudraEvent event, EventHandlerContext context)
 Event、Session、Ability 和 Global 上下文占位符。不要把事件相关值写入 Resource
 的静态 `options`。
 
+占位符只接受显式点号路径：
+
+- Event：`${event.id}`、`${event.type}`、`${event.occurredAt}`、`${event.data.<namespace>.<path>}`；
+- Session：`${session.id}`、`${session.abilityId}`、`${session.values.<path>}`；
+- Ability：`${ability.id}`、`${ability.values.<path>}`；
+- Global：`${global.<path>}`。
+
+不再支持 `${path}` 自动查找，也不再支持 `event#`、`session#`、`ability#`、`global#`
+或 `flow#`。Global Context 自身可以包含模板并继续引用其他 Global 值；模板在 Ability
+注册前预编译，完整占位符会保留数字、布尔、映射、列表等原生类型。缺失 Global、循环引用，
+以及 RAW 节点通过 Global 间接读取 Session 都会使激活失败。插件通过 `GlobalContext.put/update`
+写入的运行期字符串始终是普通值，不会再次解析。
+
 ## 5. Ability 与 Profile 示例
 
 下面的 Resource 文档放入 `.kuudra/manifests/`，Ability 文档放入
@@ -217,7 +221,7 @@ spec:
       handler: suspend
       arguments:
         target: ping
-        pid: '${event#pid}'
+        pid: '${event.data.process.pid}'
         durationMillis: 2000
   edges:
     - {from: admit, to: suspend}
@@ -231,22 +235,24 @@ namespace。未使用 alias 合法但不产生 claim。
 Resource 和 Ability 自身没有显式 `metadata.namespace` 时均使用 `default`，与 Kubernetes
 习惯一致。同一 Resource 被多个节点或 alias 引用时，claim 按完整三元组去重。
 
-把 Profile 单独放入 `.kuudra/abilities/profiles/default.yaml`：
+把 Profile 单独放入 `.kuudra/profiles/default.yaml`：
 
 ```yaml
 apiVersion: kuudra.io/v1alpha2
-kind: AbilityProfile
+kind: KuudraProfile
 metadata:
   name: default
 spec:
   abilities: [automation/suspend-ping]
-  namespaces: []
-  exclude: []
+  globalContext:
+    mode: safe
+    target: '${session.values.target}'
 ```
 
-Profile 是全局资源，没有 namespace。`abilities` 精确选择 Ability，`namespaces`
-选择整个 Ability namespace，`exclude` 再排除具体项。多个被选 Profile 的 claim
-取并集。运行时直接控制优先于 Profile；`inherit` 清除直接覆盖并重新继承 Profile。
+KuudraProfile 是全局资源，没有 namespace，`abilities` 中必须使用完整 `namespace/name`。
+运行时直接控制优先于当前 Profile；`inherit` 清除直接覆盖并重新继承当前 Profile。
+Profile 热切换成功时会一次性清除全部 direct override；重启则始终重新读取磁盘并回到
+`config.yaml` 的 `active-profile`。
 
 Ability 可使用同 namespace 的 `dependsOn` 与 `mutexWith`。依赖禁用或暂停会级联到
 依赖方；互斥 Ability 同时被 claim 时拒绝收敛。
@@ -276,6 +282,10 @@ POST /api/v1/runtime/abilities/{namespace}/{name}/resume
 POST /api/v1/runtime/abilities/{namespace}/{name}/disable
 POST /api/v1/runtime/abilities/{namespace}/{name}/inherit
 
+GET  /api/v1/runtime/profiles
+GET  /api/v1/runtime/profiles/{name}
+POST /api/v1/runtime/profiles/{name}/activate
+
 GET  /api/v1/runtime/resources
 GET  /api/v1/runtime/resources/{kind}/{namespace}/{name}
 GET  /api/v1/runtime/sessions
@@ -291,6 +301,13 @@ GET  /api/v1/plugin/resource-templates/{type}/{namespace}/{pluginId}/{name}
 禁用 Ability 时先关闭新事件闸门，再等待活动 Session 排空；超时后请求协作取消并
 等待宽限期，最后注销图并停止无 claim Resource。暂停 Ability 不销毁 Resource，
 也不会覆盖用户对单个 Session 设置的暂停状态。
+
+Profile 响应只返回 `name`、`active`、`abilities` 和 `globalContextKeys`，不会泄露 Global
+Context 的值。热切换先阻止新的 DATA 准入，再等待全部 Session 自然排空；超时则取消并等待
+宽限期。到达全局安全点后，Runtime 原子替换 Global Context 和所有预编译节点参数，再收敛
+Ability/Resource 并清除 direct override。失败时恢复旧 Profile；若恢复本身失败，App 进入
+`FAILED`。API 切换只影响当前运行，App restart 会重新读取三类磁盘目录并恢复根配置的
+`active-profile`。Ability 响应使用 `profileDesiredState` 表示当前 Profile 的期望状态。
 
 ## 8. Windows 原生能力边界
 
@@ -354,11 +371,14 @@ Ability 节点使用 `handler: play` 和动态 `arguments.track` 选择提示音
 每次启动都以磁盘上的 v1alpha2 清单为权威集合，并事务写入
 `state/kuudra.db`。首次打开旧 v0.4 数据库时，Kuudra 只重建自身的核心
 `resources` 表并写入 schema version；其他插件表不会被删除。Resource、Ability
-和 AbilityProfile 会保留 generation/observedGeneration 观测数据。
+和 KuudraProfile 会保留 generation/observedGeneration 观测数据。
 
 常见启动错误：
 
 - `migrate ... to ...`：仍在使用 v1alpha1/Flow/EventHandler 清单；
+- `AbilityProfile has been removed`：把文件改为 `kind: KuudraProfile` 并移动到 `.kuudra/profiles/`；
+- `Configuration key ... has been removed`：把旧根级 Ability/Profile/Global 配置合并进一份 KuudraProfile，只保留 `active-profile`；
+- `Legacy '#' placeholder syntax has been removed`：改用上文的显式点号路径；
 - `Unknown ResourceTemplate`：插件 JAR 缺失或 `spec.template` 写错；
 - `Controller node must select handler`：Controller 节点未写具名入口；
 - `JOIN targetIngress`：JOIN 没有指向同一 Ability 内的 CREATE 节点；

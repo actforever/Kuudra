@@ -31,21 +31,20 @@ foreach ($reactor in 'kuudra-official-plugins','kuudra-audio-plugins','kuudra-au
   plugins/
   manifests/
   abilities/
-    profiles/
+  profiles/
 ```
 
-`config.yaml` 必须显式选择示例 Profile 或 Ability，例如：
+`config.yaml` 必须显式选择示例 Profile，例如：
 
 ```yaml
-ability-profiles: [default]
-# 也可以使用：abilities: [hello-world-demo/hello-to-log]
+active-profile: default
 ```
 
 只复制当前场景需要的插件 JAR。每个 JAR 都会被严格加载，缺失强依赖、重复身份、版本范围不兼容和普通非插件 JAR 都必须使启动失败。
 
 ## 场景一：HelloWorld、边界与具名 Controller
 
-使用官方插件仓库 `examples/hello-world-logging` 的 `v1alpha2` Resource、Ability 与 AbilityProfile，并装入：
+使用官方插件仓库 `examples/hello-world-logging` 的 `v1alpha2` Resource、Ability 与 KuudraProfile，并装入：
 
 - `kuudra-official/default`
 - `kuudra-official/hello-world`
@@ -53,7 +52,7 @@ ability-profiles: [default]
 
 期望：
 
-1. `/api/v1/runtime/abilities/hello-world-demo/hello-to-log` 返回 `ENABLED`，`profileClaims` 包含 `default`；
+1. `/api/v1/runtime/abilities/hello-world-demo/hello-to-log` 返回 `ENABLED`，`profileDesiredState=ENABLED`；
 2. EventSource、Ingress、Controller 三个 Resource 均为 `RUNNING`；
 3. `/api/v1/plugin/resource-templates/controller/kuudra-official/logging/event-logger` 发布 `log` handler；
 4. 日志持续出现 `received hello-world`，且带 Ability ID 与 Session ID；
@@ -70,9 +69,17 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 - 最终状态异步收敛；
 - DISABLED 时 Resource 无其他 claim 才 stop/destroy；
 - PAUSED 不销毁 Resource；
-- configuration/Profile claim 与 direct override 的优先级符合用户指南，`inherit` 恢复二者的并集。
+- Profile 与 direct override 的优先级符合用户指南，`inherit` 恢复当前 Profile 状态。
 
 生产 JAR 不依赖 Java 反射参数名。所有 Spring `@PathVariable` 必须显式写变量名；Ability、Resource、Plugin 和 ResourceTemplate 的单项查询应返回 200 或业务 404，不能因缺少 `-parameters` 返回 500。
+
+另准备两份 KuudraProfile，通过 `POST /api/v1/runtime/profiles/{name}/activate` 交替切换：
+
+- `/runtime/profiles` 只返回 Global Context 键名，不返回值；
+- 切换时不再创建新的 DATA Session，既有 Session 先自然排空，超时后被协作取消；
+- Ability、Resource 与 Global Context 同批切换，所有 direct override 仅在成功后清除；
+- 无效 Global 模板或调谐失败时旧 Profile 仍保持活动；
+- App restart 后恢复 `config.yaml` 的 `active-profile`，不保留 API 的临时选择。
 
 ## 场景三：Windows 原生宿主与 process-control
 
@@ -103,7 +110,7 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 
 期望：
 
-1. 根 `abilities: [audio-demo/prompt]` 在无 Profile 时使 Ability 为 ENABLED，响应中 `configurationClaim=true`；
+1. `active-profile: default` 激活 `audio-demo/prompt`，响应中 `profileDesiredState=ENABLED`；
 2. audio-host 不发布 ResourceTemplate，audio-player 发布包含六个具名 handler 的 Controller；
 3. Resource 初始化只建库和获取租约，不播放声音；事件到达 `play` 后才打开默认输出设备；
 4. `awaitCompletion: true` 时 Session 保持活动直到 WAV 播放结束；pause/resume/stop 不互相覆盖生命周期暂停；
@@ -140,7 +147,7 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 | default + session-probe + logging + network-control | probe 分支同时完成具名网络操作与 Event 日志 |
 | audio-host 单独加载 | 插件 ACTIVE，不打开音频设备、不发布 ResourceTemplate |
 | audio-player 缺 audio-host | 插件依赖校验失败 |
-| audio-host + audio-player + 直接 Ability claim | WAV 提示音执行，configurationClaim 可观测 |
+| audio-host + audio-player + KuudraProfile | WAV 提示音执行，profileDesiredState 可观测 |
 | `allowElevation: false` 后 claim | 仅该 Ability FAILED，其他独立 Ability 可继续收敛 |
 | 未知 Controller handler | Ability 编译失败并明确指出 handler |
 | 同一 Controller 的 `suspend`/`resume` 节点 | 分别路由到对应方法，不使用动态 action 分派 |
@@ -153,7 +160,7 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 本轮在管理员 Windows 会话中验证：
 
 - 核心 10 模块 `mvn test -DskipTests=false` 全部通过；13 个官方插件模块 Java/Kotlin 测试、Windows native host 的 3 个 C# 测试及 self-contained `win-x64` publish 全部通过；
-- HelloWorld 示例按 `manifests/`、`abilities/`、`abilities/profiles/` 部署，字符串与对象 Resource 引用均成功解析；Ability 为 ENABLED，3 个 Resource 为 RUNNING，`log` handler 持续收到带 Ability/Session ID 的事件，日志 0 ERROR；
+- HelloWorld 示例按 `manifests/`、`abilities/`、`profiles/` 部署，字符串与对象 Resource 引用均成功解析；Ability 为 ENABLED，3 个 Resource 为 RUNNING，`log` handler 持续收到带 Ability/Session ID 的事件，日志 0 ERROR；
 - Ability 的 pause/resume/disable/enable/inherit 均返回 HTTP 202，并依次收敛到 PAUSED/ENABLED/DISABLED/ENABLED/ENABLED；restart 返回 200，重新读取三类目录后恢复 ENABLED + INHERIT；
 - App stop 后 HTTP 仍可查询到 STOPPED，验证 Web 与 App 生命周期边界；
 - conditional-boundary + session-probe 组合物化 6 个 RUNNING Resource，建立 Session dependency，并在 required Session 完成后按 `CANCEL_DEPENDENT` 取消 dependent Session，日志 0 ERROR。
@@ -194,3 +201,18 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
   `runElevated: true`。后者仍通过 Broker 路径创建，且 fixture 报告管理员令牌；
 - `POST /api/v1/kuudra/stop` 返回 STOPPED，随后 Broker 数为 0、fixture 数为 0，未遗留
   active operation recovery journal，日志无 ERROR/WARN。
+
+## 2026-08-31 KuudraProfile 与占位符迁移实测记录
+
+- 核心 `v0.5.2-alpha-1` 的 10 模块执行 `mvn clean install -DskipTests=false` 全部通过；运行时
+  启动行与 Maven evaluation 均为 `v0.5.2-alpha-1`；
+- 四个外部 Reactor 在仅升级核心依赖、插件自身仍为 `0.2.0-alpha-2` 的情况下全部完成
+  `mvn clean package -DskipTests=false`；Windows Host 同轮执行 .NET 8 的 14 个 C# 测试和
+  self-contained `win-x64` publish；
+- 打包 Web 装入真实 default、conditional-boundary、session-probe 插件并使用独立
+  `manifests/`、`abilities/`、`profiles/` 启动：默认 Profile 的 Ability 为 ENABLED，6 个
+  Resource 全部 RUNNING；
+- `/runtime/profiles` 返回两份 Profile 及 Global Context 键名，响应正文未泄露测试 secret 值；
+  POST 热切换返回 202 并收敛到 quiet Profile、Ability DISABLED、directOverride INHERIT；
+- App restart 返回根配置的 default Profile 和 ENABLED Ability，证明 API 选择不持久化；App stop
+  返回 STOPPED，日志未发现 ERROR、reconciliation failure 或 profile activation failure。

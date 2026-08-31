@@ -30,9 +30,10 @@ EventSource / EventInterpreter / RAW EventAdapter
 `SessionEventWrapper` 明确域，不在 Event 上附加 nullable Session。Ingress 是唯一
 RAW->SESSION 边界，Egress 是唯一 SESSION->RAW 边界并保留 EventLineage。
 
-上下文分为 Event、Session、Ability 和 Global 四个逻辑作用域。`${path}` 只搜索当前
-可用作用域，`${event#path}`、`${session#path}`、`${ability#path}`、`${global#path}`
-严格指定来源。占位符语法在 Ability 注册时预编译，事件热路径只做查找和结果装配。
+上下文分为 Event、Session、Ability 和 Global 四个逻辑作用域。占位符必须显式指定作用域
+并使用点号路径，例如 `${event.data.input.key}`、`${session.values.target}`、
+`${ability.values.mode}`、`${global.threshold}`。无作用域、所有 `#` 形式和 `flow` 别名均被拒绝。
+占位符语法在 Ability 注册时预编译，事件热路径只做查找和结果装配。
 
 ## 扩展点
 
@@ -91,11 +92,11 @@ allowlist 与类型化参数，不允许任意 PowerShell/shell。
 
 ## 控制面与观测
 
-磁盘 v1alpha2 清单是启动时权威集合。SQLite 核心 schema v2 保存 Resource、Ability、
-AbilityProfile 的 generation 和 observed generation；从 v0.4 迁移只重建 Kuudra 核心表。
+磁盘 v1alpha2 清单是启动时权威集合。SQLite 核心 schema v3 保存 Resource、Ability、
+KuudraProfile 的 generation 和 observed generation；从旧 schema 迁移只重建 Kuudra 核心表。
 
 App 拥有唯一 SystemEventBus，Runtime 和插件只接收 write-only publisher。Web Controller
-只依赖 App。Runtime API 暴露 Ability、Resource、Session；Plugin API 暴露插件和
+只依赖 App。Runtime API 暴露 Ability、KuudraProfile、Resource、Session；Plugin API 暴露插件和
 ResourceTemplate。生命周期细节使用 DEBUG，顶层启动/停止、有效插件和失败保持 INFO。
 
 更详细的清单与运行语义见 `kuudra-ability-architecture.md`、`kuudra-bootstrap.md` 和

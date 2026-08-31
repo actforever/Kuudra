@@ -82,4 +82,4 @@ Kotlin 文件是受信任的本地构建代码，不是 Event 到来时执行的
 - Controller `execute` handler 与下游路由；
 - 协作式暂停、取消和异常清理。
 
-部署时将 Resource 文档放在 `<home>/manifests/`，Ability 放在 `<home>/abilities/`，Profile 放在 `<home>/abilities/profiles/`。Windows 无桌面测试环境启动 AWT 验证时需显式传入 `-Djava.awt.headless=false`；真实键鼠宏只应在可用的图形桌面会话中运行。
+部署时将 Resource 文档放在 `<home>/manifests/`，Ability 放在 `<home>/abilities/`，KuudraProfile 放在 `<home>/profiles/`。Windows 无桌面测试环境启动 AWT 验证时需显式传入 `-Djava.awt.headless=false`；真实键鼠宏只应在可用的图形桌面会话中运行。

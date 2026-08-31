@@ -1,6 +1,6 @@
 # Kuudra
 
-Kuudra 是一个事件驱动、插件化的 Java 自动化编排内核。当前版本围绕显式的 RAW/SESSION 双域事件流、声明式 Flow、可复用组件资源和可观测会话生命周期构建。
+Kuudra 是一个事件驱动、插件化的 Java 自动化编排内核。当前版本围绕显式的 RAW/SESSION 双域事件流、声明式 Ability、按需物化 Resource 和可观测 Session 生命周期构建。
 
 ## 核心模型
 
@@ -9,7 +9,7 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
                                                   |
                                    SessionManager + SessionCoordinator
                                                   |
-                                 EventHandler / EventAdapter -> Egress
+                            Controller handler / EventAdapter -> Egress
                                                                    |
                                                             进入无会话域
 ```
@@ -17,10 +17,10 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 - `KuudraEvent` 是唯一不可变业务消息，不携带可空 Session。
 - `RawEventWrapper` 与 `SessionEventWrapper` 明确区分执行域，避免 Runtime 猜测上下文。
 - `Ingress` 只判断准入和会话分组；Runtime 的 `SessionManager` 创建会话，`SessionCoordinator` 执行有界调度策略。
-- `EventHandler` 异步处理会话事件并协作式检查取消；`Egress` 显式擦除 Session 绑定并保留因果谱系。
+- Controller 的具名 `@EventHandler` 异步处理会话事件并协作式检查取消；`Egress` 显式擦除 Session 绑定并保留因果谱系。
 - `EventAdapter` 可部署在任一域，但不会改变域；`EventInterpreter` 面向需要窗口、计时器或状态机的进入会话前事件解释。
 - 组件名称不携带 Raw/Session 前缀；RAW/SESSION 只是 Runtime Wrapper 表达的执行域。
-- Flow 边无端口、无隐式域转换。分类、过滤和重映射由 Adapter 完成。
+- Ability 边无端口、无隐式域转换。分类、过滤和重映射由 Adapter 完成。
 
 架构图见 [docs/flow-arch.png](docs/flow-arch.png)，完整不变量见 [docs/kuudra-architecture.md](docs/kuudra-architecture.md)。
 
@@ -47,6 +47,8 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
   plugins/
   locale/                  # xx_XX.json 用户语言目录
   manifests/
+  abilities/
+  profiles/
   logs/
   state/kuudra.db            # 资源期望/观测状态与 generation
 ```
@@ -59,14 +61,14 @@ EventSource -> EventInterpreter / EventAdapter -> Ingress
 
 ```powershell
 mvn test -DskipTests=false
-java -jar kuudra-web/target/kuudra-web-v0.4.4.jar
+java -jar kuudra-web/target/kuudra-web-v0.5.2-alpha-1.jar
 ```
 
 启动后可访问 `GET /api/v1/kuudra/status`、`GET /api/v1/runtime/sessions/{id}`、`POST /api/v1/runtime/sessions/{id}/cancel` 和 `/doc.html`。
 
 ## 上下文与占位符
 
-占位符支持 Event、Session、Flow、Global 四个逻辑作用域。RAW 区域只能读取 Event、Flow、Global；SESSION 区域还可读取 Session。`${path}` 按当前可用域从内向外查找，`${event#path}`、`${session#path}`、`${flow#path}`、`${global#path}` 严格指定作用域。
+占位符支持 Event、Session、Ability、Global 四个显式作用域。RAW 区域只能读取 Event、Ability、Global；SESSION 区域还可读取 Session。只接受 `${event.data.namespace.path}`、`${session.values.path}`、`${ability.values.path}` 和 `${global.path}` 等点号路径；无作用域写法和旧 `#` 写法都会被拒绝。
 
 Flow 注册时预编译模板并校验作用域，事件热路径只执行查值和结果组装。上下文默认保存不可变 JSON 兼容树，组件通过 `get("key", Type.class)` 按需恢复类型。
 

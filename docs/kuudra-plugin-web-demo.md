@@ -52,6 +52,6 @@ event-handler/<namespace>/<name>
 EventSource -> ingress/kuudra-official/plain-ingress -> EventHandler
 ```
 
-完整的三份 Component 清单和一份 Flow 清单位于 `kuudra-official-plugins/examples/hello-world-logging/`。其中 `plain-ingress` 使用 `${event#hello-world.message}` 作为组键并选择 `SERIAL` 策略；它无条件准入并计算分组，Session 创建与串行调度由 Runtime 完成。Logging Handler 再通过插件 Logger 发布 `plugin.log` SystemEvent，由 `kuudra-logging` 统一打印。
+完整的 Resource、Ability 与 KuudraProfile 示例位于 `kuudra-official-plugins/examples/hello-world-logging/`。其中 `plain-ingress` 使用 `${event.data.hello-world.message}` 作为组键并选择 `SERIAL` 策略；它无条件准入并计算分组，Session 创建与串行调度由 Runtime 完成。Logging Controller 的具名 Handler 再通过插件 Logger 发布 `plugin.log` SystemEvent，由 `kuudra-logging` 统一打印。
 
 `KuudraApp` 是应用外观。`kuudra-web` 是唯一的 REST/SSE 适配层，直接将 App 管理 API 暴露给 HTTP 客户端；它不直接暴露 Runtime。运行 Web 时输出 `:: Kuudra Web Adapter ::`，而 Kuudra Banner 只在 App 创建时输出。
