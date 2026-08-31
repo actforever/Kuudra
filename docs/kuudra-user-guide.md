@@ -299,8 +299,13 @@ GET  /api/v1/plugin/resource-templates/{type}/{namespace}/{pluginId}/{name}
 Resource 初始化且 `allowElevation: true` 时才启动提权 broker。可执行目标必须来自
 静态绝对路径 allowlist，Event/arguments 只能选择别名、PID、类型化动作和有界时长。
 
-`actforever/process-control` 在 v0.5 中是包含 `suspend`、`resume` 两个具名入口的
-Controller。`actforever/network-control` 则使用同一宿主的独立 `NETWORK_CONTROL`
+`actforever/process-control` 包含 `start`、`terminate`、`suspend`、`resume` 四个具名入口。
+普通启动继承 Kuudra JVM 令牌且不经过 shell；静态 `launch.runElevated: true`、终止和暂停
+使用提权 Broker。target 必须静态声明绝对路径，可选进程名、窗口标题 `EXACT/CONTAINS`、
+`UNIQUE/ALL` 终止策略、固定参数和工作目录；Event 只能传 alias 与可选 PID。终止前 Broker
+重新核验实际映像路径，启动后的进程不随 Resource 停止自动退出。
+
+`actforever/network-control` 使用同一宿主的独立 `NETWORK_CONTROL`
 能力，提供 `block-outbound`、`disable-adapters`、`restore-outbound`、
 `restore-adapters` 和 `restore-all` 五个入口。程序绝对路径与网卡接口 GUID/名称必须
 在 Resource `options` 中静态授权；Event 只能在 Handler `arguments` 中选择别名。
@@ -324,7 +329,7 @@ spec:
 Controller node 以 `handler: block-outbound` 配合 `arguments: {programs: [ping]}` 完成
 软断网；以 `handler: disable-adapters` 配合 `arguments: {adapters: [primary]}` 完成硬断网。
 恢复必须路由到相应 restore Handler，停止 Resource 时的恢复是额外故障保护。可运行配置与
-硬断网看门狗要求见官方插件仓库 `examples/network-control-safe`。
+硬断网看门狗要求见 `kuudra-windows-plugins/examples/network-control-safe`。
 
 ## 9. 音频提示能力
 

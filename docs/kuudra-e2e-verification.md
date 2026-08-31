@@ -9,10 +9,12 @@ $env:MAVEN_OPTS='-Xmx384m -XX:+UseSerialGC'
 mvn test -DskipTests=false
 mvn package -DskipTests
 
-cd ..\kuudra-official-plugins
 $env:MAVEN_OPTS='-Xmx256m -XX:+UseSerialGC'
-mvn clean test -DskipTests=false -Dexec.skip=true
-mvn package -DskipTests=false -Dexec.skip=true
+foreach ($reactor in 'kuudra-official-plugins','kuudra-audio-plugins','kuudra-automation-plugins','kuudra-windows-plugins') {
+  Push-Location "..\$reactor"
+  mvn clean package -DskipTests=false
+  Pop-Location
+}
 ```
 
 原生宿主的正式包必须由 `.NET 8 SDK` 执行 `dotnet publish --runtime win-x64 --self-contained true` 生成。内嵌的 `Kuudra.Windows.PrivilegedHost.exe` 应是约 67 MB 的单文件发布物；约 9 MB 的普通 apphost 会依赖旁边的 DLL，不得装入 JAR。Maven Ant copy 必须使用 `overwrite=true`，不能让旧 `target/classes` 按时间戳覆盖本轮 publish 结果。
@@ -81,25 +83,22 @@ EventSource 必须在 `start()` 前获得 Runtime emitter；App 应先物化全�
 - `actforever/windows-native-host`
 - `actforever/process-control`
 
-使用官方插件仓库 `examples/process-control-safe`。启动一个测试目标：
-
-```powershell
-$ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1' -WindowStyle Hidden -PassThru
-```
+使用 `kuudra-windows-plugins/examples/process-control-safe`。示例自身按序启动并清理测试目标。
 
 期望：
 
 1. 仅加载 host JAR 不产生 UAC；被 Profile claim 的 process-control Resource 初始化且 `allowElevation: true` 时才启动 broker；
-2. host、process-control、session-probe 的插件依赖顺序正确，Ability 为 ENABLED，三个 Resource 为 RUNNING；
-3. `process-controller` 发布 `suspend` 与 `resume` 两个 handler，清单显式选择 `suspend`；
-4. 事件触发后 `PING.EXE` 线程可观测到 `WaitReason=Suspended`，有界时长后自动恢复且进程仍存活；
-5. 在挂起窗口内停止 App，目标立即恢复，broker 退出，Web 状态为 STOPPED；
-6. Event/arguments 只能选择静态 allowlist 中的 alias、可选 PID 与有界时长，broker 不接收 Event/Context，也不提供 PowerShell/Shell 执行。
+2. host、process-control、session-probe、default、logging 的插件依赖顺序正确，Ability 与全部 Resource 为 RUNNING；
+3. `process-controller` 发布 `start`、`terminate`、`suspend`、`resume` 四个 handler；
+4. 序号 1 普通启动 `PING.EXE`，序号 2 暂停，序号 3 显式恢复，序号 4 终止，event-logger 同时记录四个事件；
+5. 专用窗口 fixture 分别验证标题 `EXACT/CONTAINS`、进程名、PID、`UNIQUE/ALL` 与映像路径复核；普通/管理员启动报告的令牌权限符合静态 `runElevated`；
+6. 在挂起窗口内停止 App，目标立即恢复，broker 退出；已完成 start 的独立进程不会因 Resource 停止被隐式终止；
+7. Event/arguments 只能选择静态 alias、可选 PID 与有界时长，broker 不接收 Event/Context，也不提供 PowerShell/Shell 执行。
 
 ## 场景四：音频宿主与提示音 Controller
 
 装入 `default`、`session-probe`、`actforever/audio-host` 和 `actforever/audio-player`，使用
-官方插件仓库 `examples/audio-prompt`，并将短 WAV 放入
+`kuudra-audio-plugins/examples/audio-prompt`，并将短 WAV 放入
 `.kuudra/plugins/actforever/audio-player/audio/notify.wav`。
 
 期望：
@@ -114,7 +113,7 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 ## 场景五：Windows network-control 与跨插件恢复
 
 装入 `default`、`logging`、`session-probe`、`windows-native-host`、`network-control`，
-使用官方插件仓库 `examples/network-control-safe`。默认仅激活 `network-soft-safe`：
+使用 `kuudra-windows-plugins/examples/network-control-safe`。默认仅激活 `network-soft-safe`：
 
 1. host 单独加载或 network Ability 未 claim 时不启动 broker、不触发 UAC；
 2. network Controller 模板发布五个具名 Handler，Ability 与所有已 claim Resource 为 RUNNING；
@@ -172,3 +171,26 @@ $ping = Start-Process C:\Windows\System32\PING.EXE -ArgumentList '-t','127.0.0.1
 - event-logger 分别记录 soft/hard sequence 1/2，process `suspend`、网络四个操作均完成，未出现 operation/session failure；
 - `POST /api/v1/kuudra/stop` 返回 STOPPED，随后 broker 数为 0、防火墙规则为 0、两张网卡为 Up，`active-network-operations.json` 不存在；
 - 强杀首次 JVM 时发现旧 broker 可能停在“command Pipe 已连接、event Pipe 未连接”的启动窗口。修复后两条 Pipe 并行等待并监控 JVM/两分钟上限；专项测试模拟半连接后客户端退出，返回 `CLIENT_EXITED` 且不再遗留等待进程。
+
+## 2026-08-31 仓库拆分与 process-control 实测记录
+
+本轮在本地管理员 Windows 会话中使用打包后的 Web JAR，并同时装入四个独立 Reactor
+产出的全部 15 个插件：
+
+- `kuudra-official-plugins`、`kuudra-audio-plugins`、`kuudra-automation-plugins`、
+  `kuudra-windows-plugins` 均可独立执行 `mvn clean package -DskipTests=false`；Windows Host
+  的 14 个 C# 测试、process-control 的 8 个 Java 测试和 network-control 的 6 个 Java
+  测试全部通过；
+- 15 个插件全部进入 ACTIVE，跨仓库的 audio-player → audio-host、JNativeHook/AWT Robot →
+  user-interaction-spec、macro-kotlin/AWT Robot → macro-spec、process/network-control →
+  windows-native-host 依赖均由独立 JAR ClassLoader 正确解析；
+- `process-controller` 模板通过 HTTP 暴露 `start`、`terminate`、`suspend`、`resume` 四个入口，
+  测试 Ability claim 的 5 个 Resource 全部完成初始化，且只启动一个 Broker；
+- WinForms fixture 先后实际验证普通 `ProcessBuilder` 启动、管理员 Broker 启动、窗口标题
+  `EXACT` 与 `CONTAINS`、默认 `UNIQUE` 与静态 `ALL`。两个同名批量 fixture 同时存活后，
+  `ALL` 一次将二者全部终止；所有终止均未从 Event 传 PID，因此进程名、窗口标题和映像路径
+  复核链路均真实参与匹配；
+- 本轮 Web JVM 自身运行在管理员令牌下，因此普通启动按设计继承管理员令牌；这不等价于
+  `runElevated: true`。后者仍通过 Broker 路径创建，且 fixture 报告管理员令牌；
+- `POST /api/v1/kuudra/stop` 返回 STOPPED，随后 Broker 数为 0、fixture 数为 0，未遗留
+  active operation recovery journal，日志无 ERROR/WARN。

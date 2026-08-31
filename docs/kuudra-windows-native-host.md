@@ -14,7 +14,7 @@ Kuudra App / PluginManager
                        │ owner-scoped typed RPC
                        ▼
          两条带 SID ACL 的随机 Named Pipe
-                       │ 双向 PID 校验、协议 1.1
+                       │ 双向 PID 校验、协议 1.2
                        ▼
        Kuudra.Windows.PrivilegedHost.exe（管理员）
           ├─ Win32 线程暂停/恢复
@@ -30,11 +30,22 @@ Java 仍是唯一 Kuudra Runtime：它持有 Event、Context、Ability/Session �
 
 协议 `HELLO` 通告：
 
-- `PROCESS_CONTROL`：`ACQUIRE_PROCESS_CONTROL`、`SUSPEND`、`RESUME`、`RESTORE_OWNER`；
+- `PROCESS_CONTROL`：`ACQUIRE_PROCESS_CONTROL`、`START_PROCESS`、`TERMINATE`、`SUSPEND`、`RESUME`、`RESTORE_OWNER`；
 - `NETWORK_CONTROL`：`ACQUIRE_NETWORK_CONTROL`、`BLOCK_OUTBOUND`、`DISABLE_ADAPTERS`、`RESTORE_OUTBOUND`、`RESTORE_ADAPTERS`、`RESTORE_NETWORK_OWNER`；
 - 公共 `SHUTDOWN`：恢复两类 owner 后退出。
 
 `actforever/network-control` 发布 `network-controller`，恰好提供五个同名小写连字符 Handler。静态 `options.programs` 只能配置既存绝对可执行路径；`options.adapters` 每项只能配置接口 GUID 或精确接口名称之一。动态 Event arguments 只能选择别名列表，不能注入路径、SetupAPI 参数、规则名或命令。
+
+`actforever/process-control` 发布同一个 `process-controller` 的四个入口：`start`、`terminate`、
+`suspend`、`resume`。每个 target 的绝对 `executablePath` 是最终安全身份；可选 `processName`
+和 `windowTitle` 只负责缩小终止候选，Broker 在操作前重新查询真实映像路径。窗口标题支持忽略
+大小写的 `EXACT` 与 `CONTAINS`，多个选择条件按 AND 组合；`UNIQUE` 是默认终止策略，只有
+静态 `ALL` 才允许一次终止多个已验证进程。Event 不能传路径、窗口表达式或启动参数。
+
+普通 `start` 由 Java 使用 `ProcessBuilder` 直接创建，不经 shell，也不会为了启动而弹 UAC；
+`launch.runElevated: true`、`terminate`、`suspend` 和 `resume` 才使用提权 Broker。管理员启动必须
+同时配置 Resource `allowElevation: true`。启动后的进程不属于可恢复 owner 状态，Resource/App
+停止不会自动终止它；终止也不递归处理子进程树。
 
 ## 3. 认证传输与构建
 
@@ -73,7 +84,7 @@ Controller stop 顺序固定为：在生命周期锁内拒绝新 Handler 并快�
 | 多个下级 Resource | 共享一个 broker，各自随机 owner lease |
 | 多 owner 禁用同一网卡 | 引用计数，最后一个 owner 才恢复 |
 | 网络批量操作部分失败 | 回滚已完成部分，日志覆盖未恢复状态 |
-| Resource/App 正常停止 | 先 drain，再恢复 owner，最后关闭 broker |
+| Resource/App 正常停止 | 先 drain，再恢复暂停/网络 owner，最后关闭 broker；已启动进程继续存活 |
 | JVM 管道断开 | broker 立即恢复网络；有界进程暂停按既有 deadline 收尾 |
 | JVM 在双 Pipe 握手中途退出 | 取消半连接等待并退出 broker |
 | broker 被强杀或机器断电 | 无法保证立即恢复；下一次获批启动时读取日志补偿 |

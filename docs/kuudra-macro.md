@@ -1,5 +1,8 @@
 # Kuudra 宏定义与执行
 
+交互规约、捕获、宏前端和执行器统一位于独立同级 Reactor `kuudra-automation-plugins`，
+可在不构建其他能力仓库的情况下独立测试。
+
 宏能力由外部插件分层提供，内核不依赖具体键鼠库：
 
 - `actforever/user-interaction-spec`：平台无关的键码、鼠标与坐标对象；

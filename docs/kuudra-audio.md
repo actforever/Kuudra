@@ -1,5 +1,7 @@
 # Kuudra 音频能力与提示音 Controller
 
+实现与可运行示例位于独立同级 Reactor `kuudra-audio-plugins`。
+
 官方音频实现沿用“能力宿主—业务 Resource”分层：
 
 ```text
